@@ -130,14 +130,15 @@ impl QueryListModel for qobject::SnapshotDiffModel {
     fn show_first_page(mut self: Pin<&mut Self>, diff: DiffResultDto) {
         let first_load = self.query_state() != Some(QueryState::Done);
         if first_load && !diff.changes.too_large && diff.changes.total > 0 {
-            // The timer asks for the first page again while the kinds are on their way.
-            if !self.kind_counts_pending {
-                self.as_mut().rust_mut().kind_counts_pending = true;
-                self.load_kind_counts_then_show(diff);
-            }
+            self.as_mut().rust_mut().kind_counts_pending = true;
+            self.load_kind_counts_then_show(diff);
             return;
         }
         self.show_page(diff);
+    }
+
+    fn completing_first_page(&self) -> bool {
+        self.kind_counts_pending
     }
 
     /// Compares again; the filter stays.

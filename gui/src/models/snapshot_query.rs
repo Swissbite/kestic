@@ -233,12 +233,19 @@ pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
     }
 
     /// Checks the running query (called by a timer while `state` is `running`): asks for the
-    /// first page once the query started, unless that answer is still on its way.
+    /// first page once the query started, unless that answer is still on its way or the model
+    /// waits for more before it shows the page.
     fn poll_query(self: Pin<&mut Self>) {
         let run = &self.list().run;
-        if run.query_id.is_some() && !run.first_page_pending {
+        if run.query_id.is_some() && !run.first_page_pending && !self.completing_first_page() {
             self.load_first_page();
         }
+    }
+
+    /// Whether the first page has arrived and the model fetches more before it shows it; the
+    /// timer asks for no further first page meanwhile.
+    fn completing_first_page(&self) -> bool {
+        false
     }
 
     /// Cancels the query while it still runs, so restic stops.

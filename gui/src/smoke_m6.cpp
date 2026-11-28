@@ -274,8 +274,9 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
 }
 
 // AC-M6-33-1: every reply comes 5 s late. (a) The previews, exclude helpers, source checks,
-// connection test, restic source and the snapshot query of a folder list return at once and the
-// main thread never pauses longer than 100 ms; (b) their answers arrive.
+// connection test, restic source and the snapshot queries of a folder list and a comparison
+// return at once and the main thread never pauses longer than 100 ms; (b) their answers arrive,
+// the comparison with its kinds of change and without a later reset of its list.
 void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
@@ -295,6 +296,10 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
     auto requests = std::make_shared<QMap<QString, int>>();
     auto browse = std::make_shared<QObject*>(nullptr);
     auto diff = std::make_shared<QObject*>(nullptr);
+    // Resets of the comparison's list, and their number once it was done.
+    auto diff_resets = std::make_shared<int>(0);
+    auto resets_when_done = std::make_shared<int>(-1);
+    auto since_done = std::make_shared<QElapsedTimer>();
     auto step = std::make_shared<int>(-1);
     auto waited = std::make_shared<QElapsedTimer>();
     waited->start();
@@ -403,6 +408,8 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             *browse = create_in_window(window, BROWSE_QML);
             *diff = create_in_window(window, DIFF_QML);
             SMOKE_CHECK2("M6", 111, *browse, *diff, "the list models could not be made");
+            QObject::connect(qobject_cast<QAbstractItemModel*>(*diff), &QAbstractItemModel::modelReset, window,
+                [diff_resets]() { ++*diff_resets; });
             break;
         case 10: {
             QElapsedTimer took;
@@ -435,7 +442,18 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
                 all = all && answered(answers, it.value());
             }
             if (!all) return;
+            // The comparison's list, once shown, is not reset again by a late first page (one
+            // reply delay later).
+            if (*resets_when_done < 0) {
+                *resets_when_done = *diff_resets;
+                since_done->start();
+                return;
+            }
+            if (since_done->elapsed() < 6000) return;
             poll->stop();
+            SMOKE_CHECK("M6", 117, *diff_resets == *resets_when_done,
+                QStringLiteral("(b) the comparison's list was reset %1 more times after it was shown")
+                    .arg(*diff_resets - *resets_when_done));
             *stop = true;
             SMOKE_CHECK("M6", 113, *largest_gap <= 100,
                 QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
