@@ -42,7 +42,8 @@ fn find_deb_package() -> PathBuf {
                 .is_some_and(|n| n.starts_with("kestic_") && n.ends_with(".deb"))
         })
         .collect();
-    debs.sort();
+    // The newest package: version strings do not sort as text (`~m6.9` after `~m6.10`).
+    debs.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
     debs.pop().unwrap_or_else(|| {
         panic!(
             "no kestic_*.deb found in {}; run `just deb` or `just verify` first",

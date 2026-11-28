@@ -10,41 +10,91 @@ use kestic_test_support::workspace::workspace_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const SOURCE_EXTENSIONS: [&str; 7] = ["cpp", "cc", "cxx", "h", "hh", "hpp", "rs"];
+
+/// Every source file below `gui/src`, with its text.
 fn gui_sources() -> Vec<(PathBuf, String)> {
-    let dir = workspace_root().join("gui/src");
     let mut out = Vec::new();
-    for entry in fs::read_dir(&dir)
-        .expect("read gui/src")
-        .map_while(Result::ok)
-    {
+    collect(&workspace_root().join("gui/src"), &mut out);
+    assert!(out.len() > 10, "precondition: the sources are found");
+    out
+}
+
+fn collect(dir: &Path, out: &mut Vec<(PathBuf, String)>) {
+    for entry in fs::read_dir(dir).expect("read dir").map_while(Result::ok) {
         let path = entry.path();
-        if path.extension().is_some_and(|e| e == "cpp" || e == "h") {
+        if path.is_dir() {
+            collect(&path, out);
+        } else if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| SOURCE_EXTENSIONS.contains(&e))
+        {
             let text = fs::read_to_string(&path).expect("read source");
             out.push((path, text));
         }
     }
-    assert!(out.len() > 5, "precondition: the C++ sources are found");
-    out
+}
+
+/// `line` without a `//` comment and without `/* … */` comments that start and end on it.
+fn without_comments(line: &str) -> String {
+    let mut text = line.split("//").next().unwrap_or("").to_string();
+    while let (Some(start), Some(end)) = (text.find("/*"), text.find("*/")) {
+        if end < start {
+            break;
+        }
+        text.replace_range(start..end + 2, " ");
+    }
+    text
+}
+
+/// The header a C++ `#include` (also `# include`) or a cxx `include!("…")` names.
+fn included_path(line: &str) -> Option<String> {
+    let line = without_comments(line);
+    let trimmed = line.trim();
+    let rest = if let Some(after_hash) = trimmed.strip_prefix('#') {
+        after_hash.trim_start().strip_prefix("include")?
+    } else {
+        let at = trimmed.find("include!(")?;
+        &trimmed[at + "include!(".len()..]
+    };
+    let rest = rest.trim();
+    let open = rest.find(['<', '"'])?;
+    let close = rest[open + 1..].find(['>', '"'])? + open + 1;
+    Some(rest[open + 1..close].to_string())
 }
 
 fn is_private_include(line: &str) -> bool {
-    let line = line.trim();
-    let Some(rest) = line.strip_prefix("#include") else {
-        return false;
-    };
-    let path = rest
-        .trim()
-        .trim_matches(|c| c == '<' || c == '>' || c == '"');
-    path.contains("/private/")
-        || path.contains("/qpa/")
-        || path.starts_with("private/")
-        || path.starts_with("qpa/")
-        || path.ends_with("_p.h")
+    included_path(line).is_some_and(|path| {
+        path.contains("/private/")
+            || path.contains("/qpa/")
+            || path.starts_with("private/")
+            || path.starts_with("qpa/")
+            || path.ends_with("_p.h")
+    })
 }
 
 fn name(path: &Path) -> String {
     path.file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
+}
+
+/// The include check finds private headers also behind a spaced `#`, a comment or `include!`.
+#[test]
+fn ac_m6_36_5_a_private_include_forms() {
+    for (line, private) in [
+        ("#include <QtGui/private/qguiapplication_p.h>", true),
+        ("# include <QtGui/private/qguiapplication_p.h>", true),
+        ("#  include <qguiapplication_p.h> // x", true),
+        ("#include \"qwindow_p.h\" /* c */", true),
+        ("#include <qpa/qwindowsysteminterface.h>", true),
+        ("    include!(\"QtGui/private/qguiapplication_p.h\");", true),
+        ("#include <QQuickItem>", false),
+        ("#include \"src/smoke_common.h\"", false),
+        ("// #include <QtGui/private/x_p.h> was here", false),
+    ] {
+        assert_eq!(is_private_include(line), private, "{line}");
+    }
 }
 
 /// AC-M6-36-5 (a), (b): no private Qt symbol or header in the smoke sources; clicks, drags and
@@ -53,6 +103,25 @@ fn name(path: &Path) -> String {
 fn ac_m6_36_5_smoke_input_through_qtest_only() {
     let sources = gui_sources();
     for (path, text) in &sources {
+        let smoke = name(path).starts_with("smoke");
+        if smoke {
+            for line in text.lines().map(without_comments) {
+                for bypass in ["sendEvent(", "postEvent("] {
+                    assert!(
+                        !line.contains(bypass),
+                        "AC-M6-36-5 (b): {} sends input past QTest: {line}",
+                        name(path)
+                    );
+                }
+                for event in ["QKeyEvent", "QMouseEvent", "QWheelEvent"] {
+                    assert!(
+                        line.trim_start().starts_with("#include") || !line.contains(event),
+                        "AC-M6-36-5 (b): {} builds a {event} itself: {line}",
+                        name(path)
+                    );
+                }
+            }
+        }
         for banned in [
             "qt_handleMouseEvent",
             "qt_handleKeyEvent",

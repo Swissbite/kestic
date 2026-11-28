@@ -52,6 +52,23 @@ fn ac_m6_36_6_b_test_harness_binary_links_qt_test() {
 #[test]
 fn ac_m6_36_6_c_d_deb_without_qt_test() {
     let (_extracted, shipped) = extract_shipped_binary("kestic-m6-s36-qt-test");
+    let needed = needed_libraries(&shipped);
+    for lib in ["libQt6Core", "libQt6Quick"] {
+        assert!(
+            needed.iter().any(|l| l.starts_with(lib)),
+            "precondition: the shipped kestic links {lib}: {needed:?}"
+        );
+    }
+    let imports = Command::new("nm")
+        .args(["-D", "--undefined-only", "--demangle"])
+        .arg(&shipped)
+        .output()
+        .expect("run nm");
+    assert!(imports.status.success(), "nm failed");
+    assert!(
+        !String::from_utf8_lossy(&imports.stdout).contains("QTest"),
+        "AC-M6-36-6 (c): the shipped kestic imports no QTest symbol"
+    );
     assert!(
         !links_qt_test(&shipped),
         "AC-M6-36-6 (c): the shipped kestic lists libQt6Test: {:?}",
