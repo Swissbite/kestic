@@ -339,8 +339,7 @@ struct FakeNotificationsServer {
 
 #[interface(name = "org.freedesktop.Notifications")]
 impl FakeNotificationsServer {
-    // The org.freedesktop.Notifications protocol and the zbus interface macro fix this signature.
-    #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
+    #[allow(clippy::too_many_arguments)]
     fn notify(
         &self,
         app_name: &str,
@@ -349,7 +348,7 @@ impl FakeNotificationsServer {
         summary: &str,
         body: &str,
         _actions: Vec<String>,
-        hints: HashMap<String, OwnedVariant>,
+        hints: &HashMap<String, OwnedVariant>,
         _expire_timeout: i32,
     ) -> u32 {
         let desktop_entry = hints

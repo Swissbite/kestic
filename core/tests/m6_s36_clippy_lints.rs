@@ -11,17 +11,21 @@ use kestic_test_support::workspace::workspace_root;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Lints and groups that no attribute may switch off.
-const PROTECTED_LINTS: [&str; 5] = [
-    "redundant_clone",
-    "needless_pass_by_value",
+/// Lints and groups that no attribute may switch off, as they appear in an `allow(…)` list.
+const PROTECTED_LINTS: [&str; 6] = [
+    "clippy::redundant_clone",
+    "clippy::needless_pass_by_value",
     "clippy::all",
     "clippy::nursery",
     "clippy::pedantic",
+    "warnings",
 ];
 
-/// Directories that never hold Kestic sources.
-const SKIPPED_DIRS: [&str; 3] = ["target", ".git", "node_modules"];
+/// The one lint the exception for a signature fixed by a foreign trait or macro may cover.
+const SIGNATURE_LINT: &str = "clippy::needless_pass_by_value";
+
+/// Directories, relative to the workspace root, that hold no Kestic sources of this checkout.
+const SKIPPED_DIRS: [&str; 4] = ["target", ".git", ".claude/worktrees", "site/node_modules"];
 
 fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
@@ -47,136 +51,371 @@ fn level(entry: &toml::Value) -> Option<&str> {
         .or_else(|| entry.get("level").and_then(toml::Value::as_str))
 }
 
-/// Every file below `dir` (recursive), skipping build output and VCS data.
-fn files_below(dir: &Path, keep: &dyn Fn(&Path) -> bool, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.map_while(Result::ok) {
-        let path = entry.path();
-        let skipped = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| SKIPPED_DIRS.contains(&n));
-        if skipped {
-            continue;
-        }
-        if path.is_dir() {
-            files_below(&path, keep, out);
-        } else if keep(&path) {
-            out.push(path);
+/// Every file below `root` that `keep` accepts, without following symlinks and without the
+/// directories in `skipped` (relative to `root`).
+fn files_below(root: &Path, skipped: &[&str], keep: &dyn Fn(&Path) -> bool) -> Vec<PathBuf> {
+    fn walk(
+        dir: &Path,
+        root: &Path,
+        skipped: &[&str],
+        keep: &dyn Fn(&Path) -> bool,
+        out: &mut Vec<PathBuf>,
+    ) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.map_while(Result::ok) {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                let relative = path.strip_prefix(root).unwrap_or(&path);
+                if !skipped.iter().any(|s| relative == Path::new(s)) {
+                    walk(&path, root, skipped, keep, out);
+                }
+            } else if kind.is_file() && keep(&path) {
+                out.push(path);
+            }
         }
     }
+    let mut out = Vec::new();
+    walk(root, root, skipped, keep, &mut out);
+    out
 }
 
-/// A command-line flag in `line` that switches a lint off or caps all lints.
-fn weakening_flag(line: &str) -> Option<String> {
-    let compact: String = line.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.contains("--cap-lints") {
-        return Some("--cap-lints".to_string());
-    }
-    for flag in [
-        "-A ", "-A", "--allow ", "--allow=", "-W ", "--warn ", "--warn=",
-    ] {
-        for target in ["clippy", "warnings"] {
-            let needle = format!("{flag}{target}");
-            if compact.contains(&needle) {
-                return Some(needle);
+fn rust_sources(root: &Path) -> Vec<PathBuf> {
+    files_below(root, &SKIPPED_DIRS, &|p| {
+        p.extension().and_then(|e| e.to_str()) == Some("rs")
+    })
+}
+
+/// A command-line flag in `text` that switches a lint off or caps all lints. Quotes, brackets and
+/// commas are ignored, so shell arrays and TOML arrays are read like a command line, and a
+/// backslash at the end of a line continues it.
+fn weakening_flag(text: &str) -> Option<String> {
+    let joined = text.replace("\\\n", " ");
+    for line in joined.lines() {
+        let normalised: String = line
+            .chars()
+            .map(|c| if "\"'[](),".contains(c) { ' ' } else { c })
+            .collect();
+        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        for (i, token) in tokens.iter().enumerate() {
+            if token.starts_with("--cap-lints") {
+                return Some(line.trim().to_string());
+            }
+            let lowered = |lint: &str| lint.starts_with("clippy") || lint == "warnings";
+            let split_flag = ["-A", "--allow", "-W", "--warn"].contains(token)
+                && tokens.get(i + 1).is_some_and(|next| lowered(next));
+            let joined_flag = ["-A", "--allow=", "-W", "--warn="]
+                .iter()
+                .any(|flag| token.strip_prefix(flag).is_some_and(lowered));
+            if split_flag || joined_flag {
+                return Some(line.trim().to_string());
             }
         }
     }
     None
 }
 
-/// The text of every outer or inner attribute in `source`, across lines, with the line it starts on.
-fn attributes(source: &str) -> Vec<(usize, String)> {
-    let lines: Vec<&str> = source.lines().collect();
-    let mut out = Vec::new();
-    let mut index = 0;
-    while index < lines.len() {
-        let trimmed = lines[index].trim_start();
-        if trimmed.starts_with("#[") || trimmed.starts_with("#![") {
-            let start = index;
-            let mut text = String::new();
-            let mut depth = 0i32;
-            loop {
-                let line = lines[index].split("//").next().unwrap_or("");
-                for c in line.chars() {
-                    match c {
-                        '[' | '(' => depth += 1,
-                        ']' | ')' => depth -= 1,
-                        _ => {}
+/// `source` with every comment and every string, byte-string and char literal replaced by
+/// spaces (line breaks kept), so attributes can be read without being misled by their text.
+/// The line comments are returned as well: line index and text after the `//`.
+fn mask(source: &str) -> (Vec<char>, Vec<(usize, String)>) {
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = chars.clone();
+    let mut comments = Vec::new();
+    let mut line = 0;
+    let mut i = 0;
+    let blank = |out: &mut Vec<char>, from: usize, to: usize| {
+        for c in &mut out[from..to] {
+            if *c != '\n' {
+                *c = ' ';
+            }
+        }
+    };
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        if c == '\n' {
+            line += 1;
+            i += 1;
+        } else if c == '/' && next == Some('/') {
+            let end = chars[i..]
+                .iter()
+                .position(|&c| c == '\n')
+                .map_or(chars.len(), |p| i + p);
+            comments.push((line, chars[i + 2..end].iter().collect()));
+            blank(&mut out, i, end);
+            i = end;
+        } else if c == '/' && next == Some('*') {
+            let start = i;
+            let mut depth = 0;
+            while i < chars.len() {
+                if chars[i] == '/' && chars.get(i + 1) == Some(&'*') {
+                    depth += 1;
+                    i += 2;
+                } else if chars[i] == '*' && chars.get(i + 1) == Some(&'/') {
+                    depth -= 1;
+                    i += 2;
+                    if depth == 0 {
+                        break;
                     }
+                } else {
+                    line += usize::from(chars[i] == '\n');
+                    i += 1;
                 }
-                text.push_str(line.trim());
-                text.push(' ');
-                if depth <= 0 || index + 1 == lines.len() {
+            }
+            blank(&mut out, start, i.min(chars.len()));
+        } else if c == 'r'
+            && (i == 0
+                || !ident(chars[i - 1])
+                || (chars[i - 1] == 'b' && (i < 2 || !ident(chars[i - 2]))))
+            && matches!(next, Some('"' | '#'))
+        {
+            let hashes = chars[i + 1..].iter().take_while(|&&c| c == '#').count();
+            if chars.get(i + 1 + hashes) != Some(&'"') {
+                i += 1;
+                continue;
+            }
+            let start = i + 1 + hashes + 1;
+            let mut end = start;
+            while end < chars.len() {
+                if chars[end] == '"'
+                    && chars[end + 1..].iter().take_while(|&&c| c == '#').count() >= hashes
+                {
                     break;
                 }
-                index += 1;
+                end += 1;
             }
-            out.push((start, text));
+            line += chars[start..end.min(chars.len())]
+                .iter()
+                .filter(|&&c| c == '\n')
+                .count();
+            blank(&mut out, start, end.min(chars.len()));
+            i = (end + 1 + hashes).min(chars.len());
+        } else if c == '"' {
+            let start = i + 1;
+            let mut end = start;
+            while end < chars.len() && chars[end] != '"' {
+                end += if chars[end] == '\\' { 2 } else { 1 };
+            }
+            let end = end.min(chars.len());
+            line += chars[start..end].iter().filter(|&&c| c == '\n').count();
+            blank(&mut out, start, end);
+            i = end + 1;
+        } else if c == '\'' {
+            // A char literal (`'x'`, `'\n'`, `'\u{…}'`); otherwise a lifetime or label.
+            let end = if next == Some('\\') {
+                // The escaped character itself may be a quote: `'\''`.
+                chars
+                    .get(i + 3..)
+                    .and_then(|rest| rest.iter().position(|&c| c == '\''))
+                    .map(|p| i + 3 + p)
+            } else if chars.get(i + 2) == Some(&'\'') {
+                Some(i + 2)
+            } else {
+                None
+            };
+            if let Some(end) = end {
+                blank(&mut out, i + 1, end);
+                i = end + 1;
+            } else {
+                i += 1;
+            }
+        } else {
+            i += 1;
         }
-        index += 1;
+    }
+    (out, comments)
+}
+
+/// One attribute: its masked text without whitespace, whether it is an inner attribute, the line
+/// it starts on and the index just after its closing `]`.
+struct Attribute {
+    text: String,
+    inner: bool,
+    line: usize,
+    end: usize,
+}
+
+/// The attribute that starts at `start` (a `#`) in the masked text, if one does.
+fn attribute_at(code: &[char], start: usize, line: usize) -> Option<Attribute> {
+    let mut i = start + 1;
+    let skip_space = |i: &mut usize| {
+        while *i < code.len() && code[*i].is_whitespace() {
+            *i += 1;
+        }
+    };
+    skip_space(&mut i);
+    let inner = code.get(i) == Some(&'!');
+    if inner {
+        i += 1;
+        skip_space(&mut i);
+    }
+    if code.get(i) != Some(&'[') {
+        return None;
+    }
+    let mut depth = 0i32;
+    let mut end = i;
+    while end < code.len() {
+        match code[end] {
+            '[' | '(' | '{' => depth += 1,
+            ']' | ')' | '}' => depth -= 1,
+            _ => {}
+        }
+        end += 1;
+        if depth == 0 {
+            break;
+        }
+    }
+    let text = code[start..end]
+        .iter()
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    Some(Attribute {
+        text,
+        inner,
+        line,
+        end,
+    })
+}
+
+fn attributes(code: &[char]) -> Vec<Attribute> {
+    let mut out = Vec::new();
+    let mut line = 0;
+    for (i, &c) in code.iter().enumerate() {
+        if c == '\n' {
+            line += 1;
+        } else if c == '#'
+            && let Some(attribute) = attribute_at(code, i, line)
+        {
+            out.push(attribute);
+        }
     }
     out
 }
 
-/// The protected lint that `attribute` switches off, if any.
-fn switched_off_lint(attribute: &str) -> Option<&'static str> {
-    let compact: String = attribute.chars().filter(|c| !c.is_whitespace()).collect();
-    let body = compact
-        .strip_prefix("#![")
-        .or_else(|| compact.strip_prefix("#["))?;
-    let lowers = ["allow(", "expect("].iter().any(|kind| {
-        body.starts_with(kind)
-            || (body.starts_with("cfg_attr(") && body.contains(&format!(",{kind}")))
-    });
-    if !lowers {
-        return None;
+/// The protected lints an attribute switches off (`allow`, `expect`, also inside `cfg_attr`).
+fn switched_off_lints(attribute: &Attribute) -> Vec<&'static str> {
+    let tokens: Vec<&str> = attribute
+        .text
+        .split(['#', '!', '[', ']', '(', ')', ',', '='])
+        .filter(|t| !t.is_empty())
+        .collect();
+    let lowers = |t: &&str| *t == "allow" || *t == "expect";
+    let switches_off = match tokens.first() {
+        Some(first) if lowers(first) => true,
+        Some(&"cfg_attr") => tokens.iter().any(lowers),
+        _ => false,
+    };
+    if !switches_off {
+        return Vec::new();
     }
-    PROTECTED_LINTS.iter().copied().find(|lint| {
-        let lint: String = lint.chars().filter(|c| !c.is_whitespace()).collect();
-        if lint.contains("::") {
-            body.contains(&lint)
-        } else {
-            body.contains(&format!("clippy::{lint}"))
-        }
-    })
-}
-
-/// An attribute directly on a `fn` (other attributes in between are fine) with a `//` comment
-/// right above it or on its line: the one allowed form, for a signature that a foreign trait or
-/// macro fixes.
-fn is_commented_fn_exception(lines: &[&str], start: usize) -> bool {
-    let commented = lines[start].contains("//")
-        || start
-            .checked_sub(1)
-            .is_some_and(|above| lines[above].trim_start().starts_with("//"));
-    let applies_to_fn = lines[start + 1..]
+    PROTECTED_LINTS
         .iter()
-        .map(|l| l.trim_start())
-        .find(|l| !l.is_empty() && !l.starts_with("#[") && !l.starts_with("//"))
-        .is_some_and(|l| {
-            l.starts_with("fn ")
-                || l.starts_with("pub fn ")
-                || l.starts_with("pub(crate) fn ")
-                || l.starts_with("async fn ")
-                || l.starts_with("pub async fn ")
-        });
-    commented && applies_to_fn && !lines[start].trim_start().starts_with("#![")
+        .copied()
+        .filter(|lint| tokens.contains(lint))
+        .collect()
 }
 
-/// Every attribute in `source` that switches off a protected lint without the allowed exception.
-fn forbidden_attributes(source: &str) -> Vec<String> {
-    let lines: Vec<&str> = source.lines().collect();
-    attributes(source)
-        .into_iter()
-        .filter_map(|(start, text)| {
-            let lint = switched_off_lint(&text)?;
-            (!is_commented_fn_exception(&lines, start))
-                .then(|| format!("line {}: {lint} in {}", start + 1, text.trim()))
+/// After `from`, past whitespace and further attributes, the item is a function.
+fn applies_to_fn(code: &[char], from: usize) -> bool {
+    let mut i = from;
+    loop {
+        while i < code.len() && code[i].is_whitespace() {
+            i += 1;
+        }
+        if code.get(i) == Some(&'#')
+            && let Some(attribute) = attribute_at(code, i, 0)
+        {
+            i = attribute.end;
+            continue;
+        }
+        break;
+    }
+    let rest: String = code[i..code.len().min(i + 200)].iter().collect();
+    for word in rest.split_whitespace() {
+        match word {
+            "fn" => return true,
+            "const" | "async" | "unsafe" | "extern" | "default" | "pub" => {}
+            w if w.starts_with("pub(") && w.ends_with(')') => {}
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// A plain `//` comment with text on the attribute's line, or directly above the attributes
+/// stacked on its item.
+fn has_reason_comment(
+    source_lines: &[&str],
+    comments: &[(usize, String)],
+    attribute: &Attribute,
+) -> bool {
+    let is_reason = |line: usize| {
+        comments.iter().any(|(l, text)| {
+            *l == line
+                && !text.starts_with('/')
+                && !text.starts_with('!')
+                && !text.trim().is_empty()
         })
+    };
+    if is_reason(attribute.line) {
+        return true;
+    }
+    let mut above = attribute.line;
+    while above > 0 {
+        above -= 1;
+        let trimmed = source_lines.get(above).map_or("", |l| l.trim_start());
+        if trimmed.starts_with("#[") {
+            continue;
+        }
+        return trimmed.starts_with("//") && is_reason(above);
+    }
+    false
+}
+
+/// Every attribute in `source` that switches off a protected lint without the allowed exception:
+/// only `needless_pass_by_value`, directly on a function, with a comment giving the reason.
+fn forbidden_attributes(source: &str) -> Vec<String> {
+    let (code, comments) = mask(source);
+    let source_lines: Vec<&str> = source.lines().collect();
+    attributes(&code)
+        .into_iter()
+        .filter_map(|attribute| {
+            let lints = switched_off_lints(&attribute);
+            if lints.is_empty() {
+                return None;
+            }
+            let exception = lints == [SIGNATURE_LINT]
+                && !attribute.inner
+                && applies_to_fn(&code, attribute.end)
+                && has_reason_comment(&source_lines, &comments, &attribute);
+            (!exception).then(|| {
+                format!(
+                    "line {}: {} in {}",
+                    attribute.line + 1,
+                    lints.join(", "),
+                    attribute.text
+                )
+            })
+        })
+        .collect()
+}
+
+/// The `cargo clippy` lines of the `justfile` recipe `_clippy`.
+fn clippy_recipe_lines(justfile: &str) -> Vec<String> {
+    justfile
+        .lines()
+        .skip_while(|l| !l.starts_with("_clippy:"))
+        .skip(1)
+        .take_while(|l| l.starts_with(char::is_whitespace) || l.is_empty())
+        .map(str::trim)
+        .filter(|l| l.starts_with("cargo clippy"))
+        .map(str::to_string)
         .collect()
 }
 
@@ -185,7 +424,7 @@ fn ac_m6_36_11_workspace_lints() {
     let manifest = workspace_manifest();
     let lints = clippy_lints(&manifest);
 
-    // AC-M6-36-11 (a): both lints are switched on on top of the defaults.
+    // AC-M6-36-11 (a): both lints are switched on on top of the defaults, which stay on.
     for lint in ["redundant_clone", "needless_pass_by_value"] {
         assert_eq!(
             lints.get(lint).and_then(level),
@@ -193,6 +432,11 @@ fn ac_m6_36_11_workspace_lints() {
             "AC-M6-36-11 (a): [workspace.lints.clippy] sets {lint} = \"warn\""
         );
     }
+    assert_eq!(
+        lints.get("all").and_then(level),
+        Some("warn"),
+        "AC-M6-36-11 (a): the default lints (clippy::all) stay switched on"
+    );
 
     // AC-M6-36-11 (b): pedantic and nursery stay off.
     for group in ["pedantic", "nursery"] {
@@ -227,59 +471,81 @@ fn ac_m6_36_11_workspace_lints() {
     // AC-M6-36-11 (d): no build script or CI configuration weakens a lint.
     let root = workspace_root();
     let mut scripts = vec![root.join("justfile")];
-    files_below(&root.join(".cargo"), &|_| true, &mut scripts);
-    files_below(&root.join(".github/workflows"), &|_| true, &mut scripts);
-    files_below(&root.join(".github/scripts"), &|_| true, &mut scripts);
+    for dir in [".cargo", ".github", ".devcontainer"] {
+        scripts.extend(files_below(&root.join(dir), &[], &|_| true));
+    }
     assert!(scripts.len() > 3, "precondition: the CI files are found");
     let weakened: Vec<String> = scripts
         .iter()
-        .flat_map(|path| {
-            read(path)
-                .lines()
-                .enumerate()
-                .filter_map(|(n, line)| {
-                    weakening_flag(line).map(|flag| format!("{}:{}: {flag}", path.display(), n + 1))
-                })
-                .collect::<Vec<_>>()
+        .filter_map(|path| {
+            let text = String::from_utf8(fs::read(path).ok()?).ok()?;
+            weakening_flag(&text).map(|line| format!("{}: {line}", path.display()))
         })
         .collect();
     assert!(
         weakened.is_empty(),
         "AC-M6-36-11 (d): nothing weakens a clippy lint, found {weakened:#?}"
     );
+
+    // AC-M6-36-11 (e): `just verify` runs clippy with -D warnings over all targets, without and
+    // with the test harness.
+    let clippy = clippy_recipe_lines(&read(&root.join("justfile")));
+    let strict: Vec<&String> = clippy
+        .iter()
+        .filter(|l| {
+            l.contains("--workspace")
+                && l.contains("--all-targets")
+                && l.ends_with("-- -D warnings")
+        })
+        .collect();
+    assert_eq!(
+        strict.len(),
+        2,
+        "AC-M6-36-11 (e): two strict clippy runs in _clippy, found {clippy:#?}"
+    );
+    assert_eq!(
+        strict
+            .iter()
+            .filter(|l| l.contains("--features kestic-gui/test-harness"))
+            .count(),
+        1,
+        "AC-M6-36-11 (e): one strict clippy run with the test harness, found {clippy:#?}"
+    );
 }
 
 #[test]
 fn ac_m6_36_11_d_weakening_flags_are_recognised() {
-    // AC-M6-36-11 (d): the search would find each form that weakens a lint.
-    for line in [
+    // AC-M6-36-11 (d): the search finds each form that weakens a lint.
+    for text in [
         "cargo clippy -- -D warnings -A clippy::redundant_clone",
         "cargo clippy -- -Aclippy::needless_pass_by_value",
         "cargo clippy -- --allow clippy::all",
         "cargo clippy -- --allow=clippy::all",
+        "cargo clippy -- -A \"clippy::all\"",
+        "cargo clippy -- -A 'clippy::all'",
+        "cargo clippy -- -D warnings -A \\\n    clippy::all",
         "RUSTFLAGS=\"--cap-lints warn\" cargo clippy",
         "export RUSTFLAGS='-A warnings'",
         "cargo clippy -- -W clippy::redundant_clone",
+        "rust_flags+=(\"-A\" \"clippy::redundant_clone\")",
+        "rustflags = [\"-A\", \"clippy::all\"]",
+        "rustflags = [\"--cap-lints\", \"allow\"]",
     ] {
-        assert!(weakening_flag(line).is_some(), "found: {line}");
+        assert!(weakening_flag(text).is_some(), "found: {text}");
     }
-    for line in [
+    for text in [
         "cargo clippy --workspace --all-targets -- -D warnings",
         "read -ra rust_flags <<< \"${RUSTFLAGS:-}\"",
         "rust_flags+=(\"--remap-path-prefix=$map\")",
+        "grep -A 3 warnings log.txt",
     ] {
-        assert_eq!(weakening_flag(line), None, "not found: {line}");
+        assert_eq!(weakening_flag(text), None, "not found: {text}");
     }
 }
 
 #[test]
 fn ac_m6_36_12_no_lint_switched_off_in_source() {
-    let mut sources = Vec::new();
-    files_below(
-        &workspace_root(),
-        &|p| p.extension().and_then(|e| e.to_str()) == Some("rs"),
-        &mut sources,
-    );
+    let sources = rust_sources(&workspace_root());
     assert!(sources.len() > 200, "precondition: the sources are found");
 
     // AC-M6-36-12 (a): no attribute switches off a protected lint outside the allowed exception.
@@ -298,32 +564,82 @@ fn ac_m6_36_12_no_lint_switched_off_in_source() {
 }
 
 #[test]
+fn ac_m6_36_12_a_search_covers_every_source_directory() {
+    // AC-M6-36-12 (a): only the build output at the root is skipped, not a source directory
+    // that happens to be named `target`.
+    let root = tempfile::tempdir().expect("tempdir");
+    for dir in ["target", "core/src/target", ".claude/worktrees/x"] {
+        fs::create_dir_all(root.path().join(dir)).expect("mkdir");
+        fs::write(root.path().join(dir).join("a.rs"), "").expect("write");
+    }
+    let found: Vec<PathBuf> = rust_sources(root.path())
+        .into_iter()
+        .map(|p| {
+            p.strip_prefix(root.path())
+                .expect("below root")
+                .to_path_buf()
+        })
+        .collect();
+    assert_eq!(found, vec![PathBuf::from("core/src/target/a.rs")]);
+}
+
+#[test]
 fn ac_m6_36_12_a_search_recognises_every_form() {
-    // AC-M6-36-12 (a): each level (crate, module, impl, function) and each attribute form is found.
+    // AC-M6-36-12 (a): each level (crate, module, impl, function) and each attribute form is
+    // found exactly once.
     let forbidden = [
         "#![allow(clippy::redundant_clone)]\nfn main() {}",
         "#![expect(clippy::pedantic)]",
         "#![cfg_attr(test, allow(clippy::nursery))]",
+        "#![allow(warnings)]",
+        "#![cfg_attr(test, allow(warnings))]",
         "mod m {\n    #![allow(clippy::all)]\n}",
         "#[allow(clippy::needless_pass_by_value)]\nmod m {}",
         "#[allow(\n    clippy::too_many_lines,\n    clippy::redundant_clone,\n)]\nimpl A {}",
         "#[expect(clippy::needless_pass_by_value, reason = \"x\")]\nfn f(a: String) {}",
         "#[cfg_attr(feature = \"x\", expect(clippy::redundant_clone))]\nfn f() {}",
         "#[allow(clippy :: redundant_clone)]\nfn f() {}",
+        "# [allow(clippy::redundant_clone)]\nfn f() {}",
         "#[allow(clippy::needless_pass_by_value)]\npub fn f(a: String) {}",
         "// reason\n#[allow(clippy::needless_pass_by_value)]\nimpl A {}",
+        "/// Does x.\n#[allow(clippy::needless_pass_by_value)]\nfn f(a: String) {}",
+        "//\n#[allow(clippy::needless_pass_by_value)]\nfn f(a: String) {}",
+        "// hmm\n#[allow(clippy::redundant_clone)]\nfn f() {}",
+        "// hmm\n#[allow(clippy::all)]\nfn f() {}",
+        "// hmm\n#[allow(clippy::needless_pass_by_value, clippy::redundant_clone)]\nfn f() {}",
+        "#[doc = \"see https://example.org\"]\n#[allow(clippy::redundant_clone)]\nfn f() {}",
+        "#[cfg_attr(feature = \"http://x\", allow(clippy::redundant_clone))]\nfn f() {}",
+        "#[allow(\n    clippy::too_many_lines,\n    reason = \"see x))\",\n    clippy::redundant_clone,\n)]\nfn f() {}",
+        "#[derive(Debug)] #[allow(clippy::redundant_clone)]\nstruct A;",
+        "fn f() { let c = '\"'; }\n#[allow(clippy::redundant_clone)]\nfn g() {}",
+        "fn f<'a>(x: &'a str) {}\n#[allow(clippy::redundant_clone)]\nfn g() {}",
+        "fn f() { let c = '\\''; }\n#[allow(clippy::redundant_clone)]\nfn g() {}",
     ];
     for source in forbidden {
-        assert_eq!(forbidden_attributes(source).len(), 1, "found: {source}");
+        assert_eq!(
+            forbidden_attributes(source).len(),
+            1,
+            "found once: {source}"
+        );
     }
 
-    // AC-M6-36-12 (a): the exception directly on a commented function, and other lints, pass.
+    // AC-M6-36-12 (a): the exception directly on a commented function, other lints, and
+    // attribute text inside a string or comment pass.
     let allowed = [
         "// The signature is fixed by the zbus interface macro.\n#[allow(clippy::needless_pass_by_value)]\nfn notify(a: String) {}",
         "#[allow(clippy::needless_pass_by_value)] // fixed by the Notify protocol\n#[must_use]\npub async fn notify(a: String) {}",
+        "    // zbus passes the header by value.\n    #[allow(clippy::needless_pass_by_value)]\n    #[zbus(name = \"X\")]\n    fn x(&self) {}",
+        "// zbus\n#[allow(clippy::needless_pass_by_value)]\npub(super) fn f(a: String) {}",
+        "// zbus\n#[allow(clippy::needless_pass_by_value)]\nconst fn f(a: String) {}",
+        "// zbus\n#[allow(clippy::needless_pass_by_value)]\n#[cfg(\n    test\n)]\nfn f(a: String) {}",
         "#[allow(clippy::too_many_arguments)]\nfn f() {}",
+        "#[allow(clippy::allow_attributes)]\nfn f() {}",
         "#![allow(dead_code)]",
         "#[cfg(test)]\nmod tests {}",
+        "let s = r#\"\n#[allow(clippy::redundant_clone)]\nfn f() {}\n\"#;",
+        "let s = \"#[allow(clippy::redundant_clone)]\";",
+        "// #[allow(clippy::redundant_clone)]\nfn f() {}",
+        "/* #![allow(warnings)] */",
     ];
     for source in allowed {
         assert_eq!(

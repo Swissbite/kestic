@@ -659,7 +659,7 @@ struct FakeJobViewServerV2 {
 
 #[interface(name = "org.kde.JobViewServerV2")]
 impl FakeJobViewServerV2 {
-    // The zbus interface macro fixes the argument types of this D-Bus method.
+    // The zbus interface macro passes the message header by value.
     #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "requestView")]
     fn request_view(
@@ -667,7 +667,7 @@ impl FakeJobViewServerV2 {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         desktop_entry: &str,
         capabilities: i32,
-        hints: HashMap<String, OwnedVariant>,
+        hints: &HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
         if let Some(sender) = hdr.sender() {
             *self.recorder.request_sender.lock().expect("lock") = sender.to_string();
@@ -690,13 +690,13 @@ struct FakeJobViewV3 {
 
 #[interface(name = "org.kde.JobViewV3")]
 impl FakeJobViewV3 {
-    // The zbus interface macro fixes the argument types of this D-Bus method.
+    // The zbus interface macro passes the message header by value.
     #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "update")]
     fn update(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
-        properties: HashMap<String, OwnedVariant>,
+        properties: &HashMap<String, OwnedVariant>,
     ) {
         if let Some(sender) = hdr.sender() {
             *self.recorder.update_sender.lock().expect("lock") = sender.to_string();
@@ -724,7 +724,7 @@ impl FakeJobViewV3 {
         self.recorder.updates.lock().expect("lock").push((pct, msg));
     }
 
-    // The zbus interface macro fixes the argument types of this D-Bus method.
+    // The zbus interface macro passes the message header by value.
     #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "terminate")]
     fn terminate(
@@ -732,7 +732,7 @@ impl FakeJobViewV3 {
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         error_code: u32,
         error_message: &str,
-        _hints: HashMap<String, OwnedVariant>,
+        _hints: &HashMap<String, OwnedVariant>,
     ) {
         if let Some(sender) = hdr.sender() {
             *self.recorder.terminate_sender.lock().expect("lock") = sender.to_string();
@@ -815,13 +815,11 @@ struct FakePortalInhibit {
 
 #[interface(name = "org.freedesktop.portal.Inhibit")]
 impl FakePortalInhibit {
-    // The zbus interface macro fixes the argument types of this D-Bus method.
-    #[allow(clippy::needless_pass_by_value)]
     fn inhibit(
         &self,
         _window: &str,
         flags: u32,
-        options: HashMap<String, OwnedVariant>,
+        options: &HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
         // Count last: tests wait for the count and then read flags and reason.
         self.recorder.last_flags.store(flags, Ordering::SeqCst);

@@ -791,9 +791,8 @@ fn ac_m5_01_8_line_stays_for_a_destination_moved_meanwhile() {
             let cats_before = rig.wrapper.of('S', "cat").len();
             rig.wrapper.hold("cat");
             let client = rig.daemon.client.clone();
-            let updating = std::thread::spawn({
-                let moved = moved;
-                move || client.update_destination_now(&moved, "connect", &password, &none(), true)
+            let updating = std::thread::spawn(move || {
+                client.update_destination_now(&moved, "connect", &password, &none(), true)
             });
             // The update checks the repository at the new address with restic.
             rig.wrapper
