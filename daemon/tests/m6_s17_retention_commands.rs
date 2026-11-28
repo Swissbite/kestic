@@ -164,7 +164,7 @@ fn ac_m6_17_4_run_detail_shows_plan_and_forget() {
                     );
                 }
 
-                let run_id: RunId = second.id.clone();
+                let run_id: RunId = second.id;
                 daemon.stop();
                 let (_, state_dir) = daemon_paths(root, &sub);
                 let stored = RunHistory::open(&state_dir)

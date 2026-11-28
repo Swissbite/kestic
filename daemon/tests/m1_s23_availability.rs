@@ -139,7 +139,7 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
                 ..sandbox_run_config(root)
             };
 
-            let handle = thread::spawn(move || run_daemon(run_cfg));
+            let handle = thread::spawn(move || run_daemon(&run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
@@ -160,8 +160,8 @@ fn ac_m1_23_1_23_2_23_3_23_4_dbus_and_tray_availability_updates_with_rest_server
             .expect("dest");
             connect_rest_repo(&client, &restic_bin, &server, &dest);
 
-            let backup = Backup::new("REST Backup", Source::folder(&src_dir), dest.id.clone())
-                .expect("backup");
+            let backup =
+                Backup::new("REST Backup", Source::folder(&src_dir), dest.id).expect("backup");
             let backup_id = client.add_backup(&backup).expect("AddBackup");
 
             // Initially reachable & enabled in tray menu.

@@ -129,7 +129,7 @@ fn ac_m5_06_8_restic_waits_during_replacement() {
     });
 
     let (probe_done, probe_rx) = mpsc::channel();
-    let probe_bin = restic.clone();
+    let probe_bin = restic;
     let probe_dir = dir.path().join("probe");
     let probing = thread::spawn(move || {
         probe(&probe_bin, &probe_dir);

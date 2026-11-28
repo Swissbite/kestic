@@ -164,7 +164,7 @@ fn ac_m3_14_8_update_backup_validates_before_writing_config() {
             }
 
             // (a)+(c) a valid draft is written to config.toml only after validation succeeded.
-            let mut valid = backup.clone();
+            let mut valid = backup;
             valid.schedule = Schedule::Daily {
                 hour: 8,
                 minute: 30,

@@ -311,7 +311,7 @@ impl ReleaseMock {
                     if let Ok(stream) = stream {
                         let routes = routes.clone();
                         let requests = Arc::clone(&requests);
-                        std::thread::spawn(move || serve(stream, &routes, &requests));
+                        std::thread::spawn(move || serve(&stream, &routes, &requests));
                     }
                 }
             })
@@ -369,8 +369,8 @@ impl Drop for ReleaseMock {
 /// Mark in the request log of a request that asked for GitHub's JSON media type.
 const JSON_ACCEPTED: &str = "[json]";
 
-fn serve(stream: TcpStream, routes: &HashMap<String, Route>, requests: &Mutex<Vec<String>>) {
-    let mut reader = BufReader::new(&stream);
+fn serve(stream: &TcpStream, routes: &HashMap<String, Route>, requests: &Mutex<Vec<String>>) {
+    let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
     if reader.read_line(&mut request_line).is_err() {
         return;

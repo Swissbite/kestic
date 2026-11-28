@@ -478,7 +478,7 @@ fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
             fs::create_dir_all(&src_dir).expect("mkdir src");
             fs::write(src_dir.join("f.txt"), b"x").expect("write");
             let mut backup =
-                Backup::new("RealClock", Source::folder(&src_dir), dest.id.clone()).expect("bk");
+                Backup::new("RealClock", Source::folder(&src_dir), dest.id).expect("bk");
             backup.schedule = Schedule::Daily {
                 hour: due.hour(),
                 minute: due.minute(),

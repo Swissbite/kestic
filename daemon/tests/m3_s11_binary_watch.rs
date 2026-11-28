@@ -115,8 +115,7 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             let dest =
                 Destination::new("LocalS11", DestinationKind::Local { path: repo_dir }).expect("d");
             connect_local_repo(&client, &restic_bin, &dest);
-            let mut bk =
-                Backup::new("BusyBk", Source::folder(&src_dir), dest.id.clone()).expect("bk");
+            let mut bk = Backup::new("BusyBk", Source::folder(&src_dir), dest.id).expect("bk");
             bk.schedule = Schedule::ManualOnly;
             let bid_str = client.add_backup(&bk).expect("add");
             let bid = BackupId::parse(&bid_str).expect("bid");

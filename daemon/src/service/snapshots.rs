@@ -139,7 +139,7 @@ pub(crate) fn list_backup_snapshots_unlocked(
     };
     let configured: Vec<&str> = configured.iter().map(String::as_str).collect();
 
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(|e| map_provider_err(&e))?;
     run_lease.bind(&resolved.binary);
     let list_deps = ListDeps {
         resolved: &resolved,
@@ -181,7 +181,7 @@ pub(crate) fn list_destination_snapshots_unlocked(
         (dest, backups, guard.restic_deps())
     };
 
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(|e| map_provider_err(&e))?;
     run_lease.bind(&resolved.binary);
     let list_deps = ListDeps {
         resolved: &resolved,

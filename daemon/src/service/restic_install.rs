@@ -320,11 +320,11 @@ pub fn start_restic_install_async(
         };
         (install_id, worker)
     };
-    thread::spawn(move || run_install(worker));
+    thread::spawn(move || run_install(&worker));
     Ok(install_id)
 }
 
-fn run_install(worker: InstallWorker) {
+fn run_install(worker: &InstallWorker) {
     let _guard = FinishGuard {
         progress: Arc::clone(&worker.progress),
         clock: Arc::clone(&worker.clock),

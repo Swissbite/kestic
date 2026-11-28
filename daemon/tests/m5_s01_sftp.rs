@@ -438,7 +438,7 @@ fn ac_m5_01_4_unknown_host_key_is_trusted_only_into_kestics_file() {
                     Some(ConnectionTestCode::UnknownHostKey),
                     "(a) {tested:?}"
                 );
-                let key = tested.host_key.clone().expect("(a) host key to confirm");
+                let key = tested.host_key.expect("(a) host key to confirm");
                 assert_eq!(key.key_type, "ssh-ed25519", "(a) key type");
                 let fingerprint = Command::new("ssh-keygen")
                     .args(["-l", "-E", "sha256", "-f"])
@@ -778,11 +778,7 @@ fn ac_m5_01_8_host_line_goes_with_the_last_destination_on_the_server() {
                     .remove_destination(first.id.as_str())
                     .expect("RemoveDestination first");
                 // (a)
-                assert_eq!(
-                    kestic_lines(),
-                    vec![line.clone()],
-                    "(a) line removed too early"
-                );
+                assert_eq!(kestic_lines(), vec![line], "(a) line removed too early");
                 assert_eq!(read(&p.user), user_before, "(a) ~/.ssh/known_hosts changed");
 
                 rig.daemon
@@ -828,9 +824,8 @@ fn ac_m5_01_8_line_stays_for_a_destination_added_meanwhile() {
             let inits_before = rig.wrapper.of('S', "init").len();
             rig.wrapper.hold("init");
             let client = rig.daemon.client.clone();
-            let adding = std::thread::spawn({
-                let second = second.clone();
-                move || client.add_destination(&second, "init", &strong_password(), &no_secrets())
+            let adding = std::thread::spawn(move || {
+                client.add_destination(&second, "init", &strong_password(), &no_secrets())
             });
             // The host key of the second destination was checked; restic now creates its
             // repository.
@@ -849,7 +844,7 @@ fn ac_m5_01_8_line_stays_for_a_destination_added_meanwhile() {
             // (a)
             assert_eq!(
                 kestic_lines(),
-                vec![line.clone()],
+                vec![line],
                 "(a) line removed while the second destination was being added"
             );
             rig.daemon.stop();
@@ -1059,8 +1054,8 @@ fn m5_01_rejected_key_in_a_run_is_a_login_error() {
             let src = rig.dir.join("src");
             fs::create_dir_all(&src).expect("mkdir src");
             fs::write(src.join("file.txt"), b"hello sftp").expect("write source");
-            let backup = Backup::new("Documents", Source::folder(&src), dest.id.clone())
-                .expect("valid backup");
+            let backup =
+                Backup::new("Documents", Source::folder(&src), dest.id).expect("valid backup");
             let backup_id =
                 BackupId::parse(rig.daemon.client.add_backup(&backup).expect("AddBackup"))
                     .expect("backup id");

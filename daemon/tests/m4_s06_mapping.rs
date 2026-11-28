@@ -100,7 +100,7 @@ fn ac_m4_06_1_restore_lands_in_the_users_home() {
                 .into_owned();
             assert_eq!(
                 suggestion.mapping,
-                Some((user.clone(), home_name)),
+                Some((user, home_name)),
                 "(b) mapping old user → user"
             );
             let (preview_id, _) = fx.preview(

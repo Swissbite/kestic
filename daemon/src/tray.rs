@@ -162,11 +162,9 @@ struct KesticTray {
 impl KesticTray {
     fn emit(&self, action: TrayAction) {
         if let Some(tx) = &self.action_tx {
-            let _ = tx.send(action.clone());
-        }
-        if matches!(action, TrayAction::RequestQuit)
+            let _ = tx.send(action);
+        } else if matches!(action, TrayAction::RequestQuit)
             && let Some(tx) = &self.quit_tx
-            && self.action_tx.is_none()
         {
             let _ = tx.send(());
         }

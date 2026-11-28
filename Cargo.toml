@@ -28,6 +28,8 @@ cast_possible_wrap = "warn"
 cast_possible_truncation = "warn"
 map_unwrap_or = "warn"
 duration_suboptimal_units = "warn"
+redundant_clone = "warn"
+needless_pass_by_value = "warn"
 
 [workspace.dependencies]
 cxx = "1.0"

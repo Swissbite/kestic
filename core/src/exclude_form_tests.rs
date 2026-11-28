@@ -101,7 +101,7 @@ fn ac_m6_34_2_exclude_form_writes_like_former_qml() {
 
     let last_cr = ExcludeForm {
         lines_text: "a\r".to_string(),
-        ..form.clone()
+        ..form
     };
     assert_eq!(
         last_cr.to_rules().lines,

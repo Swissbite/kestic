@@ -986,11 +986,8 @@ fn ac_m6_36_4_sigterm_lifecycle() {
             assert_eq!(status.code(), Some(0), "AC-M6-36-4 (e): exit code");
             // quiet window: no daemon started from the replaced binary takes the name
             thread::sleep(Duration::from_secs(1));
-            let watched_client = KesticClient::from_connection(
-                sni.clone(),
-                "net.daester.Kestic.S36W",
-                KESTIC_OBJECT_PATH,
-            );
+            let watched_client =
+                KesticClient::from_connection(sni, "net.daester.Kestic.S36W", KESTIC_OBJECT_PATH);
             assert!(
                 !watched_client.is_bus_owned().expect("bus owned"),
                 "AC-M6-36-4 (e): no new daemon"

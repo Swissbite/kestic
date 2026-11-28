@@ -303,12 +303,12 @@ fn pause_all_fixture(root: &Path) -> PauseAllFixture {
     let offline = Backup::new(
         "Offline Media",
         Source::folder(root.join("src-missing")),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("offline");
     rig.daemon.client.add_backup(&offline).expect("add offline");
     rig.daemon.client.add_backup(&locked).expect("add locked");
-    let locked_id = locked.id.clone();
+    let locked_id = locked.id;
     wait_for_state(
         &rig.daemon.client,
         Duration::from_secs(5),

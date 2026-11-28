@@ -296,7 +296,7 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
         ..Default::default()
     };
 
-    match kestic_daemon::service::run_daemon(config) {
+    match kestic_daemon::service::run_daemon(&config) {
         Ok(kestic_daemon::service::DaemonOutcome::AlreadyRunning) => {
             println!("Kestic daemon is already running; exiting.");
             ExitCode::SUCCESS

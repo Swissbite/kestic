@@ -44,7 +44,7 @@ fn ac_m6_36_7_revision_follows_the_content() {
         rev,
         "(b) a change gives a new revision"
     );
-    renamed.name = backup.name.clone();
+    renamed.name = backup.name;
     assert_eq!(
         revision_of(&renamed),
         rev,

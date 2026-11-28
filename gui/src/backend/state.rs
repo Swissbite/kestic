@@ -86,7 +86,7 @@ impl qobject::KesticApp {
         }
 
         if let Some((backup_id, reason)) = blocked {
-            self.as_mut().handle_pending_blocked(backup_id, reason);
+            self.as_mut().handle_pending_blocked(&backup_id, reason);
         }
 
         if show_win {
@@ -128,28 +128,28 @@ impl qobject::KesticApp {
         }
     }
 
-    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: String, reason: BlockedReason) {
+    fn handle_pending_blocked(mut self: Pin<&mut Self>, backup_id: &str, reason: BlockedReason) {
         let (backup_name, unmet_text) = {
             let guard = shared_state().lock_unpoisoned();
             guard
                 .state
                 .as_ref()
-                .and_then(|s| lookup_backup_summary(s, &backup_id))
+                .and_then(|s| lookup_backup_summary(s, backup_id))
                 .map_or_else(
-                    || (backup_id.clone(), None),
+                    || (backup_id.to_string(), None),
                     |b| (b.backup.name.clone(), localized_unmet_conditions(b)),
                 )
         };
         if reason == BlockedReason::ConditionNotMet {
             let msg = localized_condition_override_message(&backup_name, unmet_text.as_deref());
             self.as_mut()
-                .set_condition_override_backup_id(QString::from(&backup_id));
+                .set_condition_override_backup_id(QString::from(backup_id));
             self.as_mut()
                 .set_condition_override_backup_name(QString::from(&backup_name));
             self.as_mut()
                 .set_condition_override_message(QString::from(&msg));
             self.as_mut().condition_override_requested(
-                QString::from(&backup_id),
+                QString::from(backup_id),
                 QString::from(&backup_name),
                 QString::from(&msg),
             );

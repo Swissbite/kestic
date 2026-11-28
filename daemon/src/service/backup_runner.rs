@@ -575,7 +575,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
     finalize_backup_run_state(
         &shared_worker,
         &ctx,
-        run,
+        &run,
         outcome,
         &secret_strs,
         supervision.logind.as_mut(),
@@ -613,7 +613,7 @@ fn process_backup_exec_result(
         Ok(res) => process_backup_success_result(ctx, run, res),
         Err(err) => process_backup_error_result(
             run,
-            err,
+            &err,
             ctx.interruption,
             ctx.is_scheduled,
             ctx.secret_strs,
@@ -638,6 +638,7 @@ fn mark_stopped(outcome: &mut BackupPostExecOutcome, run: &mut Run) {
     run.summary_message = Some(summary);
 }
 
+#[derive(Clone, Copy)]
 struct BackupExecContext<'a> {
     shared_worker: &'a Arc<Mutex<DaemonCore>>,
     backup: &'a Backup,
@@ -803,7 +804,7 @@ fn process_backup_success_result(
 
 fn process_backup_error_result(
     run: &mut Run,
-    err: BackupRunError,
+    err: &BackupRunError,
     interruption: Option<Interruption>,
     is_scheduled: bool,
     secret_strs: &[&str],
@@ -817,13 +818,13 @@ fn process_backup_error_result(
             BackupRunError::Destination(DestinationError::Unreachable(_))
         )
     {
-        let localized = localized_backup_run_error(&err);
+        let localized = localized_backup_run_error(err);
         let msg = redact_secrets(&localized, secret_strs);
         transient_backoff_kind = Some(BackoffKind::Network);
         run.pending_reason = Some(PendingReason::DestinationUnreachable);
         (RunStatus::Pending, None, msg)
     } else {
-        let localized = localized_backup_run_error(&err);
+        let localized = localized_backup_run_error(err);
         let msg = redact_secrets(&localized, secret_strs);
         // Pre-start availability failures keep `exit_code = None` (transient);
         // other destination errors carry their restic exit code so permanent errors (Exit 12,
@@ -842,7 +843,7 @@ fn process_backup_error_result(
             BackupRunError::Destination(DestinationError::WrongPassword) => Some(12),
             BackupRunError::Destination(DestinationError::RepositoryMissing(_)) => Some(10),
             BackupRunError::Destination(DestinationError::CommandFailed { exit_code, .. }) => {
-                Some(exit_code)
+                Some(*exit_code)
             }
             _ => Some(1),
         };
@@ -947,7 +948,7 @@ pub(super) fn record_retention(
 fn finalize_backup_run_state(
     shared_worker: &Arc<Mutex<DaemonCore>>,
     ctx: &BackupClaimContext,
-    run: Run,
+    run: &Run,
     outcome: BackupPostExecOutcome,
     secret_strs: &[&str],
     logind_sleep_guard: Option<&mut LogindSleepInhibitor>,
@@ -1000,7 +1001,7 @@ fn finalize_backup_run_state(
             let _ = guard.store_backup_runtime_state(&ctx.backup.id, &rs);
         } else if (outcome.final_status == RunStatus::Error
             && outcome.exit_code.is_some()
-            && !run_blocks_schedule(&run, Transport::of(&ctx.dest.kind)))
+            && !run_blocks_schedule(run, Transport::of(&ctx.dest.kind)))
             || (outcome.final_status == RunStatus::Cancelled
                 && !guard.shutdown_flag.load(Ordering::SeqCst))
         {
@@ -1016,7 +1017,7 @@ fn finalize_backup_run_state(
         guard
             .run_unreadable_cache
             .insert(run_id.clone(), outcome.unreadable_items.clone());
-        if let Err(err) = guard.upsert_run_cached(&run, secret_strs) {
+        if let Err(err) = guard.upsert_run_cached(run, secret_strs) {
             eprintln!("kestic-daemon: failed to record finished run {run_id} in history: {err}");
         }
         if let Err(err) = guard
@@ -1066,7 +1067,7 @@ fn finalize_backup_run_state(
     }
 
     if let Some(conn) = conn_opt {
-        emit_run_updated(conn, &run);
+        emit_run_updated(conn, run);
         emit_status_changed(conn, &state_dto);
     }
 

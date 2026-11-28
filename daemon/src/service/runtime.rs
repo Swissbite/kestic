@@ -45,8 +45,8 @@ use zbus::Connection;
 const PENDING_REPLY_LIMIT: Duration = Duration::from_secs(2);
 
 /// Runs the Kestic daemon service loop (`SingleInstanceLock` + `net.daester.Kestic1` + `TrayHandle`).
-pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
-    let core = Arc::new(Mutex::new(DaemonCore::new(&config)?));
+pub fn run_daemon(config: &DaemonRunConfig) -> Result<DaemonOutcome, String> {
+    let core = Arc::new(Mutex::new(DaemonCore::new(config)?));
     // `SIGTERM` during the start: nothing runs yet, so there is nothing to stop.
     if stop_requested(config.stop_signal.as_ref()) {
         eprintln!("kestic-daemon: SIGTERM before the start completed; exiting");
@@ -134,7 +134,7 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let loop_exit = run_daemon_event_loop(DaemonLoopContext {
         core: &core,
         conn: &conn,
-        config: &config,
+        config,
         action_rx: &action_rx,
         quit_rx: &quit_rx,
         monitor_rx: monitor_rx_and_handle.as_ref().map(|(rx, _)| rx),
@@ -152,14 +152,14 @@ pub fn run_daemon(config: DaemonRunConfig) -> Result<DaemonOutcome, String> {
     };
 
     while let Ok(action) = action_rx.try_recv() {
-        handle_tray_action(&core, &conn, &config, action);
+        handle_tray_action(&core, &conn, config, action);
     }
 
     if let Some((_, handle)) = monitor_rx_and_handle.take() {
         handle.stop();
     }
 
-    shutdown_daemon_and_maybe_reexec(&core, lock, conn, tray, &config, pending_exec_path)
+    shutdown_daemon_and_maybe_reexec(&core, lock, conn, tray, config, pending_exec_path)
 }
 
 /// Why the event loop ended.
@@ -172,6 +172,7 @@ enum LoopExit {
     Signal(Instant),
 }
 
+#[derive(Clone, Copy)]
 struct DaemonLoopContext<'a> {
     core: &'a Arc<Mutex<DaemonCore>>,
     conn: &'a Connection,

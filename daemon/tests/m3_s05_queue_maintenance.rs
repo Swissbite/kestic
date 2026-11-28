@@ -98,7 +98,7 @@ fn ac_m3_05_1_backups_on_same_destination_run_sequentially_second_is_queued() {
                         minute: 0,
                     },
                 );
-                let alpha_id = fx.backup.id.clone();
+                let alpha_id = fx.backup.id;
                 rig.wrapper.hold("backup");
 
                 rig.clock.set(TUESDAY_1200);
@@ -503,7 +503,7 @@ fn finding1_maintenance_run_records_removed_snapshots_prune_and_check() {
                 assert_eq!(
                     stats.forgets,
                     vec![MaintenanceForget {
-                        backup_id: alpha_id.clone(),
+                        backup_id: alpha_id,
                         removed_snapshots: Some(1),
                     }],
                     "{}: (a) removed snapshots per backup",

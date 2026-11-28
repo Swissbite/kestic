@@ -455,7 +455,7 @@ pub struct FakeUDisks2Filesystem {
     pub connection_bus: String,
 }
 
-fn owned(value: Variant<'_>) -> OwnedVariant {
+fn owned(value: &Variant<'_>) -> OwnedVariant {
     value.try_to_owned().expect("owned variant")
 }
 
@@ -487,25 +487,25 @@ impl FakeUDisks2Filesystem {
         let mut block = HashMap::new();
         block.insert(
             "Device".to_string(),
-            owned(Variant::from(nul_terminated(&format!(
+            owned(&Variant::from(nul_terminated(&format!(
                 "/dev/{}",
                 self.device_name
             )))),
         );
         block.insert(
             "IdLabel".to_string(),
-            owned(Variant::from(self.label.as_str())),
+            owned(&Variant::from(self.label.as_str())),
         );
         block.insert(
             "IdUUID".to_string(),
-            owned(Variant::from(self.uuid.as_str())),
+            owned(&Variant::from(self.uuid.as_str())),
         );
         block.insert(
             "Drive".to_string(),
-            owned(Variant::from(self.drive_path().into_inner())),
+            owned(&Variant::from(self.drive_path().into_inner())),
         );
-        block.insert("HintIgnore".to_string(), owned(Variant::from(false)));
-        block.insert("Size".to_string(), owned(Variant::from(self.size_bytes)));
+        block.insert("HintIgnore".to_string(), owned(&Variant::from(false)));
+        block.insert("Size".to_string(), owned(&Variant::from(self.size_bytes)));
         let mut filesystem = HashMap::new();
         let mount_points: Vec<Vec<u8>> = self
             .mount_points
@@ -514,7 +514,7 @@ impl FakeUDisks2Filesystem {
             .collect();
         filesystem.insert(
             "MountPoints".to_string(),
-            owned(Variant::from(mount_points)),
+            owned(&Variant::from(mount_points)),
         );
         let mut block_ifaces = HashMap::new();
         block_ifaces.insert("org.freedesktop.UDisks2.Block".to_string(), block);
@@ -524,12 +524,12 @@ impl FakeUDisks2Filesystem {
         let mut drive = HashMap::new();
         drive.insert(
             "Removable".to_string(),
-            owned(Variant::from(self.removable)),
+            owned(&Variant::from(self.removable)),
         );
-        drive.insert("MediaRemovable".to_string(), owned(Variant::from(false)));
+        drive.insert("MediaRemovable".to_string(), owned(&Variant::from(false)));
         drive.insert(
             "ConnectionBus".to_string(),
-            owned(Variant::from(self.connection_bus.as_str())),
+            owned(&Variant::from(self.connection_bus.as_str())),
         );
         let mut drive_ifaces = HashMap::new();
         drive_ifaces.insert("org.freedesktop.UDisks2.Drive".to_string(), drive);
@@ -659,13 +659,15 @@ struct FakeJobViewServerV2 {
 
 #[interface(name = "org.kde.JobViewServerV2")]
 impl FakeJobViewServerV2 {
+    // The zbus interface macro passes the message header by value.
+    #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "requestView")]
     fn request_view(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         desktop_entry: &str,
         capabilities: i32,
-        hints: HashMap<String, OwnedVariant>,
+        hints: &HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
         if let Some(sender) = hdr.sender() {
             *self.recorder.request_sender.lock().expect("lock") = sender.to_string();
@@ -688,11 +690,13 @@ struct FakeJobViewV3 {
 
 #[interface(name = "org.kde.JobViewV3")]
 impl FakeJobViewV3 {
+    // The zbus interface macro passes the message header by value.
+    #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "update")]
     fn update(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
-        properties: HashMap<String, OwnedVariant>,
+        properties: &HashMap<String, OwnedVariant>,
     ) {
         if let Some(sender) = hdr.sender() {
             *self.recorder.update_sender.lock().expect("lock") = sender.to_string();
@@ -720,13 +724,15 @@ impl FakeJobViewV3 {
         self.recorder.updates.lock().expect("lock").push((pct, msg));
     }
 
+    // The zbus interface macro passes the message header by value.
+    #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "terminate")]
     fn terminate(
         &self,
         #[zbus(header)] hdr: zbus::message::Header<'_>,
         error_code: u32,
         error_message: &str,
-        _hints: HashMap<String, OwnedVariant>,
+        _hints: &HashMap<String, OwnedVariant>,
     ) {
         if let Some(sender) = hdr.sender() {
             *self.recorder.terminate_sender.lock().expect("lock") = sender.to_string();
@@ -813,7 +819,7 @@ impl FakePortalInhibit {
         &self,
         _window: &str,
         flags: u32,
-        options: HashMap<String, OwnedVariant>,
+        options: &HashMap<String, OwnedVariant>,
     ) -> OwnedObjectPath {
         // Count last: tests wait for the count and then read flags and reason.
         self.recorder.last_flags.store(flags, Ordering::SeqCst);

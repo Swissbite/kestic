@@ -102,9 +102,7 @@ fn ac_m1_06_1_06_3_06_4_06_7_local_destination_init_connect_and_missing() {
         // AC-M1-06-4: connect existing repo with right password -> succeeds without init.
         let dest_ok = Destination::new(
             "Right Pw Connect",
-            DestinationKind::Local {
-                path: repo_dir.clone(),
-            },
+            DestinationKind::Local { path: repo_dir },
         )
         .expect("dest");
         setup_destination(
@@ -210,7 +208,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             &bad_auth_dest,
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
-            &BackendCredentials::rest(Some(wrong_rest_pw.clone())),
+            &BackendCredentials::rest(Some(wrong_rest_pw)),
             &runtime,
         )
         .expect_err("wrong REST auth must fail");
@@ -241,7 +239,7 @@ fn ac_m1_06_2_06_5_06_6_rest_destination_auth_and_unreachable_preflight() {
             &down_dest,
             DestinationSetupMode::ConnectExisting,
             &repo_pw,
-            &BackendCredentials::rest(Some(rest_pw.clone())),
+            &BackendCredentials::rest(Some(rest_pw)),
             &runtime,
         )
         .expect_err("stopped server must fail");

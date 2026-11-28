@@ -231,7 +231,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         ..Default::default()
     };
 
-    let handle = thread::spawn(move || run_daemon(run_cfg));
+    let handle = thread::spawn(move || run_daemon(&run_cfg));
     wait_for_file(&ready_file, super::DAEMON_READY_TIMEOUT);
 
     let client =
@@ -583,6 +583,7 @@ impl DesktopFakes {
 
 /// Power and network state of [`StdFakes::start_with`]; the default is AC power at 100 % and an
 /// unmetered connection to the known network `Heim`.
+#[derive(Clone, Copy)]
 pub struct FakeSetup<'a> {
     pub on_battery: bool,
     pub percentage: f64,
