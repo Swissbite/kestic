@@ -7,9 +7,9 @@ use super::{
 use crate::state_cache::shared_state;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
+use kestic_test_support::wait::wait_until_within;
 use std::cell::{Cell, RefCell};
 use std::sync::atomic::Ordering;
-use std::thread;
 use std::time::{Duration, Instant};
 
 /// Progress wakes the window at most every 150 ms; what comes sooner waits for the rest of the
@@ -113,11 +113,9 @@ fn run_progress_signals_wake_the_window_through_the_pacer() {
         .map(|p| p.percent_done);
     assert_eq!(kept, Some(50.0), "the last progress is kept for the window");
 
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while PROGRESS_WAKER.scheduled.load(Ordering::SeqCst) {
-        assert!(Instant::now() < deadline, "the delayed wake-up runs");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_until_within(Duration::from_secs(2), "the delayed wake-up runs", || {
+        !PROGRESS_WAKER.scheduled.load(Ordering::SeqCst)
+    });
     assert!(
         PROGRESS_WAKER.pacer.lock_unpoisoned().last > first,
         "the delayed wake-up is noted by the pacer"

@@ -9,10 +9,11 @@ mod common;
 use common::fakes::FakeJobViewHandle;
 use common::run_isolated_test;
 use kestic_daemon::job_view::{CAPABILITY_KILLABLE, JobViewHandle};
+use kestic_test_support::wait::try_poll_every;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const JOB_VIEW_DEST: &str = "org.kde.JobViewServer.CancelWatchTest";
 const TRIALS: usize = 30;
@@ -26,12 +27,13 @@ fn cancel_arrives(view: &JobViewHandle, fake: &FakeJobViewHandle, delay: Duratio
             calls.fetch_add(1, Ordering::SeqCst);
         })
     };
+    // quiet window: the watcher runs `delay` without a cancel, then gets one at that moment
     thread::sleep(delay);
     fake.emit_cancel_requested();
-    let deadline = Instant::now() + Duration::from_secs(1);
-    while calls.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(5));
-    }
+    // A lost cancel shows as no call: the wait ends without one after 1 s.
+    try_poll_every(Duration::from_secs(1), Duration::from_millis(5), || {
+        (calls.load(Ordering::SeqCst) > 0).then_some(())
+    });
     guard.stop();
     calls.load(Ordering::SeqCst) == 1
 }

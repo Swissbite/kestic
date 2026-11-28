@@ -5,11 +5,12 @@
 //! serving a temp directory whose subdirectories are the buckets.
 
 use crate::password::s3_key;
+use crate::process::KillOnDrop;
 use crate::tools::{dev_tools_bin_dir, free_loopback_port};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// Resolves the `rclone` binary installed by `scripts/bootstrap.sh` (`KESTIC_RCLONE` overrides).
@@ -33,7 +34,7 @@ pub struct S3ServerGuard {
     pub access_key: String,
     pub secret_key: String,
     data_dir: PathBuf,
-    child: Option<Child>,
+    child: Option<KillOnDrop>,
 }
 
 impl S3ServerGuard {
@@ -49,16 +50,17 @@ impl S3ServerGuard {
         let addr = format!("127.0.0.1:{port}");
         // The key pair goes through the environment, not the command line; the quotes keep it
         // one value of rclone's comma-separated list.
-        let child = Command::new(rclone_binary())
-            .args(["serve", "s3", "--addr", &addr])
-            .arg(data_dir)
-            .env("RCLONE_CONFIG", "/dev/null")
-            .env("RCLONE_AUTH_KEY", format!("\"{access_key},{secret_key}\""))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn rclone serve s3");
+        let child = KillOnDrop::spawn(
+            Command::new(rclone_binary())
+                .args(["serve", "s3", "--addr", &addr])
+                .arg(data_dir)
+                .env("RCLONE_CONFIG", "/dev/null")
+                .env("RCLONE_AUTH_KEY", format!("\"{access_key},{secret_key}\""))
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "rclone serve s3",
+        );
         let mut guard = Self {
             endpoint: format!("http://{addr}"),
             port,
@@ -73,7 +75,7 @@ impl S3ServerGuard {
 
     fn wait_ready(&mut self) {
         crate::tools::wait_listening(
-            self.child.as_mut(),
+            self.child.as_deref_mut(),
             self.port,
             Duration::from_secs(10),
             "rclone serve s3",
@@ -98,15 +100,6 @@ impl S3ServerGuard {
 
     /// Stops the server immediately; the data stays.
     pub fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for S3ServerGuard {
-    fn drop(&mut self) {
-        self.stop();
+        self.child = None;
     }
 }

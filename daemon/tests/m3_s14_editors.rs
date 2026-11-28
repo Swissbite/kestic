@@ -8,7 +8,6 @@ mod common;
 
 use common::revision::UpdateNow;
 
-use common::load_config;
 use common::m3::{
     M3Daemon, M3DaemonOpts, StdFakes, add_local_backup, assert_dbus_error_name, backup_summary,
     latest_variant, settle, spawn_m3_daemon,
@@ -16,6 +15,7 @@ use common::m3::{
 use common::run_isolated_test;
 use kestic_core::clock::FakeClock;
 use kestic_core::model::{Backup, BackupId, Schedule, Weekday};
+use kestic_test_support::config::load_config;
 use std::fs;
 use std::sync::Arc;
 use time::macros::datetime;

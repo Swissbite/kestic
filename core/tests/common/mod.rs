@@ -123,15 +123,6 @@ where
     kestic_core::backup::execute_backup_dry_run_with(backup, destination, runtime, &ctx, on_event)
 }
 
-/// Loads an existing `config.toml` through the production loader (`load_optional_config`).
-pub fn load_config(
-    path: &std::path::Path,
-) -> Result<kestic_core::config::AppConfig, kestic_core::config::ConfigError> {
-    kestic_core::config::load_optional_config(path)?.ok_or_else(|| {
-        kestic_core::config::ConfigError::Io(std::io::Error::from(std::io::ErrorKind::NotFound))
-    })
-}
-
 /// Writes an executable shell script emulating `kestic secret get <dest-id> [kind]` backed by
 /// a `FileSecretStore` hex file, allowing standalone `cargo test -p kestic-core` runs.
 fn write_secret_get_helper(dir: &std::path::Path, secrets_hex_path: &std::path::Path) -> PathBuf {

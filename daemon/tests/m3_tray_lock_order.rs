@@ -95,14 +95,15 @@ fn tray_menu_during_backup_progress_does_not_block_daemon() {
             };
 
             // (a) the daemon answers throughout.
-            let deadline = Instant::now() + HAMMER_FOR;
-            while Instant::now() < deadline {
+            let started = Instant::now();
+            while started.elapsed() < HAMMER_FOR {
                 assert!(
                     get_state_within(&client, RESPONSIVE_WITHIN),
                     "(a) daemon did not answer GetState within {RESPONSIVE_WITHIN:?} while the \
                      tray menu was opened {} times",
                     menu_calls.load(Ordering::SeqCst)
                 );
+                // quiet window: the daemon keeps answering for all of HAMMER_FOR
                 thread::sleep(Duration::from_millis(200));
             }
 

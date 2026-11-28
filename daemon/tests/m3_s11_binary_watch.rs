@@ -8,7 +8,7 @@
 mod common;
 
 use common::m3::{
-    DropKillChild, backup_summary, connect_local_repo, latest_variant, wait_for_state,
+    KillOnDrop, backup_summary, connect_local_repo, latest_variant, wait_for_state,
     write_incompressible_dataset,
 };
 use common::{find_kestic_binary, run_isolated_test, start_fake_sni_watcher, wait_for_file};
@@ -70,15 +70,16 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
                 .spawn()
                 .expect("spawn installed kestic --daemon");
 
-            let child_guard = DropKillChild(child);
+            let child_guard = KillOnDrop::new(child);
             wait_for_file(&ready_file, Duration::from_secs(10));
-            let pid_before = child_guard.0.id();
+            let pid_before = child_guard.id();
 
             // AC-M3-11-3: Rename sibling file in same directory -> NO restart!
             fs::remove_file(&ready_file).expect("rm ready");
             let sibling_new = bin_dir.join("other_helper.new");
             fs::write(&sibling_new, b"v2").expect("write sibling new");
             fs::rename(&sibling_new, &sibling_file).expect("rename sibling");
+            // quiet window: the binary check runs every 500 ms and must not restart the daemon
             thread::sleep(Duration::from_millis(800));
             assert!(
                 !ready_file.exists(),
@@ -90,7 +91,7 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             fs::copy(&real_bin, &bin_new).expect("copy new bin");
             fs::rename(&bin_new, &installed_bin).expect("rename kestic binary");
             wait_for_file(&ready_file, Duration::from_secs(10));
-            assert_eq!(child_guard.0.id(), pid_before);
+            assert_eq!(child_guard.id(), pid_before);
             let log = fs::read_to_string(&stderr_log).expect("read daemon stderr log");
             let label = kestic_daemon::log_label();
             assert!(
@@ -129,7 +130,6 @@ fn ac_m3_11_1_to_11_3_binary_replacement_restarts_daemon_idle_or_after_backup() 
             // Replace binary mid-backup -> must NOT interrupt running backup!
             fs::copy(&real_bin, &bin_new).expect("copy bin v3");
             fs::rename(&bin_new, &installed_bin).expect("rename v3");
-            thread::sleep(Duration::from_millis(650));
 
             wait_for_file(&ready_file, Duration::from_secs(20));
             let client_after =

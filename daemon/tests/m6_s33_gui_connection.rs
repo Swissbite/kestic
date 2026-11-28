@@ -5,11 +5,13 @@
 
 mod common;
 
-use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
+use common::m3::{M3Rig, StdFakes, latest_variant};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_daemon::dbus_api::KESTIC_INTERFACE_V1;
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::wait::wait_until_within;
 use std::collections::BTreeSet;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -25,16 +27,6 @@ const MIN_GUI_CALLS: usize = 10;
 const STATE_CHANGE_EVERY: Duration = Duration::from_millis(300);
 /// Interface of the desktop portal settings that Qt reads over its own connection.
 const QT_PORTAL_SETTINGS: &str = "org.freedesktop.portal.Settings";
-
-/// Kills and reaps the GUI process when the test ends.
-struct GuiProcess(Child);
-
-impl Drop for GuiProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// One message seen on the bus.
 #[derive(Clone, Debug)]
@@ -137,15 +129,14 @@ fn ac_m6_33_2a_gui_uses_one_session_bus_connection() {
                 .to_string();
             let seen = monitor_method_calls();
 
-            let gui = GuiProcess(
+            let gui = KillOnDrop::spawn(
                 Command::new(find_kestic_binary())
                     .args(["--bus-name", BUS, "--no-autostart"])
                     .env("QT_QPA_PLATFORM", "offscreen")
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .expect("start GUI"),
+                    .stderr(Stdio::null()),
+                "GUI",
             );
             let gui_calls = || -> Vec<Seen> {
                 seen.lock()
@@ -203,7 +194,7 @@ fn ac_m6_33_2a_gui_uses_one_session_bus_connection() {
                 .filter(|s| s.interface == QT_PORTAL_SETTINGS)
                 .map(|s| s.sender.clone())
                 .collect();
-            let live = connections_of(client.connection(), gui.0.id());
+            let live = connections_of(client.connection(), gui.id());
             let others: BTreeSet<String> = live
                 .iter()
                 .filter(|n| **n != kestic && !qt_toolkit.contains(*n))

@@ -20,10 +20,11 @@ use kestic_core::restic::SECRET_KIND_REPO;
 use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_i18n::messages::UiText;
 use kestic_test_support::password::strong_password;
+use kestic_test_support::wait::wait_for_value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::OffsetDateTime;
 use time::macros::datetime;
 
@@ -57,9 +58,10 @@ impl M3Rig {
     }
 }
 
-/// Short wait (one scheduler tick plus async notification dispatch) before asserting an exact count.
-fn short_settle() {
-    std::thread::sleep(Duration::from_millis(1200));
+/// Quiet window before asserting an exact count: one whole scheduler tick plus the
+/// notifications it dispatched.
+fn short_settle(rig: &M3Rig) {
+    rig.clock.wait_ticks(2);
 }
 
 fn make_unreadable_file(src_dir: &Path) -> std::path::PathBuf {
@@ -75,18 +77,12 @@ fn wait_tooltip(
     label: &str,
     pred: impl Fn(&str) -> bool,
 ) -> String {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        let (_title, description) = read_sni_tooltip(conn, service);
-        if pred(&description) {
-            return description;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for tray tooltip ({label}); last: {description:?}"
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_value(
+        Duration::from_secs(10),
+        &format!("tray tooltip ({label})"),
+        || read_sni_tooltip(conn, service).1,
+        |description| pred(description),
+    )
 }
 
 /// AC-M3-08-1 (FR-12): under default settings (a) `Fehler`, `Warnung` and "überfällig" each
@@ -111,7 +107,7 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                 // (b) ok: no notification, but tray state and history entry.
                 let ok_fx = rig.add_manual("OkBk");
                 rig.run_to(&ok_fx, RunStatus::Ok);
-                short_settle();
+                short_settle(&rig);
                 assert_eq!(
                     notif.snapshot().len(),
                     0,
@@ -136,7 +132,7 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                 let bad = make_unreadable_file(&warn_fx.src_dir);
                 rig.run_to(&warn_fx, RunStatus::Warning);
                 wait_for_notifications(notif, "BackupWarning", 1, Duration::from_secs(5));
-                short_settle();
+                short_settle(&rig);
                 assert_eq!(
                     notifications_for(notif, "BackupWarning").len(),
                     1,
@@ -156,7 +152,7 @@ fn ac_m3_08_1_default_settings_notify_error_warning_overdue_once_and_ok_never() 
                     .expect("wrong password");
                 rig.run_to(&err_fx, RunStatus::Error);
                 wait_for_notifications(notif, "BackupFailed", 1, Duration::from_secs(5));
-                short_settle();
+                short_settle(&rig);
                 assert_eq!(
                     notifications_for(notif, "BackupFailed").len(),
                     1,
@@ -434,7 +430,7 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
                 "(b) reason of the permanent error"
             );
             // (b) "also in the history": still listed after more than one scheduler tick.
-            std::thread::sleep(Duration::from_millis(2500));
+            rig.clock.wait_ticks(3);
             let history = client.get_state().expect("GetState").recent_runs;
             assert!(
                 history
@@ -462,19 +458,16 @@ fn ac_m3_08_6_back_up_all_starts_only_valid_backup_and_reports_skipped_with_reas
                 })
                 .unwrap_or_else(|| panic!("tray has a 'Back up all' entry: {items:?}"));
             click_dbusmenu_item(client.connection(), &sni_service, start_all.id);
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !notif
-                .snapshot()
-                .iter()
-                .any(|n| n.body.contains("MissingSrc") && n.body.contains("ErrBk"))
-            {
-                assert!(
-                    Instant::now() < deadline,
-                    "(b) tray 'Back up all' must notify the skipped backups: {:?}",
-                    notif.snapshot()
-                );
-                std::thread::sleep(Duration::from_millis(50));
-            }
+            // (b) tray 'Back up all' notifies the skipped backups
+            wait_for_value(
+                Duration::from_secs(5),
+                "(b) a notification of the skipped backups after tray 'Back up all'",
+                || notif.snapshot(),
+                |all| {
+                    all.iter()
+                        .any(|n| n.body.contains("MissingSrc") && n.body.contains("ErrBk"))
+                },
+            );
             let body = notif
                 .snapshot()
                 .into_iter()

@@ -338,7 +338,8 @@ fn m1_gui_e2e_create_destination_and_backup_with_real_restic() {
         ],
     );
 
-    let cfg = common::load_config(&iso.config_path()).expect("load saved config");
+    let cfg =
+        kestic_test_support::config::load_config(&iso.config_path()).expect("load saved config");
     assert_eq!(cfg.destinations.len(), 1, "expected 1 saved destination");
     assert_eq!(cfg.destinations[0].name, "E2E Local Repo");
     assert_eq!(cfg.backups.len(), 1, "expected 1 saved backup");
@@ -394,7 +395,8 @@ fn m1_gui_e2e_setup_first_backup_with_real_restic() {
         ],
     );
 
-    let cfg = common::load_config(&iso.config_path()).expect("load saved config");
+    let cfg =
+        kestic_test_support::config::load_config(&iso.config_path()).expect("load saved config");
     assert_eq!(cfg.destinations.len(), 1, "expected 1 saved destination");
     assert_eq!(cfg.destinations[0].name, "First Local Repo");
     assert_eq!(cfg.backups.len(), 1, "expected 1 saved backup");

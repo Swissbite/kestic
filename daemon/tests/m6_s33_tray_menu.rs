@@ -5,10 +5,11 @@
 
 mod common;
 
-use common::m3::{M3Rig, StdFakes, daemon_paths, latest_variant, wait_until_within};
+use common::m3::{M3Rig, StdFakes, daemon_paths, latest_variant};
 use common::{run_isolated_test, wait_for_sni_service};
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::model::{Destination, DestinationKind};
+use kestic_test_support::wait::wait_until_within;
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};

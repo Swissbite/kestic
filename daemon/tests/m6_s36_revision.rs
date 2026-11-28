@@ -7,11 +7,11 @@
 
 mod common;
 
+use common::isolated_secret_store;
 use common::m3::{
     M3DaemonOpts, M3Rig, assert_dbus_error_name, connect_rest_repo, latest_variant, spawn_m3_daemon,
 };
 use common::revision::{backup_revision, destination_revision};
-use common::{isolated_secret_store, load_config};
 use kestic_core::backend_credentials::SECRET_KIND_REST;
 use kestic_core::model::{
     Backup, Destination, DestinationKind, MaintenanceEntrySchedule, MaintenanceSchedule,
@@ -19,6 +19,7 @@ use kestic_core::model::{
 use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_i18n::codes::DestinationUpdateOutcome;
+use kestic_test_support::config::load_config;
 use kestic_test_support::password::strong_password;
 use kestic_test_support::tools::RestServerGuard;
 use std::fs;

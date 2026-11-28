@@ -26,14 +26,19 @@ use kestic_daemon::dbus_api::{
 use kestic_daemon::monitors::MonitorBusConfig;
 use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
+use kestic_test_support::bus::test_bus_name;
+pub use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::repo_template::copy_template_repo;
 use kestic_test_support::tools::{RestServerGuard, find_lock_file};
+use kestic_test_support::wait::{
+    try_poll_every, try_poll_within, wait_for_value, wait_until_within,
+};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::thread;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 use time::macros::datetime;
 
@@ -48,7 +53,7 @@ pub struct ResticVariant {
 impl ResticVariant {
     /// Unique session-bus name per variant so sequential daemons never collide.
     pub fn bus_name(&self, base: &str) -> String {
-        format!("net.daester.Kestic.{base}V{}", self.index)
+        test_bus_name(base, &format!("V{}", self.index))
     }
 
     /// Unique sub-directory below the isolated test root per variant.
@@ -175,6 +180,11 @@ impl M3Daemon {
 }
 
 impl M3Daemon {
+    /// The thread the daemon (its event loop) runs on.
+    pub fn thread_id(&self) -> ThreadId {
+        self.handle.as_ref().expect("daemon handle").thread().id()
+    }
+
     /// Waits at most `limit` for the daemon thread to end by itself (after `SIGTERM`) and
     /// returns its outcome.
     pub fn wait_stopped(mut self, limit: Duration) -> Result<DaemonOutcome, String> {
@@ -243,10 +253,86 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
     }
 }
 
-/// A daemon running behind a [`ResticWrapper`] around the variant's restic, with a fake clock.
+/// Gap between two clock reads of the daemon's event loop that separates two scheduler ticks.
+/// Ticks start a second apart; the reads within one tick follow each other at once.
+const TICK_GAP: Duration = Duration::from_millis(500);
+
+/// A [`FakeClock`] that also counts the scheduler ticks of one daemon. The daemon's event loop
+/// reads the clock at the start of every tick, so a read on that thread more than [`TICK_GAP`]
+/// after its previous read starts a new tick. Reads of other threads are not counted.
+pub struct TickClock {
+    fake: FakeClock,
+    event_loop: OnceLock<ThreadId>,
+    reads: Mutex<TickReads>,
+}
+
+#[derive(Default)]
+struct TickReads {
+    last: Option<Instant>,
+    ticks: u64,
+}
+
+impl TickClock {
+    pub fn new(start: time::OffsetDateTime) -> Self {
+        Self {
+            fake: FakeClock::new(start),
+            event_loop: OnceLock::new(),
+            reads: Mutex::new(TickReads::default()),
+        }
+    }
+
+    /// Counts the ticks of the event loop that runs on `thread` from now on.
+    pub fn count_ticks_of(&self, thread: ThreadId) {
+        assert!(
+            self.event_loop.set(thread).is_ok(),
+            "the clock already counts the ticks of another thread"
+        );
+    }
+
+    /// Scheduler ticks started since [`Self::count_ticks_of`].
+    pub fn ticks(&self) -> u64 {
+        self.reads.lock().expect("lock tick reads").ticks
+    }
+
+    /// Waits until the scheduler has started `n` more ticks, so the `n - 1` ticks after the
+    /// call ran completely (a quiet window measured in ticks instead of seconds).
+    pub fn wait_ticks(&self, n: u64) {
+        let target = self.ticks() + n;
+        wait_until_within(
+            Duration::from_secs(n + 15),
+            &format!("{n} more scheduler ticks"),
+            || self.ticks() >= target,
+        );
+    }
+}
+
+impl std::ops::Deref for TickClock {
+    type Target = FakeClock;
+
+    fn deref(&self) -> &FakeClock {
+        &self.fake
+    }
+}
+
+impl Clock for TickClock {
+    fn now_utc(&self) -> time::OffsetDateTime {
+        if self.event_loop.get() == Some(&thread::current().id()) {
+            let mut reads = self.reads.lock().expect("lock tick reads");
+            let now = Instant::now();
+            if reads.last.is_none_or(|last| now - last > TICK_GAP) {
+                reads.ticks += 1;
+            }
+            reads.last = Some(now);
+        }
+        self.fake.now_utc()
+    }
+}
+
+/// A daemon running behind a [`ResticWrapper`] around the variant's restic, with a fake clock
+/// that counts the daemon's scheduler ticks.
 pub struct M3Rig {
     pub daemon: M3Daemon,
-    pub clock: Arc<FakeClock>,
+    pub clock: Arc<TickClock>,
     pub wrapper: ResticWrapper,
     pub variant: ResticVariant,
     pub root: PathBuf,
@@ -285,10 +371,11 @@ impl M3Rig {
         configure: impl FnOnce(&mut M3DaemonOpts<'_>),
     ) -> Self {
         let wrapper = ResticWrapper::create(&root.join(sub).join("wrapper"), &variant.bin);
-        let clock = Arc::new(FakeClock::new(start));
+        let clock = Arc::new(TickClock::new(start));
         let mut opts = M3DaemonOpts::new(sub, bus, &wrapper.path, Arc::clone(&clock) as _);
         configure(&mut opts);
         let daemon = spawn_m3_daemon(root, opts);
+        clock.count_ticks_of(daemon.thread_id());
         Self {
             daemon,
             clock,
@@ -354,14 +441,13 @@ pub fn wait_for_state<F>(
 where
     F: FnMut(&DaemonStateDto) -> bool,
 {
-    let deadline = Instant::now() + timeout;
-    loop {
+    let found = try_poll_every(timeout, Duration::from_millis(50), || {
         let state = client.get_state().expect("GetState");
-        if pred(&state) {
-            return state;
-        }
-        assert!(
-            Instant::now() < deadline,
+        pred(&state).then_some(state)
+    });
+    found.unwrap_or_else(|| {
+        let state = client.get_state().expect("GetState");
+        panic!(
             "timed out waiting for condition ({label}); last overall={:?}\n  blocking={:?}, \
              secret store available={} locked={}, restic={:?}\n  backups={:?}",
             state.overall,
@@ -382,9 +468,8 @@ where
                     b.last_run.as_ref().map(|r| (&r.status, &r.summary_message)),
                 ))
                 .collect::<Vec<_>>()
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
+        )
+    })
 }
 
 pub fn backup_summary<'a>(state: &'a DaemonStateDto, id: &BackupId) -> &'a BackupSummaryDto {
@@ -561,20 +646,6 @@ impl StdFakes {
     }
 }
 
-/// Polls `pred` every 25 ms until it holds; fails with `what` after `timeout`.
-pub fn wait_until_within(timeout: Duration, what: &str, mut pred: impl FnMut() -> bool) {
-    let deadline = Instant::now() + timeout;
-    while !pred() {
-        assert!(Instant::now() < deadline, "timed out waiting for: {what}");
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
-/// [`wait_until_within`] with the default timeout of 10 s.
-pub fn wait_until(what: &str, pred: impl FnMut() -> bool) {
-    wait_until_within(Duration::from_secs(10), what, pred);
-}
-
 /// Copies a prepared repository to `repo_dir` and connects it with the real `restic_bin`
 /// (`ConnectExisting`), storing its generated password in the isolated test keyring (the
 /// default secret store of [`spawn_m3_daemon`]). Returns the destination and its password.
@@ -663,19 +734,16 @@ pub fn wait_for_notifications(
     min: usize,
     timeout: Duration,
 ) -> Vec<CapturedNotification> {
-    let deadline = Instant::now() + timeout;
-    loop {
+    try_poll_every(timeout, Duration::from_millis(40), || {
         let items = notifications_for(capture, event);
-        if items.len() >= min {
-            return items;
-        }
-        assert!(
-            Instant::now() < deadline,
+        (items.len() >= min).then_some(items)
+    })
+    .unwrap_or_else(|| {
+        panic!(
             "timed out waiting for {min} `{event}` notification(s); captured: {:?}",
             capture.snapshot()
-        );
-        thread::sleep(Duration::from_millis(40));
-    }
+        )
+    })
 }
 
 /// Writes `num_files` incompressible blobs of `bytes_per_file` bytes below `dir`.
@@ -1087,25 +1155,12 @@ exit $code
 
     /// Waits until at least `min` calls of `kind`/`sub` were logged.
     pub fn wait_for(&self, kind: char, sub: &str, min: usize, timeout: Duration) {
-        let deadline = Instant::now() + timeout;
-        while self.of(kind, sub).len() < min {
-            assert!(
-                Instant::now() < deadline,
+        if try_poll_within(timeout, || (self.of(kind, sub).len() >= min).then_some(())).is_none() {
+            panic!(
                 "timed out waiting for {min} wrapper `{kind} {sub}` entries; log: {:?}",
                 self.entries()
             );
-            thread::sleep(Duration::from_millis(25));
         }
-    }
-}
-
-/// Kills and reaps the child on drop (stops stray restic helper processes on test failure).
-pub struct DropKillChild(pub std::process::Child);
-
-impl Drop for DropKillChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
     }
 }
 
@@ -1124,18 +1179,12 @@ pub fn wait_for_backoff_attempt(
     attempt: u32,
     timeout: Duration,
 ) -> BackupRuntimeState {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let rs = runtime_state(state_dir, backup_id);
-        if rs.backoff_attempt == attempt {
-            return rs;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for backoff attempt {attempt}; state: {rs:?}"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_value(
+        timeout,
+        &format!("backoff attempt {attempt}"),
+        || runtime_state(state_dir, backup_id),
+        |rs| rs.backoff_attempt == attempt,
+    )
 }
 
 /// `restic -r <repo>` command with the repository password.
@@ -1158,21 +1207,20 @@ pub fn restic_repo_cmd(
 }
 
 /// Spawns a foreign restic process (stdin piped) and waits until it created a lock in `repo_dir`.
-pub fn hold_repo_lock(mut cmd: std::process::Command, repo_dir: &Path) -> DropKillChild {
+pub fn hold_repo_lock(mut cmd: std::process::Command, repo_dir: &Path) -> KillOnDrop {
     use std::process::Stdio;
-    let child = DropKillChild(
+    let child = KillOnDrop::spawn(
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn lock holder"),
+            .stderr(Stdio::null()),
+        "lock holder",
     );
     let locks = repo_dir.join("locks");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while find_lock_file(&locks).is_none() {
-        assert!(Instant::now() < deadline, "lock never appeared");
-        thread::sleep(Duration::from_millis(1));
-    }
+    wait_until_within(
+        Duration::from_secs(10),
+        "the lock of the lock holder",
+        || find_lock_file(&locks).is_some(),
+    );
     child
 }
 

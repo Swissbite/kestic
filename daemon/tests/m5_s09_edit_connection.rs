@@ -18,7 +18,7 @@ use common::m3::{
     assert_dbus_error_name, latest_variant, restic_variants, seed_local_destination,
     spawn_m3_daemon, wait_for_state,
 };
-use common::{isolated_secret_store, load_config, run_isolated_test};
+use common::{isolated_secret_store, run_isolated_test};
 use kestic_core::backend_credentials::{SECRET_KIND_S3_ACCESS_KEY, SECRET_KIND_S3_SECRET_KEY};
 use kestic_core::generic::{EnvVar, secret_kind};
 use kestic_core::model::{BackupId, Destination, DestinationKind, RunStatus};
@@ -28,6 +28,7 @@ use kestic_core::sftp::{KnownHostsPaths, set_test_ssh_config};
 use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto};
 use kestic_i18n::codes::{ConnectionTestCode, DestinationUpdateOutcome};
 use kestic_i18n::messages::{UiText, connection_test_text};
+use kestic_test_support::config::load_config;
 use kestic_test_support::password::{s3_key, strong_password};
 use kestic_test_support::repo_template::copy_template_repo;
 use kestic_test_support::s3_server::{S3ServerGuard, rclone_binary};

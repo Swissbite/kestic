@@ -3,13 +3,15 @@
 
 mod common;
 
-use common::load_config;
 use common::m3::connect_local_repo;
 use common::{
     find_kestic_binary, restic_test_binaries, run_isolated_test, start_fake_sni_watcher,
     wait_for_file, wait_for_sni_service,
 };
 use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, Source};
+use kestic_test_support::config::load_config;
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::wait::wait_until_within;
 use std::fs;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -55,19 +57,20 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
 
             // AC-M1-12-2: No config.toml + `kestic daemon` (no `--autostart`) -> claims bus name & accepts CRUD.
             let ready_no_auto = root.join("daemon-manual.ready");
-            let manual_child = Command::new(&kestic_bin)
-                .args([
-                    "daemon",
-                    "--no-job-view",
-                    "--no-portal-inhibit",
-                    "--suppress-ui-spawn",
-                    "--ready-file",
-                ])
-                .arg(&ready_no_auto)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("spawn kestic daemon without --autostart");
+            let mut manual_child = KillOnDrop::spawn(
+                Command::new(&kestic_bin)
+                    .args([
+                        "daemon",
+                        "--no-job-view",
+                        "--no-portal-inhibit",
+                        "--suppress-ui-spawn",
+                        "--ready-file",
+                    ])
+                    .arg(&ready_no_auto)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped()),
+                "kestic daemon without --autostart",
+            );
 
             wait_for_file(&ready_no_auto, common::DAEMON_READY_TIMEOUT);
             assert!(client.is_bus_owned().expect("is_bus_owned"));
@@ -100,34 +103,36 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
             );
 
             client.confirm_quit().expect("ConfirmQuit manual daemon");
-            let manual_out = manual_child.wait_with_output().expect("wait manual daemon");
+            let (manual_status, manual_stderr) = manual_child.wait_with_stderr();
             assert!(
-                manual_out.status.success(),
-                "manual daemon exited with error: {}",
-                String::from_utf8_lossy(&manual_out.stderr)
+                manual_status.success(),
+                "manual daemon exited with error: {manual_stderr}"
             );
-            while client.is_bus_owned().expect("is_bus_owned") {
-                std::thread::sleep(std::time::Duration::from_millis(15));
-            }
+            wait_until_within(
+                Duration::from_secs(5),
+                "the manual daemon releases the bus name",
+                || !client.is_bus_owned().expect("is_bus_owned"),
+            );
 
             // AC-M1-12-3: Valid config.toml + `kestic daemon --autostart` -> stays running, owns bus name, registers SNI tray.
             let watcher_conn = start_fake_sni_watcher();
             let ready_auto = root.join("daemon-autostart.ready");
-            let mut auto_child = Command::new(&kestic_bin)
-                .args([
-                    "daemon",
-                    "--autostart",
-                    "--require-sni",
-                    "--no-job-view",
-                    "--no-portal-inhibit",
-                    "--suppress-ui-spawn",
-                    "--ready-file",
-                ])
-                .arg(&ready_auto)
-                .stdout(Stdio::null())
-                .stderr(Stdio::piped())
-                .spawn()
-                .expect("spawn kestic daemon --autostart with valid config");
+            let mut auto_child = KillOnDrop::spawn(
+                Command::new(&kestic_bin)
+                    .args([
+                        "daemon",
+                        "--autostart",
+                        "--require-sni",
+                        "--no-job-view",
+                        "--no-portal-inhibit",
+                        "--suppress-ui-spawn",
+                        "--ready-file",
+                    ])
+                    .arg(&ready_auto)
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::piped()),
+                "kestic daemon --autostart with valid config",
+            );
 
             wait_for_file(&ready_auto, common::DAEMON_READY_TIMEOUT);
             assert!(
@@ -150,13 +155,10 @@ fn ac_m1_12_1_12_2_12_3_daemon_autostart_lifecycle() {
             assert_eq!(state_after.backups.len(), 1);
 
             client.confirm_quit().expect("ConfirmQuit autostart daemon");
-            let auto_out = auto_child
-                .wait_with_output()
-                .expect("wait autostart daemon");
+            let (auto_status, auto_stderr) = auto_child.wait_with_stderr();
             assert!(
-                auto_out.status.success(),
-                "autostart daemon exited with error: {}",
-                String::from_utf8_lossy(&auto_out.stderr)
+                auto_status.success(),
+                "autostart daemon exited with error: {auto_stderr}"
             );
         },
     );

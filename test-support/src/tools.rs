@@ -9,9 +9,11 @@ use std::fs;
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::Duration;
+
+use crate::process::KillOnDrop;
+use crate::wait::poll_within;
 
 /// Resolves the `kestic-dev/bin` directory populated by `scripts/bootstrap.sh`.
 pub fn dev_tools_bin_dir() -> PathBuf {
@@ -215,7 +217,7 @@ pub struct RestServerGuard {
     pub port: u16,
     data_dir: PathBuf,
     auth: Option<(String, String)>,
-    child: Option<Child>,
+    child: Option<KillOnDrop>,
 }
 
 impl RestServerGuard {
@@ -251,11 +253,10 @@ impl RestServerGuard {
             format!("http://{addr}")
         };
 
-        let child = cmd
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn rest-server");
+        let child = KillOnDrop::spawn(
+            cmd.stdout(Stdio::null()).stderr(Stdio::null()),
+            "rest-server",
+        );
 
         let mut guard = Self {
             url,
@@ -271,7 +272,7 @@ impl RestServerGuard {
     fn wait_ready(&mut self) {
         // rest-server accepts and closes the first connection: read it, so its log stays quiet.
         let stream = wait_listening(
-            self.child.as_mut(),
+            self.child.as_deref_mut(),
             self.port,
             Duration::from_secs(5),
             "rest-server",
@@ -310,16 +311,7 @@ impl RestServerGuard {
 
     /// Stops `rest-server` immediately (keeps `data_dir` and `.htpasswd` intact for restarts).
     pub fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for RestServerGuard {
-    fn drop(&mut self) {
-        self.stop();
+        self.child = None;
     }
 }
 
@@ -386,17 +378,12 @@ pub fn wait_listening(
     log: impl Fn() -> String,
 ) -> TcpStream {
     let addr: std::net::SocketAddr = format!("127.0.0.1:{port}").parse().expect("socket addr");
-    let deadline = Instant::now() + limit;
-    while Instant::now() < deadline {
+    poll_within(limit, &format!("{what} listening on {addr}"), || {
         if let Some(child) = child.as_deref_mut()
             && let Some(status) = child.try_wait().expect("try_wait")
         {
             panic!("{what} exited prematurely: {status}\n{}", log());
         }
-        if let Ok(stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(100)) {
-            return stream;
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-    panic!("{what} did not start listening on {addr} in time");
+        TcpStream::connect_timeout(&addr, Duration::from_millis(100)).ok()
+    })
 }

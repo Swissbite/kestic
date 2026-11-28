@@ -37,6 +37,9 @@ zbus = { workspace = true }
 [build-dependencies]
 cxx-qt-build = { workspace = true }
 
+[dev-dependencies]
+kestic-test-support = { path = "../test-support" }
+
 [package.metadata.deb]
 name = "kestic"
 section = "utils"

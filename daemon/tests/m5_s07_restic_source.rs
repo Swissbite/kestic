@@ -9,7 +9,7 @@
 
 mod common;
 
-use common::m3::{M3Rig, assert_dbus_error_name, latest_variant, wait_until, wait_until_within};
+use common::m3::{M3Rig, assert_dbus_error_name, latest_variant};
 use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test_with_system_programs};
 use kestic_core::model::{ResticProvider, RunStatus};
 use kestic_core::restic_install::{app_managed_binary, kestic_data_dir};
@@ -21,6 +21,8 @@ use kestic_test_support::release_mock::{
     ReleaseFiles, ReleaseMock, Route, TestSigningKey, asset_path,
 };
 use kestic_test_support::tools::write_executable;
+use kestic_test_support::wait::wait_until;
+use kestic_test_support::wait::wait_until_within;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

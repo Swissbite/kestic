@@ -6,9 +6,10 @@
 
 use super::m3::{ResticVariant, restic_cmd, restic_variants};
 use kestic_daemon::dbus_api::{KesticClient, SnapshotQueryPage, SnapshotQueryStatusDto};
+use kestic_test_support::wait::wait_for_value;
 use std::fs;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// A fixture around a daemon started for one restic version.
 pub trait VariantFixture {
@@ -45,17 +46,16 @@ pub fn wait_query(
     query_id: &str,
     page: &SnapshotQueryPage,
 ) -> SnapshotQueryStatusDto {
-    let deadline = Instant::now() + Duration::from_secs(90);
-    loop {
-        let st = client
-            .get_snapshot_query_status(query_id, page)
-            .expect("GetSnapshotQueryStatus");
-        if st.state != "running" {
-            return st;
-        }
-        assert!(Instant::now() < deadline, "query still running: {st:?}");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_value(
+        Duration::from_secs(90),
+        &format!("snapshot query {query_id} to end"),
+        || {
+            client
+                .get_snapshot_query_status(query_id, page)
+                .expect("GetSnapshotQueryStatus")
+        },
+        |st| st.state != "running",
+    )
 }
 
 /// A snapshot to write with restic: tag (empty: none), time in UTC (restic format «2026-11-15

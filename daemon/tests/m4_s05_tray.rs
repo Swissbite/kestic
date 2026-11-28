@@ -22,10 +22,11 @@ use kestic_daemon::dbus_api::{
 };
 use kestic_daemon::service::{DaemonRunConfig, run_daemon};
 use kestic_test_support::tools::write_executable;
+use kestic_test_support::wait::{try_poll_every, wait_for_value};
 use std::fs;
 use std::path::Path;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use zbus::{Connection, block_on};
 
 fn restore_entry(items: &[TrayMenuEntry]) -> TrayMenuEntry {
@@ -160,18 +161,12 @@ fn cancel_entry(conn: &Connection, sni: &str) -> TrayMenuEntry {
 /// Waits until the tray menu shows a line containing `text` (the tray follows the daemon's
 /// state asynchronously).
 fn wait_for_menu_line(conn: &Connection, sni: &str, text: &str) -> Vec<TrayMenuEntry> {
-    let deadline = Instant::now() + Duration::from_secs(15);
-    loop {
-        let items = fetch_dbusmenu_items(conn, sni);
-        if items.iter().any(|i| i.label.contains(text)) {
-            return items;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "no line with {text:?}: {items:?}"
-        );
-        thread::sleep(Duration::from_millis(50));
-    }
+    wait_for_value(
+        Duration::from_secs(15),
+        &format!("a tray menu line with {text:?}"),
+        || fetch_dbusmenu_items(conn, sni),
+        |items| items.iter().any(|i| i.label.contains(text)),
+    )
 }
 
 /// AC-M4-05-24: the tray entry «Cancel Running Backup» is (d) disabled while only a restore
@@ -226,18 +221,18 @@ fn ac_m4_05_24_cancel_backup_entry_ignores_a_running_restore() {
 }
 
 fn gui_starts(log: &Path) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let lines: Vec<String> = fs::read_to_string(log)
+    let read = || -> Vec<String> {
+        fs::read_to_string(log)
             .unwrap_or_default()
             .lines()
             .map(str::to_string)
-            .collect();
-        if !lines.is_empty() || Instant::now() > deadline {
-            return lines;
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
+            .collect()
+    };
+    // No line within the limit is a result too: the callers check the lines.
+    try_poll_every(Duration::from_secs(3), Duration::from_millis(20), || {
+        Some(read()).filter(|lines| !lines.is_empty())
+    })
+    .unwrap_or_else(read)
 }
 
 /// A running restore shows its progress in its Plasma job, not only at the end: (a) an update
@@ -266,7 +261,7 @@ fn m4_s05_restore_shows_its_progress_in_plasma() {
             let run_id = fx
                 .start_restore(&["a.txt"], target, RestoreOverwrite::Never, None)
                 .expect("StartRestore");
-            common::m3::wait_until("progress update", || {
+            kestic_test_support::wait::wait_until("progress update", || {
                 rec.updates
                     .lock()
                     .expect("lock")
@@ -321,7 +316,7 @@ fn ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored() {
             let run_id = fx
                 .start_restore(&["a.txt"], target, RestoreOverwrite::Never, None)
                 .expect("StartRestore");
-            common::m3::wait_until("first progress update", || {
+            kestic_test_support::wait::wait_until("first progress update", || {
                 !rec.sizes.lock().expect("lock").is_empty()
             });
             assert!(
@@ -339,7 +334,7 @@ fn ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored() {
                 line(5 * MIB),
             )
             .expect("write the next status line");
-            common::m3::wait_until("progress of the 5 MiB line", || {
+            kestic_test_support::wait::wait_until("progress of the 5 MiB line", || {
                 rec.sizes
                     .lock()
                     .expect("lock")
@@ -347,7 +342,7 @@ fn ac_m4_05_30_restore_job_shows_the_speed_of_the_bytes_restored() {
                     .any(|(bytes, _, _)| *bytes == 5 * MIB)
             });
             fx.rig.clock.advance(Duration::from_secs(1));
-            common::m3::wait_until("progress with a speed", || {
+            kestic_test_support::wait::wait_until("progress with a speed", || {
                 rec.sizes
                     .lock()
                     .expect("lock")

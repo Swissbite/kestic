@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use super::*;
+use kestic_test_support::process::catches_sigterm;
+use kestic_test_support::wait::wait_until_within;
 use std::path::Path;
 use std::process::Stdio;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn shell(script: &str) -> Command {
     let mut cmd = Command::new("sh");
@@ -25,16 +27,8 @@ fn alive(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-fn wait_for(what: &str, limit: Duration, mut pred: impl FnMut() -> bool) {
-    let start = Instant::now();
-    while !pred() {
-        assert!(start.elapsed() < limit, "timed out waiting for {what}");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
 fn read_pid(path: &Path) -> u32 {
-    wait_for("pid file", Duration::from_secs(5), || {
+    wait_until_within(Duration::from_secs(5), "pid file", || {
         fs::read_to_string(path).is_ok_and(|s| s.trim().parse::<u32>().is_ok())
     });
     fs::read_to_string(path)
@@ -89,14 +83,17 @@ fn ac_m6_36_2_a_close_sends_sigterm_once_per_child() {
     let (mut first, reg_first) = registry.spawn(&mut shell(&script)).expect("spawn first");
     let (mut second, reg_second) = registry.spawn(&mut shell(&script)).expect("spawn second");
     assert_eq!(registry.live_count(), 2);
-    std::thread::sleep(Duration::from_millis(200));
+    wait_until_within(Duration::from_secs(5), "both traps installed", || {
+        catches_sigterm(first.id()) && catches_sigterm(second.id())
+    });
 
     assert!(registry.terminate(first.id()), "first SIGTERM is sent");
     assert!(!registry.terminate(first.id()), "a second one is not");
     registry.close();
-    wait_for("two SIGTERM lines", Duration::from_secs(5), || {
+    wait_until_within(Duration::from_secs(5), "two SIGTERM lines", || {
         fs::read_to_string(&log).is_ok_and(|s| s.lines().count() >= 2)
     });
+    // quiet window: no third SIGTERM follows
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(
         fs::read_to_string(&log).expect("log").lines().count(),
@@ -128,6 +125,7 @@ fn ac_m6_36_3_kill_remaining_ends_the_whole_tree() {
     let (mut child, reg) = registry.spawn(&mut shell(&script)).expect("spawn");
     let grandchild = read_pid(&grandchild_pid);
     registry.close();
+    // quiet window: the SIGTERM of `close` arrives and is ignored
     std::thread::sleep(Duration::from_millis(300));
     assert!(alive(child.id()), "the child ignores SIGTERM");
     assert!(alive(grandchild), "the grandchild ignores SIGTERM");
@@ -138,7 +136,7 @@ fn ac_m6_36_3_kill_remaining_ends_the_whole_tree() {
     );
     child.wait().expect("reap child");
     drop(reg);
-    wait_for("grandchild gone", Duration::from_secs(5), || {
+    wait_until_within(Duration::from_secs(5), "grandchild gone", || {
         !alive(grandchild)
     });
 }
@@ -158,7 +156,7 @@ fn ac_m6_36_3_kill_remaining_reaches_a_left_behind_descendant() {
     let (mut child, reg) = registry.spawn(&mut shell(&script)).expect("spawn");
     let grandchild = read_pid(&grandchild_pid);
     registry.close();
-    wait_for("the child ends on SIGTERM", Duration::from_secs(5), || {
+    wait_until_within(Duration::from_secs(5), "the child ends on SIGTERM", || {
         !alive(child.id())
     });
     assert!(
@@ -170,7 +168,7 @@ fn ac_m6_36_3_kill_remaining_reaches_a_left_behind_descendant() {
         registry.kill_remaining() >= 1,
         "the left-behind process gets SIGKILL"
     );
-    wait_for("left-behind process gone", Duration::from_secs(5), || {
+    wait_until_within(Duration::from_secs(5), "left-behind process gone", || {
         !alive(grandchild)
     });
     child.wait().expect("reap child");

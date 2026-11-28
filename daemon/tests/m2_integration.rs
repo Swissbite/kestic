@@ -5,7 +5,6 @@ mod common;
 
 use common::revision::UpdateNow;
 
-use common::load_config;
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, connect_local_repo,
     connect_rest_repo, spawn_m3_daemon,
@@ -25,15 +24,19 @@ use kestic_daemon::dbus_api::{
     KESTIC_BUS_NAME, KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient,
 };
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::bus::test_bus_name;
+use kestic_test_support::config::load_config;
+use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::tools::{
     RestServerGuard, assert_has_flag_pair, find_lock_file, install_args_spy, install_marker_spy,
 };
+use kestic_test_support::wait::{wait_for_value, wait_until_within};
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -141,15 +144,17 @@ fn wait_for_run_finished(signals: &KesticSignalCollector, run_id: &str, timeout:
         .expect("finished RunUpdated signal")
 }
 
+/// A `restic backup --stdin` holding a non-exclusive lock; its stdin closes before the process
+/// is killed (fields drop in declaration order).
 struct NonExclusiveLockHolder {
-    child: Child,
     stdin: Option<ChildStdin>,
+    child: KillOnDrop,
 }
 
 impl NonExclusiveLockHolder {
     fn start(restic_bin: &Path, repo_dir: &Path, password: &str) -> Self {
         let cache_dir = repo_dir.parent().unwrap_or(repo_dir).join("restic-cache");
-        let mut child = Command::new(restic_bin)
+        let child = Command::new(restic_bin)
             .args([
                 "-r",
                 &repo_dir.to_string_lossy(),
@@ -165,6 +170,7 @@ impl NonExclusiveLockHolder {
             .stderr(Stdio::null())
             .spawn()
             .expect("spawn restic backup --stdin");
+        let mut child = KillOnDrop::new(child);
 
         let mut stdin = child.stdin.take().expect("piped stdin");
         stdin
@@ -173,27 +179,22 @@ impl NonExclusiveLockHolder {
         stdin.flush().expect("flush stdin");
 
         let locks_dir = repo_dir.join("locks");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        loop {
-            if find_lock_file(&locks_dir).is_some() {
-                // Give restic a brief moment to finish flushing the lock file.
-                thread::sleep(Duration::from_millis(30));
-                break;
-            }
-            if let Some(status) = child.try_wait().expect("try_wait lock holder") {
-                panic!("restic backup --stdin exited prematurely with {status}");
-            }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for non-exclusive lock in {}",
-                locks_dir.display()
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
+        wait_until_within(
+            Duration::from_secs(10),
+            &format!("non-exclusive lock in {}", locks_dir.display()),
+            || {
+                if let Some(status) = child.try_wait().expect("try_wait lock holder") {
+                    panic!("restic backup --stdin exited prematurely with {status}");
+                }
+                find_lock_file(&locks_dir).is_some()
+            },
+        );
+        // Gives restic a brief moment to finish flushing the lock file.
+        thread::sleep(Duration::from_millis(30));
 
         Self {
-            child,
             stdin: Some(stdin),
+            child,
         }
     }
 
@@ -203,24 +204,11 @@ impl NonExclusiveLockHolder {
         assert!(status.success(), "lock holder exited with {status}");
 
         let locks_dir = repo_dir.join("locks");
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while find_lock_file(&locks_dir).is_some() {
-            assert!(
-                Instant::now() < deadline,
-                "lock file remained after lock holder exited"
-            );
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
-}
-
-impl Drop for NonExclusiveLockHolder {
-    fn drop(&mut self) {
-        drop(self.stdin.take());
-        if let Ok(None) = self.child.try_wait() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
+        wait_until_within(
+            Duration::from_secs(5),
+            "the lock file to go after the lock holder exited",
+            || find_lock_file(&locks_dir).is_none(),
+        );
     }
 }
 
@@ -394,20 +382,16 @@ fn verify_dry_run_with_excludes(client: &KesticClient, backup_id: &str, label: &
     let preview_id = client
         .start_backup_dry_run(backup_id, None)
         .expect("StartBackupDryRun");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let status = loop {
-        let st = client
-            .get_backup_dry_run_status(&preview_id)
-            .expect("GetBackupDryRunStatus");
-        if st.state != "running" {
-            break st;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "[{label}] timed out waiting for dry-run"
-        );
-        thread::sleep(Duration::from_millis(25));
-    };
+    let status = wait_for_value(
+        Duration::from_secs(20),
+        &format!("[{label}] dry-run"),
+        || {
+            client
+                .get_backup_dry_run_status(&preview_id)
+                .expect("GetBackupDryRunStatus")
+        },
+        |st| st.state != "running",
+    );
     assert_eq!(status.state, "done", "[{label}] dry-run failed: {status:?}");
     let res = status.result.expect("dry-run result");
     assert!(!res.cancelled, "[{label}]");
@@ -434,17 +418,16 @@ fn verify_dry_run_with_excludes(client: &KesticClient, backup_id: &str, label: &
     let draft_preview_id = client
         .start_backup_dry_run(backup_id, Some(&draft_excludes))
         .expect("StartBackupDryRun with draft excludes");
-    let deadline = Instant::now() + Duration::from_secs(20);
-    let draft_status = loop {
-        let st = client
-            .get_backup_dry_run_status(&draft_preview_id)
-            .expect("GetBackupDryRunStatus draft");
-        if st.state != "running" {
-            break st;
-        }
-        assert!(Instant::now() < deadline);
-        thread::sleep(Duration::from_millis(25));
-    };
+    let draft_status = wait_for_value(
+        Duration::from_secs(20),
+        &format!("[{label}] draft dry-run"),
+        || {
+            client
+                .get_backup_dry_run_status(&draft_preview_id)
+                .expect("GetBackupDryRunStatus draft")
+        },
+        |st| st.state != "running",
+    );
     assert_eq!(draft_status.state, "done", "[{label}] {draft_status:?}");
     let draft_res = draft_status.result.expect("draft dry-run result");
     assert_eq!(draft_res.total_files, 1, "[{label}] {draft_res:?}");
@@ -480,20 +463,16 @@ fn verify_stopped_rest_server_preflight(
     let fail_preview_id = client
         .start_backup_dry_run(backup_id, None)
         .expect("StartBackupDryRun against stopped server");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let fail_status = loop {
-        let st = client
-            .get_backup_dry_run_status(&fail_preview_id)
-            .expect("GetBackupDryRunStatus stopped");
-        if st.state != "running" {
-            break st;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "[{label}] stopped rest-server preflight exceeded 15s"
-        );
-        thread::sleep(Duration::from_millis(25));
-    };
+    let fail_status = wait_for_value(
+        Duration::from_secs(15),
+        &format!("[{label}] stopped rest-server preflight within 15s"),
+        || {
+            client
+                .get_backup_dry_run_status(&fail_preview_id)
+                .expect("GetBackupDryRunStatus stopped")
+        },
+        |st| st.state != "running",
+    );
     let elapsed = start.elapsed();
     assert!(
         elapsed <= Duration::from_secs(15),
@@ -525,10 +504,7 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
     fs::write(src_dir.join("skip.tmp"), b"should be excluded\n").expect("write tmp");
 
     let mut server = RestServerGuard::start_with_auth(&rest_data);
-    let bus_name = format!(
-        "net.daester.Kestic.M2DryRun_{}",
-        label.replace(['.', '-'], "_")
-    );
+    let bus_name = test_bus_name("M2DryRun_", label);
     let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
     let client = &daemon.client;
 
@@ -595,20 +571,16 @@ fn verify_retention_preview_under_lock(
     let preview_id = client
         .start_retention_preview(backup_id, &candidate_policy)
         .expect("StartRetentionPreview");
-    let deadline = Instant::now() + Duration::from_secs(15);
-    let dto = loop {
-        let st = client
-            .get_retention_preview_status(&preview_id)
-            .expect("GetRetentionPreviewStatus");
-        if st.state != "running" {
-            break st;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "[{label}] retention preview timed out"
-        );
-        thread::sleep(Duration::from_millis(25));
-    };
+    let dto = wait_for_value(
+        Duration::from_secs(15),
+        &format!("[{label}] retention preview"),
+        || {
+            client
+                .get_retention_preview_status(&preview_id)
+                .expect("GetRetentionPreviewStatus")
+        },
+        |st| st.state != "running",
+    );
     assert_eq!(dto.state, "done", "[{label}] {dto:?}");
     let preview = dto.result.expect("retention preview result");
     assert_eq!(preview.keep_count, 1, "[{label}] {preview:?}");
@@ -688,10 +660,7 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("file1.txt"), b"snapshot 1\n").expect("write file1");
 
-    let bus_name = format!(
-        "net.daester.Kestic.M2Retention_{}",
-        label.replace(['.', '-'], "_")
-    );
+    let bus_name = test_bus_name("M2Retention_", label);
     let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
@@ -767,10 +736,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                 fs::create_dir_all(&repo_dir).expect("mkdir repo");
                 fs::create_dir_all(&src_dir).expect("mkdir src");
 
-                let bus_name = format!(
-                    "net.daester.Kestic.M2ForgetOk_{}",
-                    label.replace(['.', '-'], "_")
-                );
+                let bus_name = test_bus_name("M2ForgetOk_", label);
                 let daemon =
                     spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
                 let client = &daemon.client;
@@ -1036,10 +1002,7 @@ fn run_exit_3_case(
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("readable.txt"), b"readable content\n").expect("write readable");
 
-    let bus_name = format!(
-        "net.daester.Kestic.M2Exit3_{}",
-        label.replace(['.', '-'], "_")
-    );
+    let bus_name = test_bus_name("M2Exit3_", label);
     let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
@@ -1283,10 +1246,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
     fs::create_dir_all(&src_dir).expect("mkdir src");
     fs::write(src_dir.join("one.txt"), b"first\n").expect("write one");
 
-    let bus_name = format!(
-        "net.daester.Kestic.M2Lock11_{}",
-        label.replace(['.', '-'], "_")
-    );
+    let bus_name = test_bus_name("M2Lock11_", label);
     let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
@@ -1363,10 +1323,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                 fs::create_dir_all(&src_dir).expect("mkdir src");
                 fs::write(src_dir.join("data.txt"), b"hello\n").expect("write data");
 
-                let bus_name = format!(
-                    "net.daester.Kestic.M2Exit1_{}",
-                    label.replace(['.', '-'], "_")
-                );
+                let bus_name = test_bus_name("M2Exit1_", label);
                 let wrapper = ResticWrapper::create(&sub.join("wrapper"), &restic_bin);
                 let daemon =
                     spawn_daemon_on_bus(root, &sub, &bus_name, wrapper.path.clone(), None, true);

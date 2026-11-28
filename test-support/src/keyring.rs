@@ -6,12 +6,13 @@
 //! end to end without touching the user's wallet.
 
 use crate::bus::wait_for_name_owner;
+use crate::process::KillOnDrop;
 use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 use zbus::{Connection, OwnedObjectPath, OwnedVariant, Proxy, Variant};
 
@@ -37,7 +38,7 @@ pub struct KeyringDirs<'a> {
 /// `Drop`. If the keyring exited before, its exit status and stderr are printed to stderr: every
 /// later password access of the test fails without it.
 pub struct HeadlessKeyring {
-    child: Child,
+    child: KillOnDrop,
     /// Short private directory (sun_path limit) for the control socket and the keyring's stderr;
     /// removed on drop.
     control_dir: tempfile::TempDir,
@@ -54,26 +55,27 @@ impl HeadlessKeyring {
             .expect("chmod 0700 keyring control dir");
         let stderr_log = fs::File::create(control_dir.path().join(STDERR_LOG))
             .expect("create keyring stderr log");
-        let mut child = Command::new("gnome-keyring-daemon")
-            .args([
-                "--foreground",
-                "--replace",
-                "--unlock",
-                "--components=secrets",
-                "--control-directory",
-            ])
-            .arg(control_dir.path())
-            .env_clear()
-            .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-            .env("DBUS_SESSION_BUS_ADDRESS", bus_address)
-            .env("HOME", dirs.home)
-            .env("XDG_DATA_HOME", dirs.data_home)
-            .env("XDG_RUNTIME_DIR", dirs.runtime_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(stderr_log)
-            .spawn()
-            .expect("spawn headless gnome-keyring-daemon");
+        let mut child = KillOnDrop::spawn(
+            Command::new("gnome-keyring-daemon")
+                .args([
+                    "--foreground",
+                    "--replace",
+                    "--unlock",
+                    "--components=secrets",
+                    "--control-directory",
+                ])
+                .arg(control_dir.path())
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("DBUS_SESSION_BUS_ADDRESS", bus_address)
+                .env("HOME", dirs.home)
+                .env("XDG_DATA_HOME", dirs.data_home)
+                .env("XDG_RUNTIME_DIR", dirs.runtime_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(stderr_log),
+            "headless gnome-keyring-daemon",
+        );
         if let Some(mut stdin) = child.stdin.take() {
             stdin
                 .write_all(b"\n")
@@ -183,7 +185,5 @@ impl Drop for HeadlessKeyring {
                 self.bus_address
             );
         }
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }

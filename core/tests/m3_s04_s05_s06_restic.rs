@@ -7,7 +7,9 @@ mod common;
 
 use common::execute_backup;
 
+use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::tools::find_lock_file;
+use kestic_test_support::wait::poll_within;
 
 use kestic_core::backup::{
     build_backup_command_spec, build_forget_ids_command_spec, build_forget_plan_command_spec,
@@ -24,8 +26,7 @@ use std::fs;
 use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use time::macros::datetime;
 
@@ -141,29 +142,26 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
         );
 
         // Hold a non-exclusive lock via `restic backup --stdin`.
-        let mut stdin_child = Command::new(&rig.resolved.binary)
-            .args([
-                "-r",
-                &repo_dir.to_string_lossy(),
-                "backup",
-                "--stdin",
-                "--stdin-filename",
-                "lock-hold.txt",
-            ])
-            .env("RESTIC_PASSWORD", &repo_pw)
-            .env("RESTIC_CACHE_DIR", &cache_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn stdin backup");
+        let mut stdin_child = KillOnDrop::spawn(
+            Command::new(&rig.resolved.binary)
+                .args([
+                    "-r",
+                    &repo_dir.to_string_lossy(),
+                    "backup",
+                    "--stdin",
+                    "--stdin-filename",
+                    "lock-hold.txt",
+                ])
+                .env("RESTIC_PASSWORD", &repo_pw)
+                .env("RESTIC_CACHE_DIR", &cache_dir)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "spawn stdin backup",
+        );
 
         let locks_dir = repo_dir.join("locks");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while find_lock_file(&locks_dir).is_none() {
-            assert!(Instant::now() < deadline, "{label}: lock never appeared");
-            thread::sleep(Duration::from_millis(25));
-        }
+        wait_for_lock_file(&locks_dir, label, "lock never appeared");
 
         // AC-M3-05-8: prune --dry-run --no-lock succeeds while non-exclusive lock is held.
         let preview = execute_prune_dry_run(&dest, &runtime, None, &[])
@@ -192,14 +190,9 @@ fn ac_m3_05_7_and_05_8_prune_dry_run_uses_no_lock_during_active_backup() {
 }
 
 fn wait_for_lock_file(locks_dir: &Path, label: &str, msg: &str) -> std::path::PathBuf {
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        if let Some(lock) = find_lock_file(locks_dir) {
-            return lock;
-        }
-        assert!(Instant::now() < deadline, "{label}: {msg}");
-        thread::sleep(Duration::from_millis(25));
-    }
+    poll_within(Duration::from_secs(10), &format!("{label}: {msg}"), || {
+        find_lock_file(locks_dir)
+    })
 }
 
 fn verify_active_local_lock_refusal(
@@ -211,22 +204,23 @@ fn verify_active_local_lock_refusal(
     runtime: &ResticRuntime<'_>,
 ) {
     let locks_dir = repo_dir.join("locks");
-    let mut active_child = Command::new(&runtime.resolved.binary)
-        .args([
-            "-r",
-            &repo_dir.to_string_lossy(),
-            "backup",
-            "--stdin",
-            "--stdin-filename",
-            "active.txt",
-        ])
-        .env("RESTIC_PASSWORD", repo_pw)
-        .env("RESTIC_CACHE_DIR", cache_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn active backup");
+    let mut active_child = KillOnDrop::spawn(
+        Command::new(&runtime.resolved.binary)
+            .args([
+                "-r",
+                &repo_dir.to_string_lossy(),
+                "backup",
+                "--stdin",
+                "--stdin-filename",
+                "active.txt",
+            ])
+            .env("RESTIC_PASSWORD", repo_pw)
+            .env("RESTIC_CACHE_DIR", cache_dir)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+        "spawn active backup",
+    );
     wait_for_lock_file(&locks_dir, label, "active lock never appeared");
 
     let active_cls = detect_stale_locks(dest, runtime, &[]).expect("active detect");
@@ -286,15 +280,16 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         let locks_dir = repo_dir.join("locks");
 
         // 1. SIGTERM on exclusive `restic check --read-data` cleans up its lock -> no unlock offer (`AC-M3-06-1`).
-        let mut sigterm_child = Command::new(&rig.resolved.binary)
-            .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", &repo_pw)
-            .env("RESTIC_CACHE_DIR", &cache_dir)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn check");
+        let mut sigterm_child = KillOnDrop::spawn(
+            Command::new(&rig.resolved.binary)
+                .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
+                .env("RESTIC_PASSWORD", &repo_pw)
+                .env("RESTIC_CACHE_DIR", &cache_dir)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "spawn check",
+        );
         wait_for_lock_file(&locks_dir, label, "lock never appeared");
         let _ = Command::new("kill")
             .args(["-TERM", &sigterm_child.id().to_string()])
@@ -307,16 +302,17 @@ fn ac_m3_06_1_to_06_3_stale_lock_detection_sigterm_active_and_foreign_host() {
         );
 
         // 2. SIGKILL on exclusive `restic check --read-data` leaves stale local lock (`AC-M3-06-1`).
-        let mut sigkill_child = Command::new(&rig.resolved.binary)
-            .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", &repo_pw)
-            .env("RESTIC_CACHE_DIR", &cache_dir)
-            .env("RESTIC_HOST", "ignored-by-restic-lock")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn check for kill");
+        let mut sigkill_child = KillOnDrop::spawn(
+            Command::new(&rig.resolved.binary)
+                .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
+                .env("RESTIC_PASSWORD", &repo_pw)
+                .env("RESTIC_CACHE_DIR", &cache_dir)
+                .env("RESTIC_HOST", "ignored-by-restic-lock")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "spawn check for kill",
+        );
         wait_for_lock_file(&locks_dir, label, "lock never appeared");
         let _ = sigkill_child.kill();
         let _ = sigkill_child.wait();

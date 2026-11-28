@@ -429,6 +429,7 @@ fn serve(stream: TcpStream, routes: &HashMap<String, Route>, requests: &Mutex<Ve
         Route::StallAfterHeaders => {
             let _ = stream.write_all(head("200 OK", "Content-Length: 1000\r\n").as_bytes());
             let _ = stream.flush();
+            // quiet window: the body never comes; the client under test gives up first
             std::thread::sleep(std::time::Duration::from_secs(60));
             return;
         }

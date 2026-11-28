@@ -60,7 +60,7 @@ fn add_local_dest(rig: &M3Rig, root: &Path, name: &str) -> Destination {
     fs::create_dir_all(&repo).expect("mkdir repo");
     let dest = Destination::new(name, DestinationKind::Local { path: repo }).expect("dest");
     connect_local_repo(&rig.daemon.client, &rig.variant.bin, &dest);
-    std::thread::sleep(Duration::from_millis(1300));
+    rig.clock.wait_ticks(2);
     dest
 }
 
@@ -196,7 +196,8 @@ fn ac_m3_05_3_maintenance_waits_for_backup_and_blocks_backups_on_destination() {
                     },
                 );
                 let dest_id = alpha.dest.id.clone();
-                std::thread::sleep(Duration::from_millis(1300));
+                // One whole scheduler tick records the baselines.
+                rig.clock.wait_ticks(2);
                 rig.wrapper.hold("backup");
                 rig.wrapper.hold("prune");
 
@@ -355,10 +356,10 @@ fn backup_with_open_forget(
         "{}: precondition: forget is open",
         rig.variant.label
     );
-    if let Some(mut stdin) = holder.0.stdin.take() {
+    if let Some(mut stdin) = holder.stdin.take() {
         let _ = stdin.write_all(b"done");
     }
-    holder.0.wait().expect("foreign backup finishes");
+    holder.wait().expect("foreign backup finishes");
     alpha
 }
 
@@ -809,10 +810,10 @@ fn ac_m3_05_8_prune_preview_under_non_exclusive_lock_uses_no_lock() {
                     variant.label,
                     preview.transparent_command
                 );
-                if let Some(mut stdin) = holder.0.stdin.take() {
+                if let Some(mut stdin) = holder.stdin.take() {
                     let _ = stdin.write_all(b"ok");
                 }
-                holder.0.wait().expect("foreign backup finishes");
+                holder.wait().expect("foreign backup finishes");
                 rig.daemon.stop();
             }
         },

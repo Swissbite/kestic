@@ -24,6 +24,7 @@ use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
 use kestic_i18n::codes::BlockedReason;
 use kestic_test_support::tools::RestServerGuard;
+use kestic_test_support::wait::wait_until_within;
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -486,9 +487,11 @@ fn ac_m3_04_7_real_clock_status_pending_within_15_seconds_of_due_time() {
             let bid = BackupId::parse(&bid_str).expect("bid");
 
             // Before the due time nothing is pending (the measurement below is not trivially true).
-            while SystemClock.now_utc() < due - time::Duration::seconds(1) {
-                std::thread::sleep(Duration::from_millis(200));
-            }
+            wait_until_within(
+                Duration::from_secs(120),
+                "a second before the due time",
+                || SystemClock.now_utc() >= due - time::Duration::seconds(1),
+            );
             let early = daemon.client.get_state().expect("GetState");
             assert_eq!(
                 backup_summary(&early, &bid).pending_primary_code,

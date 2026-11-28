@@ -19,9 +19,10 @@ use kestic_daemon::dbus_api::{
     DiffResultDto, KesticDbusError, PageFilter, SnapshotChange, SnapshotQueryPage,
     SnapshotQueryRequest, SnapshotQueryResultDto, SnapshotQueryStatusDto,
 };
+use kestic_test_support::wait::try_poll_every;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 
 /// Two snapshots of one folder: the first and the one after `change` modified it.
@@ -467,10 +468,11 @@ fn m4_s02_cancelling_a_diff_stops_restic_diff() {
             let id = fx
                 .start_diff(&fx.docs.from, &fx.docs.to)
                 .expect("StartSnapshotQuery");
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while fx.rig.wrapper.of('S', "diff").is_empty() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(50));
-            }
+            // The assertion below reports a diff that never started.
+            try_poll_every(Duration::from_secs(30), Duration::from_millis(50), || {
+                (!fx.rig.wrapper.of('S', "diff").is_empty()).then_some(())
+            })
+            .unwrap_or_default();
             assert_eq!(
                 fx.rig.wrapper.of('S', "diff").len(),
                 1,

@@ -114,9 +114,9 @@ fn ac_m3_04_4_exclusive_lock_exit_11_backoff_5_15_60_without_notification() {
                 let mut cmd = rig.restic_cmd();
                 cmd.args(["check", "--read-data"]);
                 let mut check = hold_repo_lock(cmd, &rig.fixture.repo_dir);
-                send_signal(check.0.id(), "STOP");
+                send_signal(check.id(), "STOP");
                 assert!(
-                    check.0.try_wait().expect("try_wait").is_none(),
+                    check.try_wait().expect("try_wait").is_none(),
                     "{}: lock holder must still be alive",
                     variant.label
                 );
@@ -403,7 +403,7 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                     variant.label
                 );
 
-                if let Some(mut stdin) = holder.0.stdin.take() {
+                if let Some(mut stdin) = holder.stdin.take() {
                     let _ = stdin.write_all(b"done");
                 }
                 drop(holder);

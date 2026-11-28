@@ -19,9 +19,10 @@ use kestic_daemon::dbus_api::{
     LsEntryDto, LsResultDto, PageFilter, SnapshotQueryPage, SnapshotQueryRequest,
     SnapshotQueryResultDto, SnapshotQueryStatusDto,
 };
+use kestic_test_support::wait::{try_poll_every, wait_until_within};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 
 /// A daemon behind the restic wrapper with one local destination holding one snapshot of a
@@ -368,24 +369,24 @@ fn m4_s03_cancel_snapshot_query_stops_restic_ls() {
                 let label = v.label;
                 fx.rig.wrapper.hold("ls");
                 let id = fx.start_ls(&fx.src_dir());
-                let deadline = Instant::now() + Duration::from_secs(30);
-                while fx.rig.wrapper.of('S', "ls").is_empty() {
-                    assert!(Instant::now() < deadline, "{label}: restic ls started");
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+                wait_until_within(
+                    Duration::from_secs(30),
+                    &format!("{label}: restic ls started"),
+                    || !fx.rig.wrapper.of('S', "ls").is_empty(),
+                );
                 fx.rig
                     .daemon
                     .client
                     .cancel_snapshot_query(&id)
                     .expect("CancelSnapshotQuery");
-                let deadline = Instant::now() + Duration::from_secs(30);
-                let state = loop {
-                    let st = fx.status(&id, &SnapshotQueryPage::default());
-                    if st.state != "running" || Instant::now() > deadline {
-                        break st.state;
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                };
+                // Polled until the query leaves «running», then checked below with the hold
+                // released.
+                let state =
+                    try_poll_every(Duration::from_secs(30), Duration::from_millis(50), || {
+                        let st = fx.status(&id, &SnapshotQueryPage::default());
+                        (st.state != "running").then_some(st.state)
+                    })
+                    .unwrap_or_else(|| "running".to_string());
                 fx.rig.wrapper.release("ls");
                 assert_eq!(state, "cancelled", "{label}: query cancelled");
                 assert_eq!(

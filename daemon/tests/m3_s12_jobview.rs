@@ -8,11 +8,12 @@ mod common;
 use common::fakes::FakeJobViewHandle;
 use common::m3::{
     LocalBackupFixture, M3Rig, ResticVariant, StdFakes, backup_summary, latest_variant,
-    restic_variants, wait_for_state, wait_until,
+    restic_variants, wait_for_state,
 };
 use common::{CapturedKesticSignal, KesticSignalCollector, run_isolated_test};
 use kestic_core::model::{Run, RunStatus};
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, RunProgressPhase};
+use kestic_test_support::wait::wait_until;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;

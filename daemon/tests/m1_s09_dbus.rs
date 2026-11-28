@@ -5,7 +5,6 @@ mod common;
 
 use common::revision::UpdateNow;
 
-use common::load_config;
 use common::m3::{
     LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, connect_local_repo, spawn_m3_daemon,
 };
@@ -26,6 +25,7 @@ use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::{DaemonOutcome, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
+use kestic_test_support::config::load_config;
 use kestic_test_support::password::{assert_no_secret, strong_password};
 use kestic_test_support::tools::{free_loopback_port, install_marker_spy};
 use std::fs;
@@ -820,6 +820,7 @@ fn reply_under_way_at_shutdown_reaches_its_caller() {
                 .expect("UnlockSecretStore is under way");
 
             let gate = thread::spawn(move || {
+                // quiet window: the unlock stays held while the daemon is asked to stop
                 thread::sleep(Duration::from_millis(300));
                 let opened = Instant::now();
                 gate_tx.send(()).expect("open the unlock gate");

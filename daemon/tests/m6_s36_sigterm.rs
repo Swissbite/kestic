@@ -16,7 +16,7 @@ use common::m3::{
     LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes,
     add_folder_backup, add_local_backup, daemon_paths, latest_variant, notifications_for,
     restic_cmd, restic_variants, runtime_state, seed_local_destination, send_signal,
-    spawn_m3_daemon, wait_until, wait_until_within, write_incompressible_dataset,
+    spawn_m3_daemon, write_incompressible_dataset,
 };
 use common::m4::{RawSnapshot, backup_dir};
 use common::release::serve;
@@ -36,7 +36,9 @@ use kestic_daemon::dbus_api::{
     BackendSecrets, KESTIC_OBJECT_PATH, KesticClient, RestoreRequest, SnapshotQueryRequest,
 };
 use kestic_daemon::service::{DaemonOutcome, install_stop_signal};
+use kestic_test_support::process::{KillOnDrop, catches_sigterm};
 use kestic_test_support::release_mock::{ReleaseFiles, Route, TestSigningKey, asset_path};
+use kestic_test_support::wait::{try_poll_every, wait_until, wait_until_within};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -96,21 +98,16 @@ fn runs_of(runs: &[Run], pred: impl Fn(&Run) -> bool) -> Vec<Run> {
 /// Waits at most `limit` for `child` to end and returns its status.
 fn wait_exit(child: &mut Child, limit: Duration) -> (ExitStatus, Duration) {
     let start = Instant::now();
-    loop {
-        if let Some(status) = child.try_wait().expect("try_wait") {
-            return (status, start.elapsed());
-        }
-        assert!(
-            start.elapsed() < limit,
-            "the daemon did not end within {limit:?}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    let status = try_poll_every(limit, Duration::from_millis(20), || {
+        child.try_wait().expect("try_wait")
+    })
+    .unwrap_or_else(|| panic!("the daemon did not end within {limit:?}"));
+    (status, start.elapsed())
 }
 
 /// A `kestic daemon` process with its own bus name, config and state.
 struct BinaryDaemon {
-    child: Child,
+    child: KillOnDrop,
     ready: PathBuf,
     stderr: PathBuf,
 }
@@ -150,7 +147,7 @@ impl BinaryDaemon {
         .envs(env.iter().copied())
         .stdout(Stdio::null())
         .stderr(fs::File::create(&stderr).expect("daemon stderr file"));
-        let child = cmd.spawn().expect("spawn kestic daemon");
+        let child = KillOnDrop::spawn(&mut cmd, "kestic daemon");
         Self {
             child,
             ready,
@@ -168,13 +165,6 @@ impl BinaryDaemon {
 
     fn log(&self) -> String {
         fs::read_to_string(&self.stderr).unwrap_or_default()
-    }
-}
-
-impl Drop for BinaryDaemon {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
     }
 }
 
@@ -244,11 +234,9 @@ fn ac_m6_36_1_sigterm_ends_a_backup_cleanly() {
                     "the catch-up backup holds a lock",
                     || lock_files(&repo_dir) > 0,
                 );
-                thread::sleep(Duration::from_millis(300));
-                assert!(
-                    !processes_mentioning(&repo_text).is_empty(),
-                    "precondition: restic runs"
-                );
+                wait_until_within(Duration::from_secs(5), "precondition: restic runs", || {
+                    !processes_mentioning(&repo_text).is_empty()
+                });
 
                 send_signal(daemon.pid(), "TERM");
                 let (status, _) = wait_exit(&mut daemon.child, Duration::from_secs(15));
@@ -614,8 +602,11 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
             let repo_calls_before = wrapper.started_repo_count();
             signal_self();
             // While the daemon stops (A's `forget` lingers): a backup becomes due, and every
-            // call that would start restic is made.
-            thread::sleep(Duration::from_millis(300));
+            // call that would start restic is made. The daemon stops once it sends restic
+            // `SIGTERM`.
+            wait_until_within(Duration::from_secs(5), "restic forget gets SIGTERM", || {
+                !wrapper.of('T', "forget").is_empty()
+            });
             // Read first: the fake clock keeps a finished installation for ten minutes only.
             let install = client
                 .get_restic_install_status(&install_id)
@@ -895,6 +886,7 @@ fn ac_m6_36_4_d_second_sigterm_keeps_the_deadline() {
             let stuck = rig.wrapper.lingering_pids("backup");
 
             let (signal_at, _) = signal_self();
+            // quiet window: the second signal comes 4 s into the common 10 s limit
             thread::sleep(Duration::from_secs(4));
             signal_self();
             wait_until_within(Duration::from_secs(13), "the stuck call is killed", || {
@@ -956,7 +948,9 @@ fn ac_m6_36_4_sigterm_lifecycle() {
                 &["--no-scheduler"],
                 &[("KESTIC_TEST_DAEMON_START_DELAY_MS", "2000")],
             );
-            thread::sleep(Duration::from_millis(500));
+            wait_until_within(Duration::from_secs(5), "the SIGTERM handler", || {
+                catches_sigterm(starting.pid())
+            });
             send_signal(starting.pid(), "TERM");
             let (status, took) = wait_exit(&mut starting.child, Duration::from_secs(10));
             assert_eq!(status.code(), Some(0), "AC-M6-36-4 (c): exit code");
@@ -990,6 +984,7 @@ fn ac_m6_36_4_sigterm_lifecycle() {
             send_signal(watched.pid(), "TERM");
             let (status, _) = wait_exit(&mut watched.child, Duration::from_secs(10));
             assert_eq!(status.code(), Some(0), "AC-M6-36-4 (e): exit code");
+            // quiet window: no daemon started from the replaced binary takes the name
             thread::sleep(Duration::from_secs(1));
             let watched_client = KesticClient::from_connection(
                 sni.clone(),

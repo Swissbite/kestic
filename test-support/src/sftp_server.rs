@@ -5,11 +5,12 @@
 //! host key and one authorised user key, plus an ssh configuration for the tests that offers only
 //! that key and never reads the real `~/.ssh`.
 
+use crate::process::KillOnDrop;
 use crate::tools::free_loopback_port;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 /// The `sshd` binary (`KESTIC_SSHD` overrides `/usr/sbin/sshd`); sshd needs an absolute path.
@@ -62,7 +63,7 @@ pub struct SftpServerGuard {
     /// `<type> <key>` of the server's host key.
     pub host_key: String,
     dir: PathBuf,
-    child: Option<Child>,
+    child: Option<KillOnDrop>,
 }
 
 impl SftpServerGuard {
@@ -137,14 +138,15 @@ impl SftpServerGuard {
             fs::write(&config, &base).expect("write sshd_config");
         }
         let log = fs::File::create(self.dir.join("sshd.log")).expect("create sshd log");
-        let child = Command::new(sshd_binary())
-            .args(["-D", "-e", "-f"])
-            .arg(&config)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(log)
-            .spawn()
-            .expect("spawn sshd");
+        let child = KillOnDrop::spawn(
+            Command::new(sshd_binary())
+                .args(["-D", "-e", "-f"])
+                .arg(&config)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(log),
+            "sshd",
+        );
         self.child = Some(child);
         self.wait_ready();
     }
@@ -152,7 +154,7 @@ impl SftpServerGuard {
     fn wait_ready(&mut self) {
         let log = self.dir.join("sshd.log");
         crate::tools::wait_listening(
-            self.child.as_mut(),
+            self.child.as_deref_mut(),
             self.port,
             Duration::from_secs(10),
             "sshd",
@@ -181,15 +183,6 @@ impl SftpServerGuard {
 
     /// Stops the server immediately.
     pub fn stop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-impl Drop for SftpServerGuard {
-    fn drop(&mut self) {
-        self.stop();
+        self.child = None;
     }
 }

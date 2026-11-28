@@ -168,7 +168,8 @@ impl SftpRig {
     }
 
     fn configured_destinations(&self) -> usize {
-        common::load_config(&self.daemon.config_path).map_or(0, |config| config.destinations.len())
+        kestic_test_support::config::load_config(&self.daemon.config_path)
+            .map_or(0, |config| config.destinations.len())
     }
 }
 

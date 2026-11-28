@@ -18,6 +18,7 @@ use tools::{dev_tools_bin_dir, rest_server_binary};
 
 use kestic_daemon::secrets::SecretServiceStore;
 use kestic_daemon::service::DaemonRunConfig;
+use kestic_test_support::wait::{poll_within, try_poll_every, try_poll_within, wait_until_within};
 use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
@@ -27,7 +28,7 @@ use std::sync::{
     atomic::{AtomicU32, Ordering},
 };
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use zbus::{Connection, OwnedVariant, Structure, Variant, block_on, interface};
 
 /// Connects a D-Bus client to the daemon under test on the current (private) session bus.
@@ -36,15 +37,6 @@ pub fn connect_default_client() -> zbus::Result<kestic_daemon::dbus_api::KesticC
         kestic_daemon::dbus_api::KESTIC_BUS_NAME,
         kestic_daemon::dbus_api::KESTIC_OBJECT_PATH,
     )
-}
-
-/// Loads an existing `config.toml` through the production loader (`load_optional_config`).
-pub fn load_config(
-    path: &Path,
-) -> Result<kestic_core::config::AppConfig, kestic_core::config::ConfigError> {
-    kestic_core::config::load_optional_config(path)?.ok_or_else(|| {
-        kestic_core::config::ConfigError::Io(std::io::Error::from(std::io::ErrorKind::NotFound))
-    })
 }
 
 /// Resolves restic 0.18.0 and latest test binaries (`AC-M1-Q-2`).
@@ -187,21 +179,16 @@ pub fn output_within(mut cmd: Command, limit: Duration) -> LimitedOutput {
     let stdout_rx = read_all(Box::new(child.stdout.take().expect("child stdout")));
     let stderr_rx = read_all(Box::new(child.stderr.take().expect("child stderr")));
 
-    let deadline = Instant::now() + limit;
-    let mut timed_out = false;
-    let status = loop {
-        if let Some(status) = child.try_wait().expect("poll isolated test child") {
-            break status;
-        }
-        if Instant::now() >= deadline {
-            timed_out = true;
-            kill_descendants(child.id());
-            // The child may have ended right now; `wait` reports its status either way.
-            child.kill().ok();
-            break child.wait().expect("wait for killed isolated test child");
-        }
-        thread::sleep(Duration::from_millis(50));
-    };
+    let ended = try_poll_every(limit, Duration::from_millis(50), || {
+        child.try_wait().expect("poll isolated test child")
+    });
+    let timed_out = ended.is_none();
+    let status = ended.unwrap_or_else(|| {
+        kill_descendants(child.id());
+        // The child may have ended right now; `wait` reports its status either way.
+        child.kill().ok();
+        child.wait().expect("wait for killed isolated test child")
+    });
     // A process the killed child started may still hold a pipe open; it is not waited for.
     let collect = |rx: std::sync::mpsc::Receiver<Vec<u8>>| {
         rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
@@ -468,25 +455,21 @@ pub fn wait_for_sni_service_at(
     index: usize,
     timeout: Duration,
 ) -> String {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let items = block_on(async {
-            let iface = watcher_conn
-                .object_server()
-                .interface::<_, FakeSniWatcher>("/StatusNotifierWatcher")
-                .await
-                .expect("get FakeSniWatcher interface");
-            iface.get().await.registered_status_notifier_items()
-        });
-        if let Some(item) = items.into_iter().nth(index) {
-            return item;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for StatusNotifierItem registration at index {index}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    poll_within(
+        timeout,
+        &format!("StatusNotifierItem registration at index {index}"),
+        || {
+            let items = block_on(async {
+                let iface = watcher_conn
+                    .object_server()
+                    .interface::<_, FakeSniWatcher>("/StatusNotifierWatcher")
+                    .await
+                    .expect("get FakeSniWatcher interface");
+                iface.get().await.registered_status_notifier_items()
+            });
+            items.into_iter().nth(index)
+        },
+    )
 }
 
 /// Reads a string property from `org.kde.StatusNotifierItem` on `sni_service`.
@@ -710,45 +693,35 @@ fn collect_menu_variant(node: &Variant<'_>, out: &mut Vec<TrayMenuEntry>) {
 pub const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub fn wait_for_file(path: &Path, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while !path.exists() {
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for file {}",
-            path.display()
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_until_within(timeout, &format!("file {}", path.display()), || {
+        path.exists()
+    });
 }
 
 /// Polls `org.freedesktop.DBus.NameHasOwner` until `bus_name` is no longer owned.
 pub fn wait_for_bus_name_released(conn: &Connection, bus_name: &str, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let owned = block_on(async {
-            conn.call_method(
-                Some("org.freedesktop.DBus"),
-                "/org/freedesktop/DBus",
-                Some("org.freedesktop.DBus"),
-                "NameHasOwner",
-                &(bus_name,),
-            )
-            .await
-            .ok()?
-            .body()
-            .deserialize::<bool>()
-            .ok()
-        })
-        .unwrap_or(false);
-        if !owned {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for D-Bus name `{bus_name}` to be released"
-        );
-        thread::sleep(Duration::from_millis(15));
-    }
+    wait_until_within(
+        timeout,
+        &format!("D-Bus name `{bus_name}` to be released"),
+        || {
+            let owned = block_on(async {
+                conn.call_method(
+                    Some("org.freedesktop.DBus"),
+                    "/org/freedesktop/DBus",
+                    Some("org.freedesktop.DBus"),
+                    "NameHasOwner",
+                    &(bus_name,),
+                )
+                .await
+                .ok()?
+                .body()
+                .deserialize::<bool>()
+                .ok()
+            })
+            .unwrap_or(false);
+            !owned
+        },
+    );
 }
 
 /// Captured D-Bus signal from `net.daester.Kestic1`.
@@ -905,18 +878,16 @@ impl KesticSignalCollector {
     where
         F: FnMut(&[CapturedKesticSignal]) -> bool,
     {
-        let deadline = Instant::now() + timeout;
-        loop {
+        try_poll_within(timeout, || {
             let snap = self.snapshot();
-            if pred(&snap) {
-                return snap;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for expected D-Bus signal; captured so far: {snap:?}"
-            );
-            thread::sleep(Duration::from_millis(20));
-        }
+            pred(&snap).then_some(snap)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "timed out waiting for expected D-Bus signal; captured so far: {:?}",
+                self.snapshot()
+            )
+        })
     }
 }
 

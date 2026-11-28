@@ -11,7 +11,6 @@ use common::m3::{
     DesktopFakes, FakeSetup, LockableSecretStore, M3DaemonOpts, M3Rig, StdFakes,
     assert_dbus_error_name, backup_summary, connect_rest_repo, count_runs, daemon_paths,
     dest_summary, latest_variant, seed_local_destination, spawn_m3_daemon, wait_for_state,
-    wait_until_within,
 };
 use common::{
     click_dbusmenu_item, fetch_dbusmenu_items, run_isolated_test, start_fake_sni_watcher,
@@ -27,7 +26,10 @@ use kestic_core::mount::MountInspector;
 use kestic_core::restic::{ResticFailureKind, classify_exit};
 use kestic_core::scheduler::PauseDuration;
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient};
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::tools::find_lock_file;
 use kestic_test_support::tools::{RestServerGuard, write_executable};
+use kestic_test_support::wait::{poll_within, try_poll_every, wait_for_value, wait_until_within};
 use std::fs;
 use std::io::Write;
 use std::net::{TcpListener, TcpStream};
@@ -88,8 +90,8 @@ fn m3_maintenance_backoff_prevents_spin_and_notification_flood() {
                 },
             );
 
-            // Wait >1 scheduler tick (1300ms): must NOT re-trigger every second!
-            thread::sleep(Duration::from_millis(1300));
+            // More than one scheduler tick: must NOT re-trigger every second!
+            clock.wait_ticks(2);
             let maint_runs_after_1 = RunHistory::open(&state_dir)
                 .expect("open history")
                 .list_runs()
@@ -115,26 +117,25 @@ fn m3_maintenance_backoff_prevents_spin_and_notification_flood() {
 
             // +5m -> attempt 2 fails, still only 1 notification!
             clock.advance(Duration::from_mins(5));
-            let deadline = Instant::now() + Duration::from_secs(15);
-            loop {
-                let finished_count = RunHistory::open(&state_dir)
-                    .expect("open history")
-                    .list_runs()
-                    .expect("list runs")
-                    .into_iter()
-                    .filter(|r| r.kind == RunKind::Maintenance && r.status == RunStatus::Error)
-                    .count();
-                let state_now = client.get_state().expect("GetState");
-                let still_running = dest_summary(&state_now, &fx.dest.id).maintenance_running;
-                if finished_count == 2 && !still_running {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "expected 2 finished Error maintenance runs at +5m, got {finished_count} (running={still_running})"
-                );
-                thread::sleep(Duration::from_millis(40));
-            }
+            wait_for_value(
+                Duration::from_secs(15),
+                "2 finished Error maintenance runs at +5m (finished, running)",
+                || {
+                    let finished_count = RunHistory::open(&state_dir)
+                        .expect("open history")
+                        .list_runs()
+                        .expect("list runs")
+                        .into_iter()
+                        .filter(|r| r.kind == RunKind::Maintenance && r.status == RunStatus::Error)
+                        .count();
+                    let state_now = client.get_state().expect("GetState");
+                    (
+                        finished_count,
+                        dest_summary(&state_now, &fx.dest.id).maintenance_running,
+                    )
+                },
+                |&(finished, running)| finished == 2 && !running,
+            );
             let maint_notifs_after_2 = fakes
                 .notif
                 .snapshot()
@@ -251,18 +252,17 @@ fn m3_start_all_queues_same_destination_and_notifies_when_warning_disabled() {
                 .find(|m| m.label == "All Backups")
                 .expect("tray Back Up All item");
             click_dbusmenu_item(&conn, &sni_service, start_all_item.id);
-            let notif_deadline = Instant::now() + Duration::from_secs(5);
-            while Instant::now() < notif_deadline {
-                if fakes
-                    .notif
-                    .snapshot()
-                    .iter()
-                    .any(|n| n.event_id.as_deref() == Some("ManualRunBlocked"))
-                {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(40));
-            }
+            wait_until_within(
+                Duration::from_secs(5),
+                "ManualRunBlocked notification",
+                || {
+                    fakes
+                        .notif
+                        .snapshot()
+                        .iter()
+                        .any(|n| n.event_id.as_deref() == Some("ManualRunBlocked"))
+                },
+            );
             let blocked_notifs: Vec<_> = fakes
                 .notif
                 .snapshot()
@@ -330,22 +330,18 @@ fn m3_network_switch_clears_network_backoff_but_preserves_lock_backoff() {
 
             // Create exclusive stale lock on local_repo and stop REST server.
             rest.stop();
-            let mut excl_child = Command::new(&restic_bin)
-                .args(["-r", &local_repo.to_string_lossy(), "check", "--read-data"])
-                .env("RESTIC_PASSWORD", &local.password)
-                .env("RESTIC_CACHE_DIR", &restic_cache)
-                .spawn()
-                .expect("spawn restic check");
+            let mut excl_child = KillOnDrop::spawn(
+                Command::new(&restic_bin)
+                    .args(["-r", &local_repo.to_string_lossy(), "check", "--read-data"])
+                    .env("RESTIC_PASSWORD", &local.password)
+                    .env("RESTIC_CACHE_DIR", &restic_cache),
+                "restic check",
+            );
             let locks_dir = local_repo.join("locks");
-            let lock_wait = Instant::now() + Duration::from_secs(10);
-            while !fs::read_dir(&locks_dir)
-                .ok()
-                .is_some_and(|mut it| it.any(|e| e.is_ok()))
-            {
-                assert!(Instant::now() < lock_wait, "exclusive lock never appeared");
-                thread::sleep(Duration::from_millis(5));
-            }
-            thread::sleep(Duration::from_millis(30));
+            // A lock file with content: restic has written the whole exclusive lock.
+            wait_until_within(Duration::from_secs(10), "exclusive lock", || {
+                find_lock_file(&locks_dir).is_some()
+            });
             excl_child.kill().expect("kill restic check");
             let _ = excl_child.wait();
 
@@ -379,8 +375,8 @@ fn m3_network_switch_clears_network_backoff_but_preserves_lock_backoff() {
                 },
             );
 
-            // Wait >1 scheduler tick and verify LocalLockBk kept its Lock backoff (did NOT re-run!).
-            thread::sleep(Duration::from_millis(1200));
+            // More than one scheduler tick: LocalLockBk keeps its Lock backoff (does NOT re-run!).
+            clock.wait_ticks(2);
             let local_runs: Vec<_> = RunHistory::open(&state_dir)
                 .expect("open history")
                 .list_runs()
@@ -651,7 +647,7 @@ fn m3_failed_maintenance_with_open_forget_enters_backoff() {
             };
 
             // FR-05: the open forget alone does not start a maintenance run before the slot.
-            thread::sleep(Duration::from_millis(3000));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, is_maint),
                 0,
@@ -665,7 +661,7 @@ fn m3_failed_maintenance_with_open_forget_enters_backoff() {
             wait_until_within(Duration::from_secs(15), "first maintenance attempt", || {
                 count_runs(&state_dir, is_finished_maint) == 1
             });
-            thread::sleep(Duration::from_millis(3000));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, is_maint),
                 1,
@@ -684,7 +680,7 @@ fn m3_failed_maintenance_with_open_forget_enters_backoff() {
                 "second maintenance attempt",
                 || count_runs(&state_dir, is_finished_maint) == 2,
             );
-            thread::sleep(Duration::from_millis(2500));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, is_maint),
                 2,
@@ -843,14 +839,15 @@ fn m3_hung_preflight_does_not_delay_prepare_for_sleep() {
             wait_until_within(Duration::from_secs(10), "preflight hits black hole", || {
                 black_hole.accepted() >= 1
             });
-            thread::sleep(Duration::from_millis(300));
+            // One more tick with the preflight hung in its connection.
+            clock.wait_ticks(1);
 
             let sleep_started = Instant::now();
             logind.emit_prepare_for_sleep(true);
-            let release_deadline = sleep_started + Duration::from_secs(15);
-            while logind.open_inhibitor_count() != 0 && Instant::now() < release_deadline {
-                thread::sleep(Duration::from_millis(20));
-            }
+            // The assertions below report a release that does not come in time.
+            try_poll_every(Duration::from_secs(15), Duration::from_millis(20), || {
+                (logind.open_inhibitor_count() == 0).then_some(())
+            });
             let release_elapsed = sleep_started.elapsed();
             assert_eq!(
                 logind.open_inhibitor_count(),
@@ -872,7 +869,7 @@ fn m3_hung_preflight_does_not_delay_prepare_for_sleep() {
 
             // The hung preflight now succeeds: the racing scheduled start must stay blocked.
             black_hole.respond_ok();
-            thread::sleep(Duration::from_millis(1500));
+            clock.wait_ticks(2);
             let s_after = client.get_state().expect("GetState after racing start");
             assert!(
                 backup_summary(&s_after, &rest_id).active_run.is_none(),
@@ -925,7 +922,7 @@ fn m3_locked_secret_store_does_not_reprobe_every_tick() {
                 s.blocking.as_ref().map(|b| b.kind.as_str()) == Some("secret_store_locked")
             });
             let checks_after_first = checks.load(Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(3500));
+            clock.wait_ticks(3);
             assert_eq!(
                 checks.load(Ordering::SeqCst),
                 checks_after_first,
@@ -1073,7 +1070,7 @@ fn m3_acceptance_disk_full_error_does_not_block_next_slot() {
 
             rig.wrapper.clear_fail("backup");
             clock.set(datetime!(2026-12-01 11:30:00 UTC));
-            thread::sleep(Duration::from_secs(3));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, |r| r.backup_id() == Some(&bid)),
                 1,
@@ -1155,7 +1152,7 @@ fn m3_user_cancel_does_not_restart_same_slot() {
                         .as_ref()
                         .is_some_and(|r| r.status == RunStatus::Cancelled)
             });
-            thread::sleep(Duration::from_millis(2500));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, is_backup_run),
                 1,
@@ -1195,7 +1192,7 @@ fn m3_user_cancel_does_not_restart_same_slot() {
                             .is_some_and(|r| r.status == RunStatus::Cancelled)
                 },
             );
-            thread::sleep(Duration::from_millis(2500));
+            clock.wait_ticks(3);
             assert_eq!(
                 count_runs(&state_dir, is_maint_run),
                 1,
@@ -1312,7 +1309,7 @@ fn m3_hung_source_probe_is_replaced_when_stale() {
                 inspector.hanging.load(Ordering::SeqCst)
             });
             let calls_while_hung = inspector.calls.load(Ordering::SeqCst);
-            thread::sleep(Duration::from_millis(1500));
+            clock.wait_ticks(2);
             assert_eq!(
                 inspector.calls.load(Ordering::SeqCst),
                 calls_while_hung,
@@ -1504,21 +1501,19 @@ fn m3_concurrent_drains_keep_queued_backups() {
             }
             rig.wrapper.release("backup");
 
-            let deadline = Instant::now() + Duration::from_secs(45);
-            let mut all_ok = false;
-            while Instant::now() < deadline {
-                let s = client.get_state().expect("GetState");
-                all_ok = ids.iter().all(|id| {
-                    backup_summary(&s, id)
-                        .last_run
-                        .as_ref()
-                        .is_some_and(|r| r.status == RunStatus::Ok)
-                });
-                if all_ok {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(100));
-            }
+            let all_ok =
+                try_poll_every(Duration::from_secs(45), Duration::from_millis(100), || {
+                    let s = client.get_state().expect("GetState");
+                    ids.iter()
+                        .all(|id| {
+                            backup_summary(&s, id)
+                                .last_run
+                                .as_ref()
+                                .is_some_and(|r| r.status == RunStatus::Ok)
+                        })
+                        .then_some(())
+                })
+                .is_some();
             stop.store(true, Ordering::SeqCst);
             for h in hammers {
                 h.join().expect("join hammer");
@@ -1555,6 +1550,25 @@ fn release_fifo(fifo: &Path) {
         .open(fifo)
         .expect("open fifo for writing");
     writer.write_all(b"").expect("write fifo");
+}
+
+/// Opens the write end of `fifo` once a reader has the pipe open (also a reader still waiting
+/// in `open`) and returns it; that reader then blocks until the writer is dropped.
+fn writer_once_read(fifo: &Path) -> fs::File {
+    use std::os::unix::fs::OpenOptionsExt;
+    // Linux `O_NONBLOCK`: opening the write end fails instead of waiting while there is no reader.
+    const O_NONBLOCK: i32 = 0o4000;
+    poll_within(
+        Duration::from_secs(10),
+        "a reader of the run log pipe",
+        || {
+            fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(O_NONBLOCK)
+                .open(fifo)
+                .ok()
+        },
+    )
 }
 
 /// Seeds a config with one local destination and one backup plus a finished run of that backup
@@ -1685,9 +1699,10 @@ fn m3_run_detail_log_read_does_not_hold_lock() {
                 let c = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("connect");
                 c.get_run_detail(&run_id)
             });
-            thread::sleep(Duration::from_millis(500));
+            let writer = writer_once_read(&fifo);
             let answered = get_state_answers_within(&bus_name, Duration::from_secs(3));
-            release_fifo(&fifo);
+            // The reader sees the end of the log once the only writer is gone.
+            drop(writer);
             assert!(
                 answered,
                 "GetState must answer while GetRunDetail waits for a slow log read"

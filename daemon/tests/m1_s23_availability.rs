@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::m3::{connect_rest_repo, wait_until_within};
+use common::m3::connect_rest_repo;
 use common::{
     fetch_dbusmenu_items, restic_test_binaries, run_isolated_test, sandbox_run_config,
     start_fake_notifications, start_fake_sni_watcher, wait_for_file, wait_for_sni_service,
@@ -14,6 +14,7 @@ use kestic_core::model::{Backup, Destination, DestinationKind, ResticProvider, S
 use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
 use kestic_i18n::codes::BlockedReason;
 use kestic_test_support::tools::RestServerGuard;
+use kestic_test_support::wait::wait_until_within;
 use std::fs;
 use std::sync::Arc;
 use std::thread;

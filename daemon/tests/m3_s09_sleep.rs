@@ -9,13 +9,14 @@ mod common;
 use common::fakes::{FakeLogindHandle, FakePortalInhibitHandle};
 use common::m3::{
     LocalBackupFixture, M3Rig, ResticVariant, StdFakes, backup_summary, restic_variants, settle,
-    wait_for_state, wait_until,
+    wait_for_state,
 };
 use common::run_isolated_test;
 use kestic_core::model::RunStatus;
+use kestic_test_support::wait::{try_poll_every, wait_until, wait_until_within};
 use std::path::Path;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 
 /// XDG portal inhibit flags: 4 = suspend, 8 = idle.
@@ -292,25 +293,32 @@ fn m3_acceptance_prepare_for_sleep_arrives_after_signal_burst() {
                 tx,
                 None,
             );
-            std::thread::sleep(Duration::from_millis(500));
+            // The monitor reports a power change once all its match rules are registered.
+            let mut on_battery = false;
+            wait_until_within(Duration::from_secs(10), "the monitor's match rules", || {
+                on_battery = !on_battery;
+                std_fakes.upower.set_on_battery(on_battery, 80.0);
+                matches!(
+                    rx.recv_timeout(Duration::from_millis(100)),
+                    Ok(kestic_daemon::monitors::SystemMonitorEvent::EnvironmentChanged(_))
+                )
+            });
 
             for i in 0..300 {
                 std_fakes.upower.set_on_battery(i % 2 == 0, 80.0);
             }
             logind.emit_prepare_for_sleep(true);
 
-            let deadline = Instant::now() + Duration::from_secs(10);
-            let mut got_sleep = false;
-            while Instant::now() < deadline {
+            // Receiving waits by itself, so the poll needs no pause in between.
+            let got_sleep = try_poll_every(Duration::from_secs(10), Duration::ZERO, || {
                 match rx.recv_timeout(Duration::from_millis(200)) {
                     Ok(kestic_daemon::monitors::SystemMonitorEvent::PrepareForSleep(true)) => {
-                        got_sleep = true;
-                        break;
+                        Some(true)
                     }
-                    Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
-                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    Ok(_) | Err(std::sync::mpsc::RecvTimeoutError::Timeout) => None,
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Some(false),
                 }
-            }
+            }) == Some(true);
             monitor.stop();
 
             assert!(

@@ -9,13 +9,9 @@
 
 mod common;
 
-use common::m3::{
-    M3Rig, assert_dbus_error_name, latest_variant, restic_variants, wait_for_state, wait_until,
-};
+use common::m3::{M3Rig, assert_dbus_error_name, latest_variant, restic_variants, wait_for_state};
 use common::release::{serve, trust};
-use common::{
-    SYSTEM_PROGRAMS_DIR, load_config, run_isolated_test, run_isolated_test_with_system_programs,
-};
+use common::{SYSTEM_PROGRAMS_DIR, run_isolated_test, run_isolated_test_with_system_programs};
 use kestic_core::model::ResticProvider;
 use kestic_core::restic_install::{TEMP_PREFIX, app_managed_binary, kestic_data_dir};
 use kestic_daemon::dbus_api::{KESTIC_OBJECT_PATH, KesticClient, ResticInstallStatusDto};
@@ -23,15 +19,17 @@ use kestic_i18n::codes::ResticSourceCode;
 use kestic_i18n::codes::{
     ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
 };
+use kestic_test_support::config::load_config;
 use kestic_test_support::release_mock::{
     LATEST_PATH, ReleaseFiles, Route, TestSigningKey, asset_path, restic_stand_in_archive,
 };
 use kestic_test_support::tools::{free_loopback_port, write_executable};
+use kestic_test_support::wait::{wait_for_value, wait_until};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::OffsetDateTime;
 use time::macros::datetime;
 
@@ -105,18 +103,7 @@ fn wait_install(
     what: &str,
     pred: impl Fn(&ResticInstallStatusDto) -> bool,
 ) -> ResticInstallStatusDto {
-    let deadline = Instant::now() + timeout;
-    loop {
-        let st = status(client, id);
-        if pred(&st) {
-            return st;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {what}: {st:?}"
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    wait_for_value(timeout, what, || status(client, id), |st| pred(st))
 }
 
 fn wait_finished(client: &KesticClient, id: &str) -> ResticInstallStatusDto {
@@ -237,6 +224,7 @@ fn ac_m5_06_8_install_waits_for_running_backup() {
                     );
                 }
                 // (b) not replaced while the backup runs
+                // quiet window: the install keeps waiting for the run
                 std::thread::sleep(Duration::from_millis(800));
                 assert_eq!(
                     status(client, &id).phase,
@@ -252,6 +240,7 @@ fn ac_m5_06_8_install_waits_for_running_backup() {
                 rig.wrapper
                     .wait_for('S', "forget", 1, Duration::from_secs(20));
                 assert_eq!(rig.wrapper.of('E', "backup").len(), 1);
+                // quiet window: the install keeps waiting between the restic processes
                 std::thread::sleep(Duration::from_millis(500));
                 assert_eq!(
                     status(client, &id).phase,
@@ -326,6 +315,7 @@ fn ac_m5_06_8_cancel_while_waiting_for_runs_keeps_binary() {
             wait_for_state(client, Duration::from_secs(30), "backup ended", |s| {
                 s.backups.iter().all(|b| b.active_run.is_none())
             });
+            // quiet window: nothing replaces the binary after the run either
             std::thread::sleep(Duration::from_millis(300));
             // (c) still unchanged after the run
             assert_eq!(binary_identity(&binary), old);
@@ -377,6 +367,7 @@ fn ac_m5_06_12_no_release_access_before_start() {
             assert!(!state.restic_status.valid, "{:?}", state.restic_status);
             assert_eq!(state.restic_status.found_version.as_deref(), Some("0.16.4"));
             assert_eq!(state.restic_status.source, ResticSourceCode::Automatic);
+            // quiet window: the daemon asks the release server nothing by itself
             std::thread::sleep(Duration::from_secs(2));
             // (a) nothing was asked before the start
             assert_eq!(mock.requests(), Vec::<String>::new());
@@ -581,6 +572,7 @@ fn ac_m5_06_8_install_waits_for_running_preview() {
             let preview = starter.join().expect("dry run started");
             rig.wrapper
                 .wait_for('S', "backup", 1, Duration::from_secs(20));
+            // quiet window: the install keeps waiting for the dry run
             std::thread::sleep(Duration::from_millis(500));
             assert_eq!(
                 status(client, &id).phase,

@@ -15,10 +15,11 @@ use kestic_core::restic::{ResticCommandSpec, ResticRuntime, run_restic};
 use kestic_core::restic_gate::ResticBinaryGate;
 use kestic_core::secrets::{InMemorySecretStore, SecretStore, SecretValue};
 use kestic_test_support::tools::write_executable;
+use kestic_test_support::wait::try_poll_every;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError, mpsc};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 
 /// The tests share the gate of the process (`ResticBinaryGate::global`); under `cargo test`
@@ -55,11 +56,10 @@ fn starts(marker: &Path) -> usize {
 }
 
 fn wait_for_starts(marker: &Path, n: usize) {
-    let deadline = Instant::now() + DONE;
-    while starts(marker) < n {
-        assert!(Instant::now() < deadline, "restic did not start");
-        thread::sleep(Duration::from_millis(20));
-    }
+    try_poll_every(DONE, Duration::from_millis(20), || {
+        (starts(marker) >= n).then_some(())
+    })
+    .expect("restic did not start");
 }
 
 fn local_destination(dir: &Path) -> Destination {
@@ -202,6 +202,7 @@ fn run_restic_with_unusable_secret_starts_nothing() {
     let result = run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {});
     // (a) the run fails
     assert!(result.is_err(), "a password that is no UTF-8 is refused");
+    // quiet window: restic must not start at all, so there is no event to wait for
     thread::sleep(BLOCKED);
     // (b) restic never started
     assert_eq!(starts(&marker), 0);
