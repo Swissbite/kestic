@@ -647,7 +647,7 @@ bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
         if (pred()) {
             return true;
         }
-        wait_ms(40); // quiet window: the poll interval
+        wait_ms(40);
     }
     return pred();
 }

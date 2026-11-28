@@ -181,10 +181,10 @@ inline QQuickItem* text_item_showing(QQuickItem* root, const QString& text) {
 inline int check_path_row_drawn_once(const Ctx& c, const QStringList& names) {
     QQuickWindow* w = c.window;
     QQuickItem* row = visible_item(w, "browsePathRow");
-    CHECK(6212, row != nullptr, "browsePathRow missing");
+    CHECK(10700, row != nullptr, "browsePathRow missing");
     // The page transition has ended once two grabs in a row are the same.
     QImage last;
-    CHECK(6213, wait_until([&] {
+    CHECK(10701, wait_until([&] {
         const QImage now = drawn_under(w, row);
         const bool still = !last.isNull() && now == last;
         last = now;
@@ -195,7 +195,7 @@ inline int check_path_row_drawn_once(const Ctx& c, const QStringList& names) {
     for (int i = 0; i < names.size(); ++i) {
         const QByteArray name = QStringLiteral("browsePathButton_%1").arg(i).toUtf8();
         QQuickItem* button = visible_item(w, name.constData());
-        CHECK(6214, button != nullptr, "path row button missing");
+        CHECK(10702, button != nullptr, "path row button missing");
         // A path longer than the row scrolls sideways: bring the folder into view first.
         QMetaObject::invokeMethod(flick, "ensureVisible",
             Q_ARG(QVariant, QVariant::fromValue(button->parentItem())));

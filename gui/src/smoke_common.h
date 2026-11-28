@@ -240,17 +240,25 @@ inline void trigger(QObject* action) {
 
 // N independent checks that share one message; each condition is checked (and named) on its own.
 #define SMOKE_CHECK2(tag, code, c1, c2, msg) \
-    SMOKE_CHECK(tag, code, c1, msg);         \
-    SMOKE_CHECK(tag, code, c2, msg)
+    do {                                     \
+        SMOKE_CHECK(tag, code, c1, msg);     \
+        SMOKE_CHECK(tag, code, c2, msg);     \
+    } while (0)
 #define SMOKE_CHECK3(tag, code, c1, c2, c3, msg) \
-    SMOKE_CHECK2(tag, code, c1, c2, msg);        \
-    SMOKE_CHECK(tag, code, c3, msg)
+    do {                                         \
+        SMOKE_CHECK2(tag, code, c1, c2, msg);    \
+        SMOKE_CHECK(tag, code, c3, msg);         \
+    } while (0)
 #define SMOKE_CHECK4(tag, code, c1, c2, c3, c4, msg) \
-    SMOKE_CHECK3(tag, code, c1, c2, c3, msg);        \
-    SMOKE_CHECK(tag, code, c4, msg)
+    do {                                             \
+        SMOKE_CHECK3(tag, code, c1, c2, c3, msg);    \
+        SMOKE_CHECK(tag, code, c4, msg);             \
+    } while (0)
 #define SMOKE_CHECK5(tag, code, c1, c2, c3, c4, c5, msg) \
-    SMOKE_CHECK4(tag, code, c1, c2, c3, c4, msg);        \
-    SMOKE_CHECK(tag, code, c5, msg)
+    do {                                                 \
+        SMOKE_CHECK4(tag, code, c1, c2, c3, c4, msg);    \
+        SMOKE_CHECK(tag, code, c5, msg);                 \
+    } while (0)
 
 // `ptr` exists, then its `visible` / `enabled` property is true (or false for DISABLED): two
 // separate checks with one message.
@@ -282,14 +290,28 @@ inline void trigger(QObject* action) {
 
 // N independent checks that share one message; each condition is checked (and named) on its own.
 #define CHECK2(code, c1, c2, msg) \
-    CHECK(code, c1, msg);         \
-    CHECK(code, c2, msg)
+    do {                          \
+        CHECK(code, c1, msg);     \
+        CHECK(code, c2, msg);     \
+    } while (0)
 #define CHECK3(code, c1, c2, c3, msg) \
-    CHECK2(code, c1, c2, msg);        \
-    CHECK(code, c3, msg)
+    do {                              \
+        CHECK2(code, c1, c2, msg);    \
+        CHECK(code, c3, msg);         \
+    } while (0)
 #define CHECK4(code, c1, c2, c3, c4, msg) \
-    CHECK3(code, c1, c2, c3, msg);        \
-    CHECK(code, c4, msg)
+    do {                                  \
+        CHECK3(code, c1, c2, c3, msg);    \
+        CHECK(code, c4, msg);             \
+    } while (0)
+
+// Returns the failure code of a sub-check (a function or lambda that returns 0 or a code).
+#define CHECK_RC(expr)                \
+    do {                              \
+        if (const int rc_ = (expr)) { \
+            return rc_;               \
+        }                             \
+    } while (0)
 
 // `actual` equals / starts with `expected` (both QString-convertible); prints both on failure.
 #define CHECK_EQ(code, actual, expected, what)                                         \

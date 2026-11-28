@@ -123,8 +123,7 @@ int scenario_destination_types(const Ctx& c) {
     // (b) rclone sits under «Needs Installation».
     CHECK(5025, scene_y(rclone) > scene_y(needs_header), "AC-M5-04-1 (b): rclone card is not under «Needs Installation»");
     CHECK(5026, !rclone->property("checkable").toBool(), "AC-M5-04-1 (b): rclone card is a ready card");
-    int code = 5030;
-    for (const char* ready : {"drive", "folder", "sftp", "rest", "cloud"}) {
+    auto check_ready_card = [&](const char* ready, int code) {
         QQuickItem* card = card_item(w, ready);
         CHECK2(code, card != nullptr, card->isVisible(), card_name(ready).constData());
         // (a) under «Ready».
@@ -132,8 +131,13 @@ int scenario_destination_types(const Ctx& c) {
         CHECK(code + 2, card->property("checkable").toBool(), "AC-M5-04-1 (a): card is not a ready card");
         // (c) before every card that needs installation.
         CHECK(code + 3, scene_y(card) < scene_y(needs_header), "AC-M5-04-1 (c): ready card after «Needs Installation»");
-        code += 4;
-    }
+        return 0;
+    };
+    CHECK_RC(check_ready_card("drive", 5030));
+    CHECK_RC(check_ready_card("folder", 5034));
+    CHECK_RC(check_ready_card("sftp", 5038));
+    CHECK_RC(check_ready_card("rest", 5042));
+    CHECK_RC(check_ready_card("cloud", 5046));
     CHECK_EQ(5060, card_item(w, "sftp")->property("text").toString(), loc(c.lang, "NAS / Server via SSH", "NAS / Server per SSH"), "sftp card title");
     CHECK_EQ(5061, rclone->property("text").toString(), loc(c.lang, "Cloud Services via rclone", "Cloud-Dienste über rclone"), "rclone card title");
     for (const char* each : {"drive", "folder", "sftp", "rest", "cloud", "rclone"}) {
@@ -217,7 +221,7 @@ int scenario_check_again(const Ctx& c) {
     CHECK(9008, scene_y(card_item(w, "rclone")) > scene_y(ready_header), "AC-M5-04-4 (a): rclone not under «Ready»");
     CHECK(9009, count_visible(w, "wizDestInstallPanel") == 0, "AC-M5-04-4 (a): install panel still open");
 
-    return shot(c, 5109);
+    return shot(c, 10800);
 }
 
 // Chooses the ready card `card` and moves on to the step «destination details».
@@ -268,7 +272,7 @@ int scenario_drive_list(const Ctx& c) {
         QStringLiteral("wizDestDrivesCheckAgainButton"),
     });
     CHECK_EQ(9024, unnamed, QString(), "control without accessible name");
-    return shot(c, 5219);
+    return shot(c, 10801);
 }
 
 // Whether `item` is `ancestor` or lies below it.
@@ -362,18 +366,18 @@ int scenario_cifs_note(const Ctx& c) {
     lookup(w, "wizDestLocationField")->setProperty("text", dir);
     QQuickItem* test = lookup(w, "wizDestTestButton");
     CHECK(5301, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
-    CHECK(5302, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
+    CHECK(10802, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
     QQuickItem* note = lookup(w, "wizDestNoteBanner");
     QQuickItem* confirm = lookup(w, "wizDestNoteConfirmCheck");
     QQuickItem* next = lookup(w, "wizDestNextButton");
     // (a)
-    CHECK(5303, wait_until([&] { return note && note->isVisible(); }, 5000), "AC-M5-05-2 (a): no warning after the connection test");
-    CHECK_EQ(5304, note->property("text").toString(),
+    CHECK(10803, wait_until([&] { return note && note->isVisible(); }, 5000), "AC-M5-05-2 (a): no warning after the connection test");
+    CHECK_EQ(10804, note->property("text").toString(),
         loc(c.lang,
             "This folder is on a CIFS/SMB network share. restic advises against repositories on such shares.",
             "Dieser Ordner liegt auf einer CIFS/SMB-Netzwerkfreigabe. restic rät von Repositorys auf solchen Freigaben ab."),
         "AC-M5-05-2 (a): warning text");
-    CHECK2(5305, confirm != nullptr, confirm->isVisible(), "AC-M5-05-2 (b): confirmation missing");
+    CHECK2(10805, confirm != nullptr, confirm->isVisible(), "AC-M5-05-2 (b): confirmation missing");
     CHECK(9033, !next->isEnabled(), "AC-M5-05-2: «Next» enabled before the confirmation");
     CHECK_EQ(9034, accessible_name(confirm), loc(c.lang, "Use this folder anyway", "Diesen Ordner trotzdem verwenden"), "confirmation text");
     // quiet window: the messages fade in before their text is drawn.
@@ -423,11 +427,11 @@ int scenario_s3_form(const Ctx& c) {
     QQuickItem* cloud = card_item(w, "cloud");
     CHECK2(5401, cloud != nullptr, cloud->isVisible(), "cloud card missing");
     scroll_into_view(w, cloud);
-    CHECK(5402, click_ui_item(w, cloud, "cloud"), "click on the cloud card failed");
+    CHECK(10806, click_ui_item(w, cloud, "cloud"), "click on the cloud card failed");
     QQuickItem* s3_choice = lookup(w, "wizDestCloudService_s3");
-    CHECK(5403, wait_until([&] { return s3_choice && s3_choice->isVisible(); }, 2000), "«S3-Compatible Storage» not offered");
-    CHECK(5404, s3_choice->property("checked").toBool(), "«S3-Compatible Storage» not chosen");
-    CHECK_EQ(5405, s3_choice->property("text").toString(), loc(c.lang, "S3-Compatible Storage", "S3-kompatibler Speicher"), "S3 choice text");
+    CHECK(10807, wait_until([&] { return s3_choice && s3_choice->isVisible(); }, 2000), "«S3-Compatible Storage» not offered");
+    CHECK(10808, s3_choice->property("checked").toBool(), "«S3-Compatible Storage» not chosen");
+    CHECK_EQ(10809, s3_choice->property("text").toString(), loc(c.lang, "S3-Compatible Storage", "S3-kompatibler Speicher"), "S3 choice text");
     // quiet window: the choice appears below the card; the page knows its new height only after a layout pass.
     wait_ms(300);
     scroll_into_view(w, s3_choice);
@@ -440,8 +444,8 @@ int scenario_s3_form(const Ctx& c) {
     }
     QQuickItem* next = lookup(w, "wizDestNextButton");
     CHECK(5406, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing S3");
-    CHECK(5407, click_ui_item(w, next, "Next"), "click on «Next» failed");
-    CHECK(5408, wait_until([&] { return count_visible(w, "wizDestEndpointField") == 1; }, 2000), "S3 form did not open");
+    CHECK(10810, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    CHECK(10811, wait_until([&] { return count_visible(w, "wizDestEndpointField") == 1; }, 2000), "S3 form did not open");
     wait_until([&] {
         for (const char* field : {"wizDestBucketField", "wizDestS3PathField", "wizDestRegionField", "wizDestAccessKeyField", "wizDestSecretKeyField"}) {
             if (count_visible(w, field) != 1) {
@@ -450,11 +454,11 @@ int scenario_s3_form(const Ctx& c) {
         }
         return count_visible(w, "wizDestLocationField") == 0 && count_visible(w, "wizDestKeysError") == 1;
     }, 150);
-    int code = 5410;
-    for (const char* field : {"wizDestBucketField", "wizDestS3PathField", "wizDestRegionField", "wizDestAccessKeyField", "wizDestSecretKeyField"}) {
-        CHECK(code, count_visible(w, field) == 1, field);
-        ++code;
-    }
+    CHECK(10812, count_visible(w, "wizDestBucketField") == 1, "wizDestBucketField");
+    CHECK(10813, count_visible(w, "wizDestS3PathField") == 1, "wizDestS3PathField");
+    CHECK(10814, count_visible(w, "wizDestRegionField") == 1, "wizDestRegionField");
+    CHECK(10815, count_visible(w, "wizDestAccessKeyField") == 1, "wizDestAccessKeyField");
+    CHECK(10816, count_visible(w, "wizDestSecretKeyField") == 1, "wizDestSecretKeyField");
     CHECK(9043, count_visible(w, "wizDestLocationField") == 0, "the path field is shown for S3");
     // The path in the bucket has no spaces, quotes, #, ? or %; the form says so.
     CHECK(9044, count_visible(w, "wizDestS3PathError") == 0, "path hint shown for an empty path");
@@ -484,7 +488,7 @@ int scenario_s3_form(const Ctx& c) {
     // A wrong secret key: the right one reversed.
     QString wrong_secret = secret;
     std::reverse(wrong_secret.begin(), wrong_secret.end());
-    if (const int rc = test_s3_connection(w, wrong_secret, 5420)) {
+    if (const int rc = test_s3_connection(w, wrong_secret, 10817)) {
         return rc;
     }
     QQuickItem* banner = lookup(w, "wizDestFeedbackBanner");
@@ -546,8 +550,8 @@ bool set_text(QQuickWindow* w, const char* name, const QString& text) {
         return false;
     }
     field->setProperty("text", text);
-    // quiet window: the form validates the new text.
-    wait_ms(50);
+    // The form validates the new text in its bindings.
+    QCoreApplication::processEvents();
     return true;
 }
 
@@ -591,11 +595,11 @@ int scenario_sftp_form(const Ctx& c) {
     QQuickItem* sftp = card_item(w, "sftp");
     CHECK2(5601, sftp != nullptr, sftp->isVisible(), "sftp card missing");
     scroll_into_view(w, sftp);
-    CHECK(5602, click_ui_item(w, sftp, "sftp"), "click on the sftp card failed");
+    CHECK(10826, click_ui_item(w, sftp, "sftp"), "click on the sftp card failed");
     QQuickItem* next = lookup(w, "wizDestNextButton");
-    CHECK(5603, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing SFTP");
-    CHECK(5604, click_ui_item(w, next, "Next"), "click on «Next» failed");
-    CHECK(5605, wait_until([&] { return count_visible(w, "wizDestHostField") == 1; }, 2000), "SFTP form did not open");
+    CHECK(10827, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing SFTP");
+    CHECK(10828, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    CHECK(10829, wait_until([&] { return count_visible(w, "wizDestHostField") == 1; }, 2000), "SFTP form did not open");
     wait_until([&] {
         for (const char* field : {"wizDestPortField", "wizDestSftpUserField", "wizDestSftpPathField", "wizDestSshKeyHint"}) {
             if (count_visible(w, field) != 1) {
@@ -604,11 +608,10 @@ int scenario_sftp_form(const Ctx& c) {
         }
         return count_visible(w, "wizDestLocationField") == 0;
     }, 150);
-    int code = 5606;
-    for (const char* field : {"wizDestPortField", "wizDestSftpUserField", "wizDestSftpPathField", "wizDestSshKeyHint"}) {
-        CHECK(code, count_visible(w, field) == 1, field);
-        ++code;
-    }
+    CHECK(5606, count_visible(w, "wizDestPortField") == 1, "wizDestPortField");
+    CHECK(10830, count_visible(w, "wizDestSftpUserField") == 1, "wizDestSftpUserField");
+    CHECK(10831, count_visible(w, "wizDestSftpPathField") == 1, "wizDestSftpPathField");
+    CHECK(10832, count_visible(w, "wizDestSshKeyHint") == 1, "wizDestSshKeyHint");
     CHECK(9048, count_visible(w, "wizDestLocationField") == 0, "the local path field is shown for SFTP");
     CHECK_EQ(9049, lookup(w, "wizDestPortField")->property("text").toString(), QStringLiteral("22"), "default port");
     CHECK_EQ(9050, lookup(w, "wizDestSshKeyHint")->property("text").toString(),
@@ -662,7 +665,7 @@ int scenario_sftp_form(const Ctx& c) {
     CHECK_EQ(5613, unnamed, QString(), "control without accessible name");
 
     QQuickItem* test = lookup(w, "wizDestTestButton");
-    CHECK(5614, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
+    CHECK(10833, wait_until([&] { return test && test->isEnabled(); }, 2000), "«Test Connection» not enabled");
     scroll_into_view(w, test);
     CHECK(5615, click_ui_item(w, test, "Test Connection"), "click on «Test Connection» failed");
     QObject* dialog = lookup<QObject>(w, "wizDestHostKeyDialog");
@@ -715,18 +718,22 @@ int scenario_generic_form(const Ctx& c) {
     CHECK2(5500, cloud != nullptr, cloud->isVisible(), "cloud card missing");
     scroll_into_view(w, cloud);
     CHECK(5501, click_ui_item(w, cloud, "cloud"), "click on the cloud card failed");
-    int code = 5502;
-    for (const char* service : {"s3", "b2", "azure", "gs", "swift"}) {
+    auto check_service = [&](const char* service, int code) {
         const QByteArray radio = QByteArray("wizDestCloudService_") + service;
         CHECK(code, wait_until([&] { return count_visible(w, radio.constData()) == 1; }, 2000), radio.constData());
-        ++code;
-    }
+        return 0;
+    };
+    CHECK_RC(check_service("s3", 10820));
+    CHECK_RC(check_service("b2", 10821));
+    CHECK_RC(check_service("azure", 10822));
+    CHECK_RC(check_service("gs", 10823));
+    CHECK_RC(check_service("swift", 5506));
     QQuickItem* b2 = lookup(w, "wizDestCloudService_b2");
-    CHECK_EQ(5507, b2->property("text").toString(), QStringLiteral("Backblaze B2"), "B2 choice text");
+    CHECK_EQ(10824, b2->property("text").toString(), QStringLiteral("Backblaze B2"), "B2 choice text");
     // quiet window: the choices appear below the card; the page knows its new height only after a layout pass.
     wait_ms(300);
     scroll_into_view(w, b2);
-    CHECK(5508, click_ui_item(w, b2, "Backblaze B2"), "click on «Backblaze B2» failed");
+    CHECK(10825, click_ui_item(w, b2, "Backblaze B2"), "click on «Backblaze B2» failed");
     QQuickItem* next = lookup(w, "wizDestNextButton");
     CHECK(9051, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing B2");
     CHECK(9052, click_ui_item(w, next, "Next"), "click on «Next» failed");
@@ -979,19 +986,19 @@ int scenario_restic_download_offer(const Ctx& c) {
         "precondition: restic is not usable");
     QObject* action = lookup<QObject>(w, "downloadResticAction");
     CHECK(5801, action != nullptr, "(b1) «Download restic…» missing in the blocking bar");
-    CHECK(5802, action->property("visible").toBool(), "(b1) «Download restic…» hidden");
-    CHECK(5803, action->property("enabled").toBool(), "(b1) «Download restic…» disabled");
-    CHECK_EQ(5804, action->property("text").toString(), loc(c.lang, "Download restic…", "restic herunterladen…"), "(b1) action text");
+    CHECK(10834, action->property("visible").toBool(), "(b1) «Download restic…» hidden");
+    CHECK(10835, action->property("enabled").toBool(), "(b1) «Download restic…» disabled");
+    CHECK_EQ(10836, action->property("text").toString(), loc(c.lang, "Download restic…", "restic herunterladen…"), "(b1) action text");
     // quiet window: the page draws its final state before the screenshot.
     wait_ms(400);
-    CHECK(5805, save_screenshot(w, c.out_path), "screenshot failed");
+    CHECK(10837, save_screenshot(w, c.out_path), "screenshot failed");
 
     QQuickWindow* sw = open_restic_settings(w);
     CHECK(5806, sw != nullptr, "settings window did not open");
     QQuickItem* download = lookup(sw, "downloadResticButton");
-    CHECK(5807, download != nullptr, "(b2) «Download restic» missing");
-    CHECK(5808, download->isVisible(), "(b2) «Download restic» hidden");
-    CHECK(5809, download->isEnabled(), "(b2) «Download restic» disabled");
+    CHECK(10838, download != nullptr, "(b2) «Download restic» missing");
+    CHECK(10839, download->isVisible(), "(b2) «Download restic» hidden");
+    CHECK(10840, download->isEnabled(), "(b2) «Download restic» disabled");
     CHECK_EQ(9077, download->property("text").toString(), loc(c.lang, "Download restic", "restic herunterladen"), "(b2) button text");
     QQuickItem* update = lookup(sw, "updateResticButton");
     CHECK(9078, update != nullptr && !update->isVisible(), "«Update Now» shown for a restic Kestic does not manage");
@@ -1000,7 +1007,7 @@ int scenario_restic_download_offer(const Ctx& c) {
     // The settings window has one size; only the wide run saves it.
     const QString settings_shot = qEnvironmentVariable("KESTIC_SMOKE_SETTINGS_SHOT");
     if (!settings_shot.isEmpty()) {
-        CHECK(5814, save_settings_screenshot(sw, settings_shot), "screenshot failed");
+        CHECK(10841, save_settings_screenshot(sw, settings_shot), "screenshot failed");
     }
     return 0;
 }
@@ -1124,16 +1131,16 @@ int scenario_restic_too_old(const Ctx& c) {
     CHECK(5900, sw != nullptr, "settings window did not open");
     CHECK(5901, wait_until([&] { return !shown_text(sw, "resticVersionLabel").isEmpty(); }, 5000), "no version row");
     // (a)
-    CHECK_EQ(5902, shown_text(sw, "resticMinimumLabel"),
+    CHECK_EQ(10842, shown_text(sw, "resticMinimumLabel"),
         loc(c.lang, "Kestic needs restic 0.18.0 or newer: older versions do not report errors and check results in a form Kestic can read.",
             "Kestic benötigt restic 0.18.0 oder neuer: Ältere Versionen melden Fehler und Prüfergebnisse nicht in einer Form, die Kestic auswerten kann."),
         "(a) the sentence why 0.18.0 is needed");
-    CHECK_EQ(5903, shown_text(sw, "resticVersionLabel"),
+    CHECK_EQ(10843, shown_text(sw, "resticVersionLabel"),
         loc(c.lang, "0.16.4 · too old, at least 0.18.0", "0.16.4 · zu alt, mindestens 0.18.0"), "(a) version row");
-    CHECK_EQ(5904, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Automatic (System)", "Automatisch (System)"), "source row");
+    CHECK_EQ(10844, shown_text(sw, "resticSourceLabel"), loc(c.lang, "Automatic (System)", "Automatisch (System)"), "source row");
     // (b)
     QQuickItem* download = lookup(sw, "downloadResticButton");
-    CHECK(5905, download != nullptr && download->isVisible() && download->isEnabled(), "(b) «Download restic» not offered");
+    CHECK(10845, download != nullptr && download->isVisible() && download->isEnabled(), "(b) «Download restic» not offered");
     CHECK_EQ(9081, restic_install_state(c), QString(), "an installation started before the click");
     CHECK(9082, !message_shown(sw, "resticSwitchMessage") && !message_shown(sw, "resticRemoveMessage"),
         "switch or removal offered without an app-managed restic");
@@ -1151,7 +1158,7 @@ int scenario_restic_versions(const Ctx& c) {
     CHECK(9084, !system.isEmpty(), "KESTIC_SMOKE_SYSTEM_RESTIC not set");
     QQuickWindow* sw = open_restic_settings(c.window);
     CHECK(9085, sw != nullptr, "settings window did not open");
-    CHECK(5912, wait_until([&] { return !shown_text(sw, "resticAvailableLabel").isEmpty(); }, 5000), "no row «Available:»");
+    CHECK(10846, wait_until([&] { return !shown_text(sw, "resticAvailableLabel").isEmpty(); }, 5000), "no row «Available:»");
     // (a)
     CHECK_EQ(5913, shown_text(sw, "resticAvailableLabel"),
         loc(c.lang, "System 0.18.1 · Managed by Kestic 0.19.1", "System 0.18.1 · Von Kestic verwaltet 0.19.1"), "(a) both versions");
@@ -1199,8 +1206,8 @@ int scenario_restic_versions(const Ctx& c) {
     CHECK(5929, click_ui_item(sw, custom, "Custom path"), "click on «Custom path» failed");
     set_text(sw, "customResticPathField", QStringLiteral("/opt/restic/restic"));
     QMetaObject::invokeMethod(c.backend, "checkAvailability", Q_ARG(bool, true));
-    // The check and the new state arrive off the main thread; this check shows that nothing
-    // quiet window: changes, so it waits for them a fixed time.
+    // The check and the new state arrive off the main thread.
+    // quiet window: the choice in the dialog must stay as it is
     wait_ms(2000);
     CHECK(5930, custom->property("checked").toBool() && !automatic->property("checked").toBool(),
         "a new status reset the choice in the source dialog");

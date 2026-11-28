@@ -82,7 +82,20 @@ fn split_args(args: &str) -> Vec<&str> {
     let mut start = 0usize;
     let mut in_str: Option<char> = None;
     let mut escaped = false;
+    let mut in_comment = false;
+    let mut prev = '\0';
     for (i, c) in args.char_indices() {
+        if in_comment {
+            in_comment = c != '\n';
+            prev = c;
+            continue;
+        }
+        if in_str.is_none() && prev == '/' && c == '/' {
+            in_comment = true;
+            prev = c;
+            continue;
+        }
+        prev = c;
         if let Some(q) = in_str {
             if escaped {
                 escaped = false;
@@ -113,80 +126,333 @@ fn split_args(args: &str) -> Vec<&str> {
     panic!("unterminated call: {}", &args[..args.len().min(80)]);
 }
 
-/// Which arguments of a call carry a failure code: the macros of the check families, the smoke
-/// failure and the helpers that take codes.
-fn code_positions(name: &str) -> Option<&'static [usize]> {
-    match name {
-        "CHECK" | "CHECK2" | "CHECK3" | "CHECK4" | "CHECK_EQ" | "CHECK_STARTS" | "RECORD_PAGE" => {
-            Some(&[0])
+/// The check macros and the argument that carries their failure code.
+const CODE_MACROS: [(&str, usize); 20] = [
+    ("CHECK", 0),
+    ("CHECK2", 0),
+    ("CHECK3", 0),
+    ("CHECK4", 0),
+    ("CHECK_EQ", 0),
+    ("CHECK_STARTS", 0),
+    ("RECORD_PAGE", 0),
+    ("SMOKE_CHECK", 1),
+    ("SMOKE_CHECK2", 1),
+    ("SMOKE_CHECK3", 1),
+    ("SMOKE_CHECK4", 1),
+    ("SMOKE_CHECK5", 1),
+    ("SMOKE_CHECK_VISIBLE", 1),
+    ("SMOKE_CHECK_ENABLED", 1),
+    ("SMOKE_CHECK_DISABLED", 1),
+    ("SMOKE_CHECK_OPENED", 1),
+    ("SMOKE_CHECK_CLOSED", 1),
+    ("SMOKE_FAIL", 1),
+    ("SMOKE_CLICK", 1),
+    ("SMOKE_ENTER_TEXT", 1),
+];
+
+/// Names of the parameters that carry a failure code (or the first of a run of codes).
+const CODE_PARAMS: [&str; 5] = ["code", "base", "error_code", "timeout_code", "unknown_code"];
+
+fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Whole-word occurrences of `word` in `text`.
+fn word_at<'a>(text: &'a str, word: &'a str) -> impl Iterator<Item = usize> + 'a {
+    text.match_indices(word)
+        .map(|(at, _)| at)
+        .filter(move |&at| {
+            !text[..at].chars().next_back().is_some_and(is_ident)
+                && !text[at + word.len()..].chars().next().is_some_and(is_ident)
+        })
+}
+
+/// The text from the `{` at the start of `rest` (after whitespace) to its matching `}`.
+fn body_at(rest: &str) -> Option<&str> {
+    let trimmed = rest.trim_start();
+    let trimmed = trimmed
+        .strip_prefix("const")
+        .map_or(trimmed, str::trim_start);
+    if !trimmed.starts_with('{') {
+        return None;
+    }
+    let mut depth = 0usize;
+    for (i, c) in trimmed.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&trimmed[..=i]);
+                }
+            }
+            _ => {}
         }
-        "SMOKE_CHECK"
-        | "SMOKE_CHECK2"
-        | "SMOKE_CHECK3"
-        | "SMOKE_CHECK4"
-        | "SMOKE_CHECK5"
-        | "SMOKE_CHECK_VISIBLE"
-        | "SMOKE_CHECK_ENABLED"
-        | "SMOKE_CHECK_DISABLED"
-        | "SMOKE_CHECK_OPENED"
-        | "SMOKE_CHECK_CLOSED"
-        | "SMOKE_FAIL"
-        | "SMOKE_CLICK"
-        | "SMOKE_ENTER_TEXT"
-        | "smoke_fail" => Some(&[1]),
-        "poll_backup_run" => Some(&[2, 3]),
-        "exit_scenario" => Some(&[3]),
-        _ => None,
+    }
+    None
+}
+
+/// A function or lambda of the smoke that takes a failure code: its name, the index of the code
+/// parameter, the parameter's name and the body of the definition.
+struct CodeTaker<'a> {
+    file: &'a str,
+    name: String,
+    index: usize,
+    param: &'static str,
+    body: &'a str,
+}
+
+/// Finds the code-taking functions and lambdas from their parameter lists (`name(…, int code,
+/// …) { … }`, `auto name = [&](int code, …) { … }`); declarations without a body are skipped.
+fn code_takers(sources: &[Source]) -> Vec<CodeTaker<'_>> {
+    let mut out = Vec::new();
+    for src in sources {
+        let text = src.text.as_str();
+        for param in CODE_PARAMS {
+            let needle = format!("int {param}");
+            for (at, _) in text.match_indices(&needle) {
+                let after = text[at + needle.len()..].chars().next();
+                if !matches!(after, Some(',' | ')' | ' ' | '\n')) {
+                    continue;
+                }
+                // The unmatched `(` before the parameter opens its parameter list.
+                let mut depth = 0i32;
+                let mut index = 0usize;
+                let mut open = None;
+                for (i, c) in text[..at].char_indices().rev() {
+                    match c {
+                        ')' | ']' | '}' => depth += 1,
+                        '(' if depth == 0 => {
+                            open = Some(i);
+                            break;
+                        }
+                        '(' | '[' | '{' => {
+                            depth -= 1;
+                            if depth < 0 {
+                                break;
+                            }
+                        }
+                        ',' if depth == 0 => index += 1,
+                        ';' if depth == 0 => break,
+                        _ => {}
+                    }
+                }
+                let Some(open) = open else { continue };
+                let Some(close) = split_args(&text[open + 1..])
+                    .last()
+                    .map(|last| last.as_ptr() as usize - text.as_ptr() as usize + last.len())
+                else {
+                    continue;
+                };
+                let Some(body) = body_at(&text[close + 1..]) else {
+                    continue;
+                };
+                let mut head = text[..open].trim_end();
+                if let Some(capture) = head.strip_suffix(']') {
+                    let Some(lb) = capture.rfind('[') else {
+                        continue;
+                    };
+                    head = capture[..lb].trim_end();
+                    let Some(h) = head.strip_suffix('=') else {
+                        continue;
+                    };
+                    head = h.trim_end();
+                }
+                let name: String = head
+                    .chars()
+                    .rev()
+                    .take_while(|c| is_ident(*c))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                if !name.is_empty() {
+                    out.push(CodeTaker {
+                        file: &src.name,
+                        name,
+                        index,
+                        param,
+                        body,
+                    });
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `k` when `arg` is `param` (0) or `param + k`.
+fn offset_of(arg: &str, param: &str) -> Option<u32> {
+    let arg = arg.trim();
+    if arg == param {
+        return Some(0);
+    }
+    let rest = arg.strip_prefix(param)?.trim_start().strip_prefix('+')?;
+    rest.trim().parse().ok()
+}
+
+/// A code taker: the file it is defined in, its name and the index of its code parameter.
+type TakerKey = (String, String, usize);
+
+/// The code takers a call of `name` in `file` can reach: the one of that file, else those of
+/// every file (helpers of the shared headers and of the helper file).
+fn resolve<'s>(
+    spans: &'s BTreeMap<TakerKey, u32>,
+    file: &str,
+    name: &str,
+) -> Vec<(&'s TakerKey, u32)> {
+    let local: Vec<_> = spans
+        .iter()
+        .filter(|(k, _)| k.0 == file && k.1 == name)
+        .map(|(k, v)| (k, *v))
+        .collect();
+    if !local.is_empty() {
+        return local;
+    }
+    spans
+        .iter()
+        .filter(|(k, _)| k.1 == name)
+        .map(|(k, v)| (k, *v))
+        .collect()
+}
+
+/// How many codes each code-taking function uses from its code on: 1 + the largest `k` of
+/// `param + k` in its body, and for a call `g(…, param + k)` of another code taker `k` plus that
+/// one's span (to a fixed point).
+fn spans(takers: &[CodeTaker<'_>]) -> BTreeMap<TakerKey, u32> {
+    let mut span: BTreeMap<TakerKey, u32> = BTreeMap::new();
+    for t in takers {
+        let mut max = 0u32;
+        for at in word_at(t.body, t.param) {
+            let rest = t.body[at + t.param.len()..].trim_start();
+            if let Some(k) = rest
+                .strip_prefix('+')
+                .and_then(|r| r.trim_start().split(|c: char| !c.is_ascii_digit()).next())
+                .and_then(|d| d.parse::<u32>().ok())
+            {
+                max = max.max(k);
+            }
+        }
+        let e = span
+            .entry((t.file.to_string(), t.name.clone(), t.index))
+            .or_insert(1);
+        *e = (*e).max(max + 1);
+    }
+    let names: Vec<String> = span.keys().map(|k| k.1.clone()).collect();
+    loop {
+        let mut changed = false;
+        for t in takers {
+            let mut need = 1u32;
+            for name in &names {
+                for (_, args) in calls(t.body, name) {
+                    let args = split_args_lenient(args);
+                    for (key, g_span) in resolve(&span, t.file, name) {
+                        if let Some(k) = args.get(key.2).and_then(|a| offset_of(a, t.param)) {
+                            need = need.max(k + g_span);
+                        }
+                    }
+                }
+            }
+            let e = span
+                .entry((t.file.to_string(), t.name.clone(), t.index))
+                .or_insert(1);
+            if need > *e {
+                *e = need;
+                changed = true;
+            }
+        }
+        if !changed {
+            return span;
+        }
     }
 }
 
-const CODE_CALLS: [&str; 22] = [
-    "CHECK",
-    "CHECK2",
-    "CHECK3",
-    "CHECK4",
-    "CHECK_EQ",
-    "CHECK_STARTS",
-    "RECORD_PAGE",
-    "SMOKE_CHECK",
-    "SMOKE_CHECK2",
-    "SMOKE_CHECK3",
-    "SMOKE_CHECK4",
-    "SMOKE_CHECK5",
-    "SMOKE_CHECK_VISIBLE",
-    "SMOKE_CHECK_ENABLED",
-    "SMOKE_CHECK_DISABLED",
-    "SMOKE_CHECK_OPENED",
-    "SMOKE_CHECK_CLOSED",
-    "SMOKE_FAIL",
-    "SMOKE_CLICK",
-    "SMOKE_ENTER_TEXT",
-    "smoke_fail",
-    "poll_backup_run",
-];
+/// Like [`split_args`], but an unterminated call gives no arguments.
+fn split_args_lenient(args: &str) -> Vec<&str> {
+    std::panic::catch_unwind(|| split_args(args)).unwrap_or_default()
+}
 
-/// Every literal failure code with where it stands (`file:line`).
-fn literal_codes(sources: &[Source]) -> BTreeMap<u32, Vec<String>> {
-    let mut codes: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+/// Every failure code range `[from, to)` of the smoke with where it stands (`file:line`): the
+/// literal code of each check macro (one code) and the literal code given to each code-taking
+/// function (as many codes as that function uses).
+fn code_ranges(sources: &[Source]) -> Vec<(u32, u32, String)> {
+    let takers = code_takers(sources);
+    let spans = spans(&takers);
+    let mut out = Vec::new();
     for src in sources {
-        for name in CODE_CALLS.iter().copied().chain(["exit_scenario"]) {
-            let positions = code_positions(name).expect("known code call");
+        let mut note = |at: usize, from: u32, span: u32| {
+            let line = src.text[..at].lines().count();
+            out.push((from, from + span, format!("{}:{line}", src.name)));
+        };
+        for (name, pos) in CODE_MACROS {
             for (at, args) in calls(&src.text, name) {
-                let args = split_args(args);
-                for &pos in positions {
-                    let Some(arg) = args.get(pos) else { continue };
-                    if let Ok(code) = arg.trim().parse::<u32>() {
-                        let line = src.text[..at].lines().count();
-                        codes
-                            .entry(code)
-                            .or_default()
-                            .push(format!("{}:{line}", src.name));
+                let args = split_args_lenient(args);
+                if let Some(code) = args.get(pos).and_then(|a| a.trim().parse::<u32>().ok()) {
+                    note(at, code, 1);
+                }
+            }
+        }
+        let names: std::collections::BTreeSet<&String> = spans.keys().map(|k| &k.1).collect();
+        for name in names {
+            for (at, args) in calls(&src.text, name) {
+                let args = split_args_lenient(args);
+                for (key, span) in resolve(&spans, &src.name, name) {
+                    if let Some(code) = args.get(key.2).and_then(|a| a.trim().parse::<u32>().ok()) {
+                        note(at, code, span);
                     }
                 }
             }
         }
     }
-    codes
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Failure codes changed at run time (`code++`, `code += 2`, `int code = 5110;` …), which make
+/// the codes of a scenario depend on how often a loop ran.
+fn code_arithmetic(sources: &[Source]) -> Vec<String> {
+    let mut out = Vec::new();
+    for src in sources {
+        for param in CODE_PARAMS {
+            for at in word_at(&src.text, param) {
+                let before = src.text[..at].trim_end();
+                let after = src.text[at + param.len()..].trim_start();
+                let assigned_number = after
+                    .strip_prefix('=')
+                    .filter(|r| !r.starts_with('='))
+                    .is_some_and(|r| r.trim_start().starts_with(|c: char| c.is_ascii_digit()));
+                if before.ends_with("++")
+                    || after.starts_with("++")
+                    || after.starts_with("+=")
+                    || after.starts_with("-=")
+                    || assigned_number
+                {
+                    let line = src.text[..at].lines().count();
+                    out.push(format!("{}:{line}", src.name));
+                }
+            }
+        }
+        // A code argument of a check macro is a number or a code parameter (plus a number), not
+        // a number plus a loop index.
+        for (name, pos) in CODE_MACROS {
+            for (at, args) in calls(&src.text, name) {
+                let args = split_args_lenient(args);
+                let Some(arg) = args.get(pos).map(|a| a.trim()) else {
+                    continue;
+                };
+                let fixed = arg.parse::<u32>().is_ok()
+                    || CODE_PARAMS.iter().any(|p| offset_of(arg, p).is_some());
+                let line_end = src.text[at..].find('\n').map_or(src.text.len(), |e| at + e);
+                let in_macro_definition = src.text[..line_end].trim_end().ends_with('\\');
+                if !fixed && !in_macro_definition {
+                    let line = src.text[..at].lines().count();
+                    out.push(format!("{}:{line}: {name}({arg}, …)", src.name));
+                }
+            }
+        }
+    }
+    out
 }
 
 /// AC-M6-35-4 (a): the smoke waits for a condition (`wait_until`, `press_until`); a fixed
@@ -221,7 +487,19 @@ fn ac_m6_35_4_smoke_waits_are_predicates() {
     let mut predicate_waits = 0usize;
     for src in &sources {
         let lines: Vec<&str> = src.text.lines().collect();
+        // The poll interval inside the definition of `wait_until` is no fixed wait.
+        let poll_loop = src
+            .text
+            .find("bool wait_until(const std::function<bool()>& pred, int timeout_ms) {")
+            .and_then(|at| {
+                let body = body_at(&src.text[at + src.text[at..].find('{')?..])?;
+                let first = src.text[..at].lines().count();
+                Some(first..first + body.lines().count())
+            });
         for (i, line) in lines.iter().enumerate() {
+            if poll_loop.as_ref().is_some_and(|r| r.contains(&i)) {
+                continue;
+            }
             predicate_waits +=
                 line.matches("wait_until(").count() + line.matches("press_until(").count();
             if !line.contains("wait_ms(") || line.contains("void wait_ms(int ms)") {
@@ -277,21 +555,37 @@ fn ac_m6_35_5_smoke_codes_unique() {
         "(b) no smoke file has more than {MAX_LINES} lines: {oversized:?}"
     );
 
-    // (c) unique failure codes.
-    let codes = literal_codes(&sources);
+    // (c) unique failure codes: no code is computed at run time, and the codes of the checks
+    // and the runs of codes the helpers use do not overlap.
+    let arithmetic = code_arithmetic(&sources);
     assert!(
-        codes.len() > 1000,
-        "(c) the parser finds the failure codes of the smoke, found {}",
-        codes.len()
+        arithmetic.is_empty(),
+        "(c) failure codes are fixed in the source, not counted at run time: {arithmetic:?}"
     );
-    let duplicates: Vec<String> = codes
-        .iter()
-        .filter(|(_, at)| at.len() > 1)
-        .map(|(code, at)| format!("{code}: {}", at.join(", ")))
-        .collect();
+    let ranges = code_ranges(&sources);
     assert!(
-        duplicates.is_empty(),
-        "(c) every failure code of the smoke is used once: {duplicates:#?}"
+        ranges.len() > 1000,
+        "(c) the parser finds the failure codes of the smoke, found {}",
+        ranges.len()
+    );
+    let mut clashes = Vec::new();
+    let mut reach: Option<&(u32, u32, String)> = None;
+    for range in &ranges {
+        if let Some(prev) = reach
+            && range.0 < prev.1
+        {
+            clashes.push(format!(
+                "{}..{} at {} overlaps {}..{} at {}",
+                range.0, range.1, range.2, prev.0, prev.1, prev.2
+            ));
+        }
+        if reach.is_none_or(|prev| range.1 > prev.1) {
+            reach = Some(range);
+        }
+    }
+    assert!(
+        clashes.is_empty(),
+        "(c) every failure code of the smoke is used once: {clashes:#?}"
     );
 }
 

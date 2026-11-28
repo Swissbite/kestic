@@ -108,8 +108,8 @@ int scenario_restore_tab(const Ctx& c) {
     const QString refresh = loc(c.lang, "Refresh", "Aktualisieren");
     if (w->property("narrowMode").toBool()) {
         // One column: the snapshot list opens from the backup row.
-        CHECK(5116, visible_buttons_labelled(w, refresh) == 1, "the backup list can be refreshed");
-        return shot(c, 5114);
+        CHECK(10504, visible_buttons_labelled(w, refresh) == 1, "the backup list can be refreshed");
+        return shot(c, 10503);
     }
     CHECK(5108, wait_for_snapshots(w, c.backend, 3), "(b) snapshots of the first backup listed");
     finish_incubation(w);
@@ -118,14 +118,14 @@ int scenario_restore_tab(const Ctx& c) {
     CHECK_EQ(5110, snapshots_page->property("title").toString(), QStringLiteral("Home"),
         "(b) snapshot list titled with the backup");
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
-    CHECK_EQ(5111, role_value(snaps, 0, "sectionName").toString(), loc(c.lang, "Today", "Heute"),
+    CHECK_EQ(10500, role_value(snaps, 0, "sectionName").toString(), loc(c.lang, "Today", "Heute"),
         "newest snapshot first, grouped under today");
-    CHECK(5112, role_value(snaps, 0, "subtitle").toString().contains(loc(c.lang, " new · laptop", " neu · laptop")),
+    CHECK(10501, role_value(snaps, 0, "subtitle").toString().contains(loc(c.lang, " new · laptop", " neu · laptop")),
         "size and host of the newest snapshot");
     // stil-und-texte.md §13.3: no label twice in a window; the snapshot list refreshes both.
-    CHECK(5117, wait_until([&] { return visible_buttons_labelled(w, refresh) == 1; }, 2000),
+    CHECK(10505, wait_until([&] { return visible_buttons_labelled(w, refresh) == 1; }, 2000),
         qPrintable(QStringLiteral("one «Refresh» beside the snapshot list: %1").arg(visible_buttons_labelled(w, refresh))));
-    return shot(c, 5113);
+    return shot(c, 10502);
 }
 
 // Checks that every row of the snapshot list carries `hint` and that the hint is drawn.
@@ -188,33 +188,33 @@ int scenario_foreign(const Ctx& c) {
     QObject* tab = lookup<QObject>(w, "restoreTabAction");
     CHECK(5701, tab != nullptr, "restoreTabAction missing");
     trigger(tab);
-    CHECK(5702, wait_until([&] {
+    CHECK(10506, wait_until([&] {
         return w->property("activeTab").toInt() == 4
             && !c.backend->property("restore_overview_loading").toBool()
             && model_rows(w, "restoreGroupsModel") == 3;
     }, 20000), "the restore area lists three further groups");
     finish_incubation(w);
     QAbstractItemModel* groups = model_named(w, "restoreGroupsModel");
-    CHECK_EQ(5703, role_value(groups, 0, "name").toString(), loc(c.lang, "Unassigned", "Nicht zugeordnet"),
+    CHECK_EQ(10507, role_value(groups, 0, "name").toString(), loc(c.lang, "Unassigned", "Nicht zugeordnet"),
         "first group");
-    CHECK_EQ(5704, role_value(groups, 0, "subtitle").toString(),
+    CHECK_EQ(10508, role_value(groups, 0, "subtitle").toString(),
         loc(c.lang, "1 snapshot without a unique Kestic tag", "1 Snapshot ohne eindeutigen Kestic-Tag"), "unassigned count");
-    CHECK_EQ(5705, role_value(groups, 1, "subtitle").toString(),
+    CHECK_EQ(10509, role_value(groups, 1, "subtitle").toString(),
         loc(c.lang, "1 backup without description", "1 Backup ohne Beschreibung"), "orphaned count");
     CHECK_EQ(5706, role_value(groups, 2, "group").toString(), QStringLiteral("described"),
         "the backup not configured here is shown, not hidden");
 
     QQuickItem* group_row = tab_to(w, "restoreGroupListItem", 40);
-    CHECK(5707, group_row != nullptr, "Tab reaches the further groups");
+    CHECK(10510, group_row != nullptr, "Tab reaches the further groups");
     send_key(w, Qt::Key_Return);
     const QString unassigned = loc(c.lang, "Unassigned", "Nicht zugeordnet");
-    CHECK(5708, wait_for_group(w, c.backend, unassigned, 1), "Return opens the unassigned snapshots");
+    CHECK(10511, wait_for_group(w, c.backend, unassigned, 1), "Return opens the unassigned snapshots");
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
-    CHECK_EQ(5709, role_value(snaps, 0, "sectionName").toString(),
+    CHECK_EQ(10512, role_value(snaps, 0, "sectionName").toString(),
         loc(c.lang, "Unassigned on 'NAS'\n1 snapshot", "Nicht zugeordnet auf «NAS»\n1 Snapshot"),
         "grouped by destination, with the number of snapshots");
     const QString not_managed = loc(c.lang, "Not managed by Kestic", "Von Kestic nicht verwaltet");
-    if (int rc = check_hints(w, not_managed, 5710)) {
+    if (int rc = check_hints(w, not_managed, 10513)) {
         return rc;
     }
     CHECK(8300, save_screenshot(w, c.out_path), "screenshot failed");
@@ -226,7 +226,7 @@ int scenario_foreign(const Ctx& c) {
         loc(c.lang, "Backup without description on 'NAS'\n1 snapshot · latest ",
             "Backup ohne Beschreibung auf «NAS»\n1 Snapshot · zuletzt ")),
         "orphaned backup with its number of snapshots and newest snapshot");
-    if (int rc = check_hints(w, not_managed, 5717)) {
+    if (int rc = check_hints(w, not_managed, 10516)) {
         return rc;
     }
     CHECK(8304, save_screenshot(w, group_shot(c.out_path, "orphaned")), "screenshot failed");
@@ -234,7 +234,7 @@ int scenario_foreign(const Ctx& c) {
     const QString described = loc(c.lang, "Backups not configured here", "Hier nicht angelegte Backups");
     CHECK(8305, open_next_group(c, "described", described), "open the group of backups not configured here");
     CHECK(8306, wait_for_group(w, c.backend, described, 1), "the backup not configured here is listed");
-    if (int rc = check_hints(w, loc(c.lang, "Backup not configured here", "Backup hier nicht angelegt"), 5723)) {
+    if (int rc = check_hints(w, loc(c.lang, "Backup not configured here", "Backup hier nicht angelegt"), 10519)) {
         return rc;
     }
     CHECK(5726, save_screenshot(w, group_shot(c.out_path, "described")), "screenshot failed");
@@ -534,18 +534,18 @@ int scenario_compare_identical(const Ctx& c) {
     CHECK(6109, wait_until([&] { return is_open(menu); }, 2000), "Menu key opens the context menu");
     CHECK(6110, menu_to(w, menu, 1), "arrow keys reach «Compare with Previous»");
     send_key(w, Qt::Key_Return);
-    CHECK(6111, wait_for_compare(w), "the snapshot is compared with the previous one");
+    CHECK(10522, wait_for_compare(w), "the snapshot is compared with the previous one");
     finish_incubation(w);
     Compare cmp = compare_page(w);
-    CHECK(6112, cmp.model->property("identical").toBool(), "(a) the snapshots are identical");
-    CHECK(6113, cmp.model->rowCount() == 0, "(a) no change listed");
+    CHECK(10523, cmp.model->property("identical").toBool(), "(a) the snapshots are identical");
+    CHECK(10524, cmp.model->rowCount() == 0, "(a) no change listed");
     QQuickItem* message = visible_item(w, "compareNoDifferencesMessage");
-    CHECK(6114, message != nullptr, "(a) «No differences» is shown");
-    CHECK_EQ(6115, message->property("text").toString(),
+    CHECK(10525, message != nullptr, "(a) «No differences» is shown");
+    CHECK_EQ(10526, message->property("text").toString(),
         loc(c.lang, "No differences", "Keine Unterschiede"), "(a) text instead of an empty list");
-    CHECK(6116, visible_item(w, "compareErrorMessage") == nullptr, "no error shown");
+    CHECK(10527, visible_item(w, "compareErrorMessage") == nullptr, "no error shown");
     wait_ms(600); // quiet window: the page transition ends before the screenshot
-    return shot(c, 6117);
+    return shot(c, 10528);
 }
 
 /// AC-M4-05-24 (c) in the GUI: started with `--show-restore` (the tray's «Restore Files…»
@@ -583,22 +583,22 @@ int scenario_restic_recommended(const Ctx& c) {
     CHECK(6301, wait_until([&] { return c.backend->property("restic_valid").toBool(); }, 10000), "restic usable");
     QMetaObject::invokeMethod(w, "openSettingsWindow");
     auto* settings = qobject_cast<QQuickWindow*>(lookup<QObject>(w, "settingsWindow"));
-    CHECK(6302, settings != nullptr, "settingsWindow missing");
-    CHECK(6303, wait_until([&] { return settings->isVisible(); }, 3000), "settings open");
+    CHECK(10529, settings != nullptr, "settingsWindow missing");
+    CHECK(10530, wait_until([&] { return settings->isVisible(); }, 3000), "settings open");
     QObject* label = settings->findChild<QObject*>(QStringLiteral("resticSourceLabel"));
-    CHECK(6304, label != nullptr, "resticSourceLabel missing");
+    CHECK(10531, label != nullptr, "resticSourceLabel missing");
     QObject* version_label = settings->findChild<QObject*>(QStringLiteral("resticVersionLabel"));
     CHECK(6310, version_label != nullptr, "resticVersionLabel missing");
     const QString text = label->property("text").toString();
     const QString version = version_label->property("text").toString();
     const QString note = loc(c.lang, "recommended:", "empfohlen:");
     for (const char* code : {"system", "app_managed", "custom"}) {
-        CHECK(6308, !text.contains(QLatin1String(code)), "no raw provider code in the restic source");
+        CHECK(10534, !text.contains(QLatin1String(code)), "no raw provider code in the restic source");
     }
     CHECK_EQ(6309, text, loc(c.lang, "Custom path", "Eigener Pfad"),
         "the source is named like the choice in the source dialog");
     if (qEnvironmentVariable("KESTIC_SMOKE_EXPECT_RECOMMENDED") == QLatin1String("1")) {
-        CHECK_EQ(6305, version, loc(c.lang, "0.18.0 · recommended: 0.20.0", "0.18.0 · empfohlen: 0.20.0"),
+        CHECK_EQ(10532, version, loc(c.lang, "0.18.0 · recommended: 0.20.0", "0.18.0 · empfohlen: 0.20.0"),
             "(b) «recommended» after 0.18.0");
     } else {
         CHECK(6306, !version.isEmpty() && !version.contains(note), "(c) no «recommended» with the newest version");
@@ -608,7 +608,7 @@ int scenario_restic_recommended(const Ctx& c) {
     scroll_into_view(label_item);
     CHECK(6330, label_item && wait_until([&] { return shown_in_its_flickables(label_item); }, 400),
         "the restic source is scrolled into view for the screenshot");
-    CHECK(6307, save_screenshot(settings, c.out_path), "screenshot failed");
+    CHECK(10533, save_screenshot(settings, c.out_path), "screenshot failed");
     settings->close();
     return 0;
 }
@@ -793,8 +793,11 @@ int scenario_snapshot_right_click(const Ctx& c) {
     if (int rc = open_restore_snapshots(c, 7101, 3)) {
         return rc;
     }
-    // quiet window: the tab switch moves the focus to the selected backup a moment later.
-    wait_ms(1000);
+    // The tab switch moves the focus to the selected backup a moment later.
+    wait_until([&] {
+        QQuickItem* focused = w->activeFocusItem();
+        return focused && focused->objectName() == QLatin1String("restoreBackupListItem");
+    }, 1000);
     QQuickItem* list = visible_item(w, "restoreSnapshotsListView");
     QObject* menu = lookup<QObject>(w, "snapshotContextMenu");
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
@@ -990,18 +993,18 @@ int scenario_tab_order(const Ctx& c) {
     if (int rc = open_restore_snapshots(c, 7801, 3)) {
         return rc;
     }
-    CHECK(7810, tab_to(w, "restoreSnapshotListItem", 40) != nullptr, "Tab reaches the snapshot list");
+    CHECK(10535, tab_to(w, "restoreSnapshotListItem", 40) != nullptr, "Tab reaches the snapshot list");
     press_tab(w);
     QObject* compare = lookup<QObject>(w, "restoreCompareAction");
-    CHECK(7811, compare != nullptr, "restoreCompareAction missing");
-    CHECK(7812, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
+    CHECK(10536, compare != nullptr, "restoreCompareAction missing");
+    CHECK(10537, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
         qPrintable(QStringLiteral("one Tab from the snapshot list reaches the action bar: ") + focus_name(w)));
-    CHECK(7813, w->activeFocusItem()->property("text").toString() == compare->property("text").toString(),
+    CHECK(10538, w->activeFocusItem()->property("text").toString() == compare->property("text").toString(),
         qPrintable(QStringLiteral("one Tab from the snapshot list reaches «Compare…»: ") + focus_name(w)));
 
-    CHECK(7820, tab_to(w, "restoreBackupListItem", 40) != nullptr, "Tab reaches the backup list");
+    CHECK(10539, tab_to(w, "restoreBackupListItem", 40) != nullptr, "Tab reaches the backup list");
     press_backtab(w);
-    CHECK(7821, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
+    CHECK(10540, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
         qPrintable(QStringLiteral("Shift+Tab from the backup list reaches the navigation: ") + focus_name(w)));
 
     const QStringList round = tab_round_regions(w, 60);
@@ -1025,14 +1028,14 @@ int scenario_tab_order(const Ctx& c) {
         before = tab_region(w, w->activeFocusItem());
         press_tab(w);
     }
-    CHECK(7842, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
+    CHECK(10541, tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"),
         qPrintable(QStringLiteral("Tab reaches the action bar of «Backups»: ") + focus_name(w)));
-    CHECK(7843, before == QLatin1String("content"),
+    CHECK(10542, before == QLatin1String("content"),
         qPrintable(QStringLiteral("on «Backups» the action bar follows the content, not ") + before));
     for (int i = 0; i < 10 && tab_region(w, w->activeFocusItem()) == QLatin1String("action bar"); ++i) {
         press_tab(w);
     }
-    CHECK(7844, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
+    CHECK(10543, tab_region(w, w->activeFocusItem()) == QLatin1String("navigation"),
         qPrintable(QStringLiteral("on «Backups» the navigation follows the action bar: ") + focus_name(w)));
     return 0;
 }

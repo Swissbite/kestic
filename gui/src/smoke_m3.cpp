@@ -94,13 +94,16 @@ int scenario_pause(const Ctx& c) {
         { "pauseGlobalTomorrowItem", "Until Tomorrow", "Bis morgen" },
         { "pauseGlobalIndefiniteItem", "Until I Resume", "Bis ich fortsetze" },
     };
-    int code = 3110;
-    for (const Entry& e : entries) {
+    auto check_entry = [&](const Entry& e, int code) {
         QObject* item = lookup<QObject>(w, e.object);
         CHECK(code, item != nullptr, "global pause menu item missing");
         CHECK_EQ(code + 1, item->property("text").toString(), loc(c.lang, e.en, e.de), e.object);
-        code += 2;
-    }
+        return 0;
+    };
+    CHECK_RC(check_entry(entries[0], 3110));
+    CHECK_RC(check_entry(entries[1], 3112));
+    CHECK_RC(check_entry(entries[2], 3114));
+    CHECK_RC(check_entry(entries[3], 3116));
 
     QObject* pause_1h = lookup<QObject>(w, "pauseGlobal1hItem");
     QMetaObject::invokeMethod(pause_1h, "triggered");

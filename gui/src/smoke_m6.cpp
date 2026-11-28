@@ -334,14 +334,14 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
         };
         switch ((*step)++) {
         case 0:
-            ask(102, "lintExcludes", [&]() {
+            ask(10903, "lintExcludes", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "lintExcludes", Q_RETURN_ARG(int, r), Q_ARG(QString, excludes));
                 return r;
             });
             break;
         case 1:
-            ask(103, "testExcludePath", [&]() {
+            ask(10904, "testExcludePath", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "testExcludePath", Q_RETURN_ARG(int, r), Q_ARG(QString, bid),
                     Q_ARG(QString, excludes), Q_ARG(QString, QStringLiteral("/tmp/a.tmp")));
@@ -349,7 +349,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 2:
-            ask(104, "formatExcludeRuleForItem", [&]() {
+            ask(10905, "formatExcludeRuleForItem", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "formatExcludeRuleForItem", Q_RETURN_ARG(int, r),
                     Q_ARG(QString, source + QStringLiteral("/file.txt")));
@@ -357,14 +357,14 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 3:
-            ask(105, "detectSource", [&]() {
+            ask(10906, "detectSource", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "detectSource", Q_RETURN_ARG(int, r), Q_ARG(QString, source));
                 return r;
             });
             break;
         case 4:
-            ask(106, "checkNestedSources", [&]() {
+            ask(10907, "checkNestedSources", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "checkNestedSources", Q_RETURN_ARG(int, r), Q_ARG(QString, QString()),
                     Q_ARG(QString, source), Q_ARG(QString, dest));
@@ -372,7 +372,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 5:
-            ask(107, "startBackupDryRun", [&]() {
+            ask(10908, "startBackupDryRun", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "startBackupDryRun", Q_RETURN_ARG(int, r), Q_ARG(QString, bid),
                     Q_ARG(QString, QString()));
@@ -380,7 +380,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 6:
-            ask(108, "startRetentionPreview", [&]() {
+            ask(10909, "startRetentionPreview", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "startRetentionPreview", Q_RETURN_ARG(int, r), Q_ARG(QString, bid),
                     Q_ARG(QString, retention));
@@ -388,7 +388,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 7:
-            ask(109, "testDestination", [&]() {
+            ask(10910, "testDestination", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "testDestination", Q_RETURN_ARG(int, r), Q_ARG(QString, fields),
                     Q_ARG(QString, QStringLiteral("init")), Q_ARG(QString, QStringLiteral("probe-password")),
@@ -397,7 +397,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             });
             break;
         case 8:
-            ask(110, "applyResticSource", [&]() {
+            ask(10911, "applyResticSource", [&]() {
                 int r = 0;
                 QMetaObject::invokeMethod(backend, "applyResticSource", Q_RETURN_ARG(int, r),
                     Q_ARG(QString, QStringLiteral("automatic")), Q_ARG(QString, QString()));
@@ -587,7 +587,7 @@ void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringLis
 // StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
 void run_slow_start_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    wait_then(window, 30000, 67, QStringLiteral("the state never arrived"),
+    wait_then(window, 30000, 10901, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool(); },
         [=]() {
             const QString bid = backup_id_at(window, 0);
@@ -595,7 +595,7 @@ void run_slow_start_scene(QQuickWindow* window, QObject* backend,
             QMetaObject::invokeMethod(backend, "startAllBackups");
             QMetaObject::invokeMethod(backend, "pauseBackup", Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("1h")));
             QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
-            wait_then(window, 5000, 68, QStringLiteral("pausing waited for the slow starts"),
+            wait_then(window, 5000, 10902, QStringLiteral("pausing waited for the slow starts"),
                 [=]() {
                     return backend->property("global_paused").toBool()
                         && role_value(model_named(window, "backupsModel"), 0, "isPaused").toBool();
@@ -611,7 +611,7 @@ void run_refused_start_scene(QQuickWindow* window, QObject* backend,
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP_ID");
     SMOKE_CHECK("M6", 662, !bid.isEmpty(), "precondition: backup id");
     QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
-    wait_then(window, 30000, 65, QStringLiteral("the refusal never arrived"),
+    wait_then(window, 30000, 10900, QStringLiteral("the refusal never arrived"),
         [=]() { return !backend->property("manual_run_blocked_message").toString().isEmpty(); },
         [=]() {
             const QString shown = backend->property("manual_run_blocked_message").toString();

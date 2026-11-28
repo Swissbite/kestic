@@ -133,7 +133,7 @@ int check_no_tree(const Browse& b) {
 /// entries for restore; the selection stays when the folder changes.
 int scenario_browse_keyboard(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5301)) {
+    if (int rc = open_restore_snapshots(c, 10400)) {
         return rc;
     }
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
@@ -212,7 +212,7 @@ int scenario_browse_keyboard(const Ctx& c) {
 /// plain text (the path holds «R&D <b>x<b>»), and the top folder keeps its accessible name.
 int scenario_browse_path_row(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 6201)) {
+    if (int rc = open_restore_snapshots(c, 10460)) {
         return rc;
     }
     if (int rc = open_browser_at(c, 0, 6206)) {
@@ -228,13 +228,13 @@ int scenario_browse_path_row(const Ctx& c) {
         "the snapshot opens in its folder");
     QStringList names;
     QMetaObject::invokeMethod(b.model, "segmentNames", Q_RETURN_ARG(QStringList, names), Q_ARG(QString, dir));
-    CHECK(6211, names.size() >= 4, "path row from the top down to «src»");
-    CHECK(6226, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
+    CHECK(10465, names.size() >= 4, "path row from the top down to «src»");
+    CHECK(10467, names.contains(odd_name), "the path holds «R&D <b>x<b>»");
     if (int rc = check_path_row_drawn_once(c, names)) {
         return rc;
     }
     QMetaObject::invokeMethod(lookup<QObject>(w, "browsePathFlick"), "showEnd");
-    return shot(c, 6225);
+    return shot(c, 10466);
 }
 
 /// AC-M4-03-2 (c) and AC-M4-03-5: while the top folder with 1 000 entries loads, the view keeps
@@ -242,10 +242,10 @@ int scenario_browse_path_row(const Ctx& c) {
 /// end of the list until every entry is there exactly once.
 int scenario_browse_paging(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5401)) {
+    if (int rc = open_restore_snapshots(c, 10405)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 1, 5406)) {
+    if (int rc = open_browser_at(c, 1, 10410)) {
         return rc;
     }
     Browse b = browse_page(w);
@@ -277,13 +277,13 @@ int scenario_browse_paging(const Ctx& c) {
     CHECK(5420, save_screenshot(w, c.out_path), "screenshot failed");
 
     QQuickItem* list = lookup(w, "browseListView");
-    CHECK(5421, list != nullptr, "browseListView missing");
+    CHECK(10413, list != nullptr, "browseListView missing");
     int rows = b.model->rowCount();
     for (int step = 0; step < 20 && rows < 1000; ++step) {
         QMetaObject::invokeMethod(list, "positionViewAtEnd");
         wait_until([&] { return b.model->rowCount() > rows; }, 3000);
         const int now = b.model->rowCount();
-        CHECK(5422, now - rows <= 200, "(a) at most 200 entries per page");
+        CHECK(10414, now - rows <= 200, "(a) at most 200 entries per page");
         CHECK(5423, now > rows, "(a) scrolling to the end fetches the next page");
         rows = now;
     }
@@ -301,10 +301,10 @@ int scenario_browse_paging(const Ctx& c) {
 /// instead of a partial list.
 int scenario_browse_too_large(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5501)) {
+    if (int rc = open_restore_snapshots(c, 10415)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 1, 5506)) {
+    if (int rc = open_browser_at(c, 1, 10420)) {
         return rc;
     }
     Browse b = browse_page(w);
@@ -328,10 +328,10 @@ int scenario_browse_too_large(const Ctx& c) {
 /// Rust test checks that restic got SIGTERM.
 int scenario_browse_leave(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5601)) {
+    if (int rc = open_restore_snapshots(c, 10423)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 1, 5606)) {
+    if (int rc = open_browser_at(c, 1, 10428)) {
         return rc;
     }
     Browse b = browse_page(w);
@@ -361,17 +361,17 @@ int focused_hit_index(QQuickWindow* w) {
 /// its snapshot, with the hit selected and the breadcrumb named after the snapshot.
 int scenario_search(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5701, 3)) {
+    if (int rc = open_restore_snapshots(c, 10431, 3)) {
         return rc;
     }
-    if (int rc = search_with_keyboard(c, QStringLiteral("bericht.pdf"), 5706)) {
+    if (int rc = search_with_keyboard(c, QStringLiteral("bericht.pdf"), 10436)) {
         return rc;
     }
     Search s = search_page(w);
     CHECK(5710, s.model->rowCount() == 2, "(a) two hits");
-    CHECK(5711, role_value(s.model, 0, "path").toString().endsWith(QLatin1String("/t2/src/Archiv/2026/bericht.pdf")),
+    CHECK(10440, role_value(s.model, 0, "path").toString().endsWith(QLatin1String("/t2/src/Archiv/2026/bericht.pdf")),
         "(a) path of the hit in the newest snapshot first");
-    CHECK(5712, role_value(s.model, 1, "path").toString().endsWith(QLatin1String("/t1/src/Dokumente/bericht.pdf")),
+    CHECK(10441, role_value(s.model, 1, "path").toString().endsWith(QLatin1String("/t1/src/Dokumente/bericht.pdf")),
         "(a) path of the hit in the older snapshot");
     CHECK(5713, role_value(s.model, 0, "subtitle").toString().startsWith(QLatin1String("2026-11-14 12:00")),
         "(a) the hit names the date of its snapshot");
@@ -386,8 +386,8 @@ int scenario_search(const Ctx& c) {
     CHECK(5717, save_screenshot(w, c.out_path), "screenshot failed");
 
     QQuickItem* row = tab_to(w, "searchHitRow", 40);
-    CHECK(5718, row != nullptr, "Tab reaches the hits");
-    CHECK(5719, row->property("index").toInt() == 0, "the first hit holds the focus");
+    CHECK(10442, row != nullptr, "Tab reaches the hits");
+    CHECK(10443, row->property("index").toInt() == 0, "the first hit holds the focus");
     for (int i = 0; i < 4 && focused_hit_index(w) != 1; ++i) {
         const int at = focused_hit_index(w);
         press_until(w, Qt::Key_Down, [&] { return focused_hit_index(w) != at; }, 80);
@@ -405,18 +405,18 @@ int scenario_search(const Ctx& c) {
     QQuickItem* list = lookup(w, "browseListView");
     CHECK(5723, list != nullptr, "browseListView missing");
     const int current = list->property("currentIndex").toInt();
-    CHECK(5724, current >= 0, "(b) an entry of the folder is selected");
-    CHECK_EQ(5725, role_value(b.model, current, "path").toString(), path, "(b) the hit is selected");
+    CHECK(10444, current >= 0, "(b) an entry of the folder is selected");
+    CHECK_EQ(10445, role_value(b.model, current, "path").toString(), path, "(b) the hit is selected");
     return 0;
 }
 
 /// AC-M4-04-2 (smoke part): a search without hits shows (a) «No hits for ‹…›» and (b) no error.
 int scenario_search_none(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5801, 3)) {
+    if (int rc = open_restore_snapshots(c, 10446, 3)) {
         return rc;
     }
-    if (int rc = search_with_keyboard(c, QStringLiteral("nirgends"), 5806)) {
+    if (int rc = search_with_keyboard(c, QStringLiteral("nirgends"), 10451)) {
         return rc;
     }
     Search s = search_page(w);
@@ -434,7 +434,7 @@ int scenario_search_none(const Ctx& c) {
 /// cancelled. The Rust test checks that restic got SIGTERM.
 int scenario_search_cancel(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 5901, 3)) {
+    if (int rc = open_restore_snapshots(c, 10455, 3)) {
         return rc;
     }
     w->requestActivate();

@@ -200,10 +200,10 @@ void scene_e2e_first_backup(const Scene& s) {
         }},
         {80, [s] {
             QQuickWindow* w = s.window;
-            SMOKE_CLICK("E2E first-backup", 86, w, child_item(w, "wizBackupStartNowButton"), "First Backup Back Up Now");
-            poll_backup_run(w, "E2E first-backup", 87, 89, [s] {
+            SMOKE_CLICK("E2E first-backup", 10105, w, child_item(w, "wizBackupStartNowButton"), "First Backup Back Up Now");
+            poll_backup_run(w, "E2E first-backup", 10106, 89, [s] {
                 QQuickItem* ov = child_item(s.window, "overviewContent");
-                SMOKE_CHECK_VISIBLE("E2E first-backup", 88, ov, "overviewContent not visible");
+                SMOKE_CHECK_VISIBLE("E2E first-backup", 10107, ov, "overviewContent not visible");
                 smoke_finish("E2E first-backup", s.warnings.get(), s.window, s.out_path);
             });
         }},
@@ -215,12 +215,12 @@ void scene_e2e_first_backup(const Scene& s) {
 void scene_e2e_edit_reinit(const Scene& s) {
     QQuickWindow* w = s.window;
     QQuickItem* edit_page = child_item(w, "destinationEditPage");
-    SMOKE_CHECK("E2E edit-reinit", 90, edit_page, "DestinationEditPage missing");
+    SMOKE_CHECK("E2E edit-reinit", 10108, edit_page, "DestinationEditPage missing");
     SMOKE_CLICK("E2E edit-reinit", 631, w, child_item(w, "destEditTestButton"), "Edit Dest Test Connection");
     SMOKE_CHECK("E2E edit-reinit", 632, wait_for_connection_test(w, QStringLiteral("destEdit")),
         "the connection test never answered");
     const QString kind = s.backend->property("connection_test_error_kind").toString();
-    SMOKE_CHECK("E2E edit-reinit", 91, !s.backend->property("connection_test_ok").toBool(),
+    SMOKE_CHECK("E2E edit-reinit", 10109, !s.backend->property("connection_test_ok").toBool(),
         "expected the connection test to fail for a missing repository");
     SMOKE_CHECK("E2E edit-reinit", 633, kind == QLatin1String("repository_missing"),
         QStringLiteral("expected repository_missing, got kind='%1'").arg(kind));
@@ -730,7 +730,7 @@ void run_slow_daemon_scene(
 // window); the state that arrives later names the running backup.
 void run_quit_running_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    wait_then(window, 30000, 60, QStringLiteral("the quit dialog never named the running backup"),
+    wait_then(window, 30000, 10100, QStringLiteral("the quit dialog never named the running backup"),
         [=]() {
             return backend->property("quit_has_running_run").toBool()
                 && backend->property("quit_running_backup_name").toString() == QLatin1String("Documents");
@@ -742,14 +742,14 @@ void run_quit_running_scene(QQuickWindow* window, QObject* backend,
 // back the user's other actions: pausing and switching expert mode.
 void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    wait_then(window, 30000, 61, QStringLiteral("the state never arrived"),
+    wait_then(window, 30000, 10101, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool(); },
         [=]() {
             const bool expert = backend->property("expert_mode").toBool();
             QMetaObject::invokeMethod(backend, "unlockSecretStore");
             QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
             QMetaObject::invokeMethod(backend, "updateExpertMode", Q_ARG(bool, !expert));
-            wait_then(window, 5000, 62, QStringLiteral("pausing or expert mode waited for the password prompt"),
+            wait_then(window, 5000, 10102, QStringLiteral("pausing or expert mode waited for the password prompt"),
                 [=]() {
                     return backend->property("global_paused").toBool()
                         && backend->property("expert_mode").toBool() != expert;
@@ -763,7 +763,7 @@ void run_prompt_alone_scene(QQuickWindow* window, QObject* backend,
 // learns that the window closed, and the queued resume is still sent (the test watches for both).
 void run_close_window_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    wait_then(window, 30000, 63, QStringLiteral("the state never arrived"),
+    wait_then(window, 30000, 10103, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool(); },
         [=]() {
             if (!warnings->isEmpty() || !save_screenshot(window, out_path)) {
@@ -808,7 +808,7 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
         bool ok = true;
         switch ((*step)++) {
         case 0:
-            ok = requests_at_once(71, "renameBackup", [&]() {
+            ok = requests_at_once(10104, "renameBackup", [&]() {
                 int request = 0;
                 QMetaObject::invokeMethod(backend, "renameBackup", Q_RETURN_ARG(int, request),
                     Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("Renamed Documents")));

@@ -149,10 +149,10 @@ int scenario_all_pages(const Ctx& c) {
         { "destinations", "destinationsListPage" },
         { "history", "historyPage" },
     };
-    for (int i = 0; i < 4; ++i) {
+    auto check_tab = [&](int i, int code) {
         QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, i));
-        CHECK(4910 + i, page_visible(w, tabs[i].page), tabs[i].page);
-        RECORD_PAGE(4915 + i, dump, QString::fromLatin1(tabs[i].name), w, "tab");
+        CHECK(code, page_visible(w, tabs[i].page), tabs[i].page);
+        RECORD_PAGE(code + 1, dump, QString::fromLatin1(tabs[i].name), w, "tab");
         if (i == 1) {
             // AC-M0-04-1: the QML list shows exactly the rows of the Rust list model.
             QObject* list = lookup<QObject>(w, "backupsListView");
@@ -160,7 +160,12 @@ int scenario_all_pages(const Ctx& c) {
             CHECK3(4904, list, backups, backups->rowCount() > 0, "backups list or model missing");
             CHECK(4905, list->property("count").toInt() == backups->rowCount(), "list shows other rows than the model");
         }
-    }
+        return 0;
+    };
+    CHECK_RC(check_tab(0, 4910));
+    CHECK_RC(check_tab(1, 4912));
+    CHECK_RC(check_tab(2, 4914));
+    CHECK_RC(check_tab(3, 4916));
 
     QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 4));
     CHECK(4906, page_visible(w, "restorePage"), "restorePage");
@@ -197,15 +202,22 @@ int scenario_all_pages(const Ctx& c) {
         { "backup-reassign", "editDestinationRow", "backupReassignPage" },
         { "backup-full-config", "viewFullConfigRow", "backupFullConfigPage" },
     };
-    int code = 4921;
-    for (const Editor& e : editors) {
-        CHECK(code++, open_detail(w, bid), "backupDetailPage did not open");
+    auto check_editor = [&](const Editor& e, int code) {
+        CHECK(code, open_detail(w, bid), "backupDetailPage did not open");
         QQuickItem* row = find_visual_item(w, QString::fromLatin1(e.row));
-        CHECK(code, row, e.row);
-        CHECK(code++, click_ui_item(w, row, e.row), e.row);
-        CHECK(code++, page_visible(w, e.page), e.page);
-        RECORD_PAGE(code++, dump, QString::fromLatin1(e.name), w, "editor");
-    }
+        CHECK(code + 1, row, e.row);
+        CHECK(code + 1, click_ui_item(w, row, e.row), e.row);
+        CHECK(code + 2, page_visible(w, e.page), e.page);
+        RECORD_PAGE(code + 3, dump, QString::fromLatin1(e.name), w, "editor");
+        return 0;
+    };
+    CHECK_RC(check_editor(editors[0], 4921));
+    CHECK_RC(check_editor(editors[1], 4925));
+    CHECK_RC(check_editor(editors[2], 4929));
+    CHECK_RC(check_editor(editors[3], 4933));
+    CHECK_RC(check_editor(editors[4], 4937));
+    CHECK_RC(check_editor(editors[5], 4941));
+    CHECK_RC(check_editor(editors[6], 4945));
 
     CHECK(4960, open_detail(w, bid), "backupDetailPage did not open");
     QMetaObject::invokeMethod(w, "openBackupSnapshotsPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, bname));
@@ -222,20 +234,23 @@ int scenario_all_pages(const Ctx& c) {
         { "destination-edit", "openDestinationEditPage", "destinationEditPage" },
         { "destination-maintenance", "openDestinationMaintenancePage", "destinationMaintenancePage" },
     };
-    code = 4965;
-    for (const DestPage& p : dest_pages) {
+    auto check_dest_page = [&](const DestPage& p, int code) {
         QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 2));
         wait_until([&] { return w->property("activeTab").toInt() == 2; }, 150);
         QMetaObject::invokeMethod(w, "openDestinationDetailById", Q_ARG(QVariant, did));
-        CHECK(code++, page_visible(w, "destinationDetailPage"), "destinationDetailPage");
+        CHECK(code, page_visible(w, "destinationDetailPage"), "destinationDetailPage");
         wait_ms(200); // quiet window: the page ends its transition
         finish_incubation(w);
         if (p.method) {
             QMetaObject::invokeMethod(w, p.method, Q_ARG(QVariant, did));
         }
-        CHECK(code++, page_visible(w, p.page), p.page);
-        RECORD_PAGE(code++, dump, QString::fromLatin1(p.name), w, "destination");
-    }
+        CHECK(code + 1, page_visible(w, p.page), p.page);
+        RECORD_PAGE(code + 2, dump, QString::fromLatin1(p.name), w, "destination");
+        return 0;
+    };
+    CHECK_RC(check_dest_page(dest_pages[0], 4965));
+    CHECK_RC(check_dest_page(dest_pages[1], 4968));
+    CHECK_RC(check_dest_page(dest_pages[2], 4971));
     // Like the backup row: the selected destination row puts its icon on the background colour.
     QQuickItem* dest_backdrop = find_visual_item(w, QStringLiteral("destinationRowIconBackdrop"));
     CHECK2(4964, dest_backdrop != nullptr, dest_backdrop->isVisible(),

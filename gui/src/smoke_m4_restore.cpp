@@ -60,10 +60,10 @@ int open_restore_dialog_for(const Ctx& c, const QString& name, int code) {
 /// the preview for that folder.
 int scenario_restore_unmatchable(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 6301, 1)) {
+    if (int rc = open_restore_snapshots(c, 10625, 1)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 0, 6306)) {
+    if (int rc = open_browser_at(c, 0, 10630)) {
         return rc;
     }
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
@@ -71,7 +71,7 @@ int scenario_restore_unmatchable(const Ctx& c) {
     CHECK(8307, wait_for_dir(w, top), "the snapshot opens in its folder");
     // The name also holds markup: the message must show it literally.
     const QString name = QStringLiteral("<b>bad<b>") + QChar(0xFFFD) + QStringLiteral("name.txt");
-    if (int rc = open_restore_dialog_for(c, name, 6310)) {
+    if (int rc = open_restore_dialog_for(c, name, 10633)) {
         return rc;
     }
     Restore r = restore_dialog(w);
@@ -168,16 +168,16 @@ int scenario_restore_target_texts(const Ctx& c) {
     QObject* refused_original = lookup<QObject>(w, "restoreOriginalRadio");
     QObject* refusal = lookup<QObject>(w, "restorePreviewError");
     CHECK(6532, refused_original && refusal, "dialog controls exist");
-    CHECK(6525, wait_for_preview(refused.model), "the preview of the new folder is done");
-    CHECK(6526, click_ui_item(w, qobject_cast<QQuickItem*>(refused_original), "original location"),
+    CHECK(10638, wait_for_preview(refused.model), "the preview of the new folder is done");
+    CHECK(10639, click_ui_item(w, qobject_cast<QQuickItem*>(refused_original), "original location"),
         "the original location could not be chosen");
     // With «Never» restic leaves the folder alone; with «Always» it would fail there.
     CHECK(6538, wait_for_preview(refused.model), "the preview with «Never» is done");
     QMetaObject::invokeMethod(refused.model, "chooseOverwrite", Q_ARG(int, 3));
-    CHECK(6527, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
+    CHECK(10640, wait_until([&] { return refused.model->property("state").toString() == QLatin1String("error"); },
                        30000),
         "AC-M4-05-25 the preview refuses the target");
-    CHECK(6528, refusal->property("visible").toBool(), "AC-M4-05-25 (c) the refusal is shown");
+    CHECK(10641, refusal->property("visible").toBool(), "AC-M4-05-25 (c) the refusal is shown");
     const QString text = refusal->property("text").toString();
     // The message wraps the text in a span, so markup in a path shows literally.
     const QString expected =
@@ -262,16 +262,16 @@ int scenario_restore_mapping(const Ctx& c) {
 /// with «Never» again.
 int scenario_restore_dialog(const Ctx& c) {
     QQuickWindow* w = c.window;
-    if (int rc = open_restore_snapshots(c, 6201, 1)) {
+    if (int rc = open_restore_snapshots(c, 10600, 1)) {
         return rc;
     }
-    if (int rc = open_browser_at(c, 0, 6206)) {
+    if (int rc = open_browser_at(c, 0, 10605)) {
         return rc;
     }
     QAbstractItemModel* snaps = model_named(w, "restoreSnapshotsModel");
     const QString top = role_value(snaps, 0, "startDir").toString();
     CHECK(8308, wait_for_dir(w, top), "the snapshot opens in its folder");
-    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6210)) {
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 10608)) {
         return rc;
     }
     Restore r = restore_dialog(w);
@@ -287,21 +287,21 @@ int scenario_restore_dialog(const Ctx& c) {
         loc(c.lang, "Restore 1 Item", "1 Element wiederherstellen"), "dialog title");
     CHECK(6220, restore_now->property("enabled").toBool(), "«Restore Now» enabled for a new folder");
     repaint_fully(w);
-    CHECK(6221, save_screenshot(w, c.out_path), "screenshot failed");
+    CHECK(10613, save_screenshot(w, c.out_path), "screenshot failed");
 
     // The preview at the original location waits for its held dry run.
-    CHECK(6222, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
+    CHECK(10614, click_ui_item(w, qobject_cast<QQuickItem*>(original_radio), "original location"),
         "the original location could not be chosen");
-    CHECK(6223, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
+    CHECK(10615, wait_until([&] { return r.model->property("target_original").toBool(); }, 3000),
         "the original location is chosen");
-    CHECK(6224, r.model->property("state").toString() == QLatin1String("running"), "the preview runs");
-    CHECK(6225, !restore_now->property("enabled").toBool(),
+    CHECK(10616, r.model->property("state").toString() == QLatin1String("running"), "the preview runs");
+    CHECK(10617, !restore_now->property("enabled").toBool(),
         "AC-M4-05-15 (e) «Restore Now» disabled while the preview runs");
     CHECK(8309, overwrite_box->property("currentIndex").toInt() == 0,
         "AC-M4-05-15 (c) «Never» preselected");
     const QString release = qEnvironmentVariable("KESTIC_SMOKE_RELEASE_FILE");
-    CHECK(6227, !release.isEmpty() && QFile::remove(release), "the held dry run could not be released");
-    CHECK(6228, wait_for_preview(r.model), "the preview at the original location is done");
+    CHECK(10618, !release.isEmpty() && QFile::remove(release), "the held dry run could not be released");
+    CHECK(10619, wait_for_preview(r.model), "the preview at the original location is done");
     CHECK(6229, restore_now->property("enabled").toBool(), "AC-M4-05-15 (e) enabled after the preview");
     QObject* summary = lookup<QObject>(w, "restoreSummaryLabel");
     CHECK(8310, summary != nullptr, "restoreSummaryLabel missing");
@@ -379,7 +379,7 @@ int scenario_restore_dialog(const Ctx& c) {
     repaint_fully(w);
     CHECK(8320, save_screenshot(w, screenshot_variant(c.out_path, "-done")), "screenshot failed");
 
-    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 6246)) {
+    if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 10620)) {
         return rc;
     }
     CHECK(8321, r.model->property("overwrite").toInt() == 0, "AC-M4-05-11 (a) «Never» again");
@@ -718,13 +718,13 @@ int restore_all_from_hit(const Ctx& c, const QString& text, bool is_dir, int cod
 
 /// AC-M4-05-26 (a): «Restore All…» in a snapshot of one file opened from the hit of that file.
 int scenario_restore_all_from_search(const Ctx& c) {
-    return restore_all_from_hit(c, QStringLiteral("a.txt"), false, 7801);
+    return restore_all_from_hit(c, QStringLiteral("a.txt"), false, 10643);
 }
 
 /// AC-M4-05-26 (a): «Restore All…» in a snapshot of one file opened from a folder hit above the
 /// file; the browser lists the snapshot's common folder first to learn that it is none.
 int scenario_restore_all_from_folder_hit(const Ctx& c) {
-    return restore_all_from_hit(c, QStringLiteral("Dokumente"), true, 7841);
+    return restore_all_from_hit(c, QStringLiteral("Dokumente"), true, 10665);
 }
 
 // The name of the control that holds the keyboard focus in the restore dialog: the object name
@@ -920,7 +920,7 @@ int scenario_restore_banner(const Ctx& c) {
     if (int rc = open_restore_dialog_for(c, QStringLiteral("a.txt"), 7638)) {
         return rc;
     }
-    CHECK(7642, wait_for_preview(r.model), "the check of the new folder is done");
+    CHECK(10642, wait_for_preview(r.model), "the check of the new folder is done");
     trigger(lookup<QObject>(w, "restoreNowAction"));
     CHECK(7643, wait_until([&] { return r.model->property("run_state").toString() == QLatin1String("running"); }, 10000),
         "the second restore runs");

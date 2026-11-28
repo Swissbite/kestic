@@ -61,16 +61,17 @@ int check_menu_entries(const Ctx& c) {
         { "configureKesticMenuItem", "Configure Kestic…", "Kestic einrichten…" },
         { "aboutKesticMenuItem", "About Kestic", "Über Kestic" },
     };
-    int code = 5110;
-    for (const Entry& e : entries) {
+    auto check_entry = [&](const Entry& e, int code) {
         QQuickItem* item = lookup(c.window, e.name);
         CHECK(code, item != nullptr, e.name);
         CHECK(code + 1, item->isVisible(), e.name);
         CHECK_EQ(code + 2, item->property("text").toString(), loc(c.lang, e.en, e.de), e.name);
         CHECK(code + 3, item->isEnabled(), e.name);
         CHECK(code + 4, !accessible_name(item).isEmpty(), e.name);
-        code += 5;
-    }
+        return 0;
+    };
+    CHECK_RC(check_entry(entries[0], 11000));
+    CHECK_RC(check_entry(entries[1], 11005));
     auto* menu = qobject_cast<QQuickItem*>(lookup<QObject>(c.window, "hamburgerMenu")->property("contentItem").value<QObject*>());
     CHECK(5120, menu != nullptr, "menu content missing");
     CHECK(5121, menu->property("count").toInt() == 2, "the menu has other entries than the two");
@@ -156,13 +157,13 @@ int scenario_main_menu(const Ctx& c) {
     CHECK(5161, escape_about(w), "Escape did not close About Kestic");
 
     QQuickItem* focused = tab_to(w, "mainMenuButton", 60);
-    CHECK(5143, focused == button, "(d) Tab does not reach the main menu button");
-    CHECK(5144, press_until(w, Qt::Key_Space, [&] { return is_open(menu); }, 1000), "(d) Space did not open the menu");
+    CHECK(11010, focused == button, "(d) Tab does not reach the main menu button");
+    CHECK(11011, press_until(w, Qt::Key_Space, [&] { return is_open(menu); }, 1000), "(d) Space did not open the menu");
     for (int i = 0; i < 4 && !about_item->hasActiveFocus(); ++i) {
         QQuickItem* before = w->activeFocusItem();
         press_until(w, Qt::Key_Down, [&] { return w->activeFocusItem() != before; }, 80);
     }
-    CHECK(5145, about_item->hasActiveFocus(), "(d) arrow keys do not reach About Kestic");
+    CHECK(11012, about_item->hasActiveFocus(), "(d) arrow keys do not reach About Kestic");
     CHECK(5146, press_until(w, Qt::Key_Return, [&] { return is_closed(menu); }, 1000), "(d) menu stayed open after Return");
     CHECK(5147, about_window(w) != nullptr, "(d) Return did not open About Kestic");
     CHECK(5162, escape_about(w), "(g) Escape did not close About Kestic");
@@ -257,7 +258,7 @@ int scenario_show_about_on_start(const Ctx& c) {
     CHECK(9530, about != c.window, "About Kestic opened inside the main window");
     wait_ms(300); // quiet window: the About window lays out its pages
     finish_incubation(about);
-    if (const int rc = check_kirigami_texts_translated(c, about, 5304); rc != 0) {
+    if (const int rc = check_kirigami_texts_translated(c, about, 11013); rc != 0) {
         return rc;
     }
     CHECK(9531, save_screenshot(about, c.out_path), "screenshot failed");

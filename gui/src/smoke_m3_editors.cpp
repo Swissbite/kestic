@@ -278,9 +278,9 @@ int scenario_schedule_unsaved(const Ctx& c) {
     wait_ms(200); // quiet window: the page stack ends its transition
     {
         QObject* stack = qvariant_cast<QObject*>(w->property("pageStack"));
-        CHECK(3527, stack != nullptr, "pageStack missing");
+        CHECK(10300, stack != nullptr, "pageStack missing");
         QObject* last = qvariant_cast<QObject*>(stack->property("lastItem"));
-        CHECK(3528, last != nullptr, "pageStack has no last page");
+        CHECK(10301, last != nullptr, "pageStack has no last page");
         CHECK_EQ(3529, last->objectName(), QStringLiteral("backupScheduleEditPage"), "last page (conditions editor must not be pushed)");
     }
     rc = guarded_navigation(c, "openBackupDetailById", 3530, [&] { QMetaObject::invokeMethod(w, "openBackupDetailById", Q_ARG(QVariant, bid)); });
@@ -500,14 +500,17 @@ int scenario_pause_menu(const Ctx& c) {
         { "pauseBackupTomorrowItem", "Until Tomorrow", "Bis morgen" },
         { "pauseBackupIndefiniteItem", "Until I Resume", "Bis ich fortsetze" },
     };
-    int code = 3810;
-    for (const Entry& e : entries) {
+    auto check_entry = [&](const Entry& e, int code) {
         QObject* item = lookup<QObject>(w, e.object);
         CHECK(code, item != nullptr, "per-backup pause menu item missing");
         CHECK_EQ(code + 1, item->property("text").toString(), loc(c.lang, e.en, e.de), e.object);
         CHECK_EQ(code + 2, accessible_name(item), loc(c.lang, e.en, e.de), "pause item accessible name");
-        code += 3;
-    }
+        return 0;
+    };
+    CHECK_RC(check_entry(entries[0], 3810));
+    CHECK_RC(check_entry(entries[1], 3813));
+    CHECK_RC(check_entry(entries[2], 3816));
+    CHECK_RC(check_entry(entries[3], 3819));
 
     QObject* pause_act = lookup<QObject>(w, "backupDetailPauseAction");
     CHECK(3830, pause_act != nullptr, "backupDetailPauseAction missing");
@@ -518,19 +521,19 @@ int scenario_pause_menu(const Ctx& c) {
     CHECK(3833, save_screenshot(w, c.out_path), "screenshot failed");
 
     // Keyboard only: arrow keys walk through the four choices in visual order.
-    const char* order[] = { "pauseBackup1hItem", "pauseBackup3hItem", "pauseBackupTomorrowItem", "pauseBackupIndefiniteItem" };
-    code = 3840;
-    bool first = true;
-    for (const char* expected : order) {
-        if (!first) {
-            send_key(w, Qt::Key_Down);
-        }
-        first = false;
+    auto check_focus = [&](const char* expected, int code) {
         QQuickItem* focus = w->activeFocusItem();
         CHECK(code, focus != nullptr, "no keyboard focus in the pause menu");
         CHECK_EQ(code + 1, focus->objectName(), QString::fromLatin1(expected), "focused pause menu item");
-        code += 2;
-    }
+        return 0;
+    };
+    CHECK_RC(check_focus("pauseBackup1hItem", 3840));
+    send_key(w, Qt::Key_Down);
+    CHECK_RC(check_focus("pauseBackup3hItem", 3842));
+    send_key(w, Qt::Key_Down);
+    CHECK_RC(check_focus("pauseBackupTomorrowItem", 3844));
+    send_key(w, Qt::Key_Down);
+    CHECK_RC(check_focus("pauseBackupIndefiniteItem", 3846));
     send_key(w, Qt::Key_Return);
     QQuickItem* banner = lookup(w, "backupDetailPausedBanner");
     CHECK(3850, banner != nullptr, "backupDetailPausedBanner missing");
@@ -624,7 +627,8 @@ int scenario_maintenance_prune_confirm(const Ctx& c) {
     CHECK(3919, confirm->property("enabled").toBool(), "confirmation must be enabled once the preview is shown");
     CHECK(3920, save_screenshot(w, c.out_path), "screenshot failed");
     QMetaObject::invokeMethod(confirm, "trigger");
-    wait_ms(300); // quiet window: the confirmed save runs before the scenario ends
+    // The confirmed save runs before the scenario ends.
+    wait_until([&] { return is_closed(dlg) && !page->property("saving").toBool(); }, 300);
     return 0;
 }
 
@@ -791,7 +795,8 @@ void save_page(QQuickItem* page, const char* method, const QVariantList& args) {
         break;
     }
     wait_until([&] { return !page->property("saving").toBool(); }, 15000);
-    wait_ms(200); // quiet window: the page reloads after the answer
+    // The page reloads after the answer: it shows the stored state again.
+    wait_until([&] { return !page->property("dirty").toBool(); }, 200);
     // A reload after the answer may create delegates again; they finish before the page closes.
     finish_incubation(page->window());
 }
@@ -860,14 +865,9 @@ int scenario_revision_conflict(const Ctx& c) {
         { "openBackupRetentionPage", "backupRetentionPage", "commitSave", "keepDailyNum", 9 },
         { "openBackupSourcePage", "backupSourceEditPage", "saveForGuard", "sourcePath", QStringLiteral("/tmp") },
     };
-    int step = 1;
-    int base = 6110;
-    for (const ConflictEditor& e : editors) {
+    auto run_editor = [&](const ConflictEditor& e, int step, int base) {
         QQuickItem* page = open_backup_editor(w, bid, e.opener, e.page);
-        int rc = check_conflict(backend, page, "backup", bid, step, base);
-        if (rc != 0) {
-            return rc;
-        }
+        CHECK_RC(check_conflict(backend, page, "backup", bid, step, base));
         if (e.field) {
             // A switch flips, so the page is dirty also when an earlier run left it at the value.
             const QVariant current = page->property(e.field);
@@ -881,17 +881,18 @@ int scenario_revision_conflict(const Ctx& c) {
             args << json;
         }
         save_page(page, e.save, args);
-        rc = check_reloaded(backend, page, "backup", bid, c.lang, base + 4);
-        if (rc != 0) {
-            return rc;
-        }
+        CHECK_RC(check_reloaded(backend, page, "backup", bid, c.lang, base + 4));
         // The first change elsewhere also switched «skip on metered networks» on: the page shows it.
         if (step == 1) {
             CHECK(6129, page->property("skipOnMetered").toBool(), "(c) the page must show the change made elsewhere");
         }
-        ++step;
-        base += 20;
-    }
+        return 0;
+    };
+    CHECK_RC(run_editor(editors[0], 1, 10302));
+    CHECK_RC(run_editor(editors[1], 2, 6130));
+    CHECK_RC(run_editor(editors[2], 3, 6150));
+    CHECK_RC(run_editor(editors[3], 4, 6170));
+    CHECK_RC(run_editor(editors[4], 5, 6190));
 
     // The destination form: a new name, while the maintenance schedule was changed elsewhere.
     finish_incubation(w);
@@ -903,7 +904,7 @@ int scenario_revision_conflict(const Ctx& c) {
     wait_until([&] { return lookup(w, "destinationEditPage") != nullptr; }, 3000);
     wait_ms(200); // quiet window: the page ends its transition
     QQuickItem* dest_page = lookup(w, "destinationEditPage");
-    int rc = check_conflict(backend, dest_page, "destination", did, step, 6210);
+    int rc = check_conflict(backend, dest_page, "destination", did, 6, 10315);
     if (rc != 0) {
         return rc;
     }
@@ -922,7 +923,7 @@ int scenario_revision_conflict(const Ctx& c) {
     draft->setProperty("connectionVerified", true);
     CHECK(6230, wait_until([&] { return dest_page->property("canSave").toBool(); }, 100), "precondition: the destination form can save");
     save_page(dest_page, "saveForGuard", {});
-    rc = check_reloaded(backend, dest_page, "destination", did, c.lang, 6220);
+    rc = check_reloaded(backend, dest_page, "destination", did, c.lang, 10319);
     if (rc != 0) {
         return rc;
     }
@@ -964,7 +965,7 @@ int scenario_revision_conflict(const Ctx& c) {
     int queued = 0;
     QMetaObject::invokeMethod(backend, "updateBackupSchedule", Q_RETURN_ARG(int, queued), Q_ARG(QString, bid),
         Q_ARG(QString, schedule_json), Q_ARG(int, 0), Q_ARG(QString, before_both));
-    CHECK(6250, queued > 0, "the queued save was not sent");
+    CHECK(10329, queued > 0, "the queued save was not sent");
     bool queued_ok = false;
     CHECK(6251, wait_until([&] {
         for (const QList<QVariant>& answer : answers) {
@@ -977,7 +978,8 @@ int scenario_revision_conflict(const Ctx& c) {
     }, 15000), "the queued save got no answer");
     CHECK(6252, queued_ok, "(d) a save queued behind the window's own save must not conflict");
     wait_until([&] { return !cond->property("saving").toBool(); }, 15000);
-    wait_ms(200); // quiet window: the page reloads after the answer
+    // The page reloads after the answer: it shows the stored state again.
+    wait_until([&] { return !cond->property("dirty").toBool(); }, 200);
 
     QQuickItem* sched = open_backup_editor(w, bid, "openBackupSchedulePage", "backupScheduleEditPage");
     CHECK(6244, sched != nullptr, "schedule page did not open");
@@ -986,7 +988,7 @@ int scenario_revision_conflict(const Ctx& c) {
     save_page(sched, "saveForGuard", {});
     CHECK(6245, !sched->property("changedElsewhere").toBool(), "(e) a page opened after a save must not conflict");
     CHECK(6246, !sched->property("dirty").toBool(), "(e) the save went through");
-    return shot(c, 6247);
+    return shot(c, 10328);
 }
 
 const Scenario kScenarios[] = {
