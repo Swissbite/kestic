@@ -5,17 +5,19 @@
 # Egress firewall of the agent container; runs as root at every container start.
 #
 # dnsmasq is the only resolver. It forwards queries for the domains in
-# allowed-domains.txt (and their subdomains) to the upstream resolver of the
-# container network and puts every IPv4 address it returns into the nftables
-# set `allowed`. Queries for other domains are refused, so nothing resolves
-# them. Outgoing traffic is dropped unless it goes to loopback, to an address
-# in `allowed` on TCP port 443, or (from dnsmasq only) to the upstream
-# resolver on port 53. IPv6 is dropped completely.
+# allowed-domains.txt plus the backend's agent/allowed-domains.txt (and their
+# subdomains) to the upstream resolver of the container network and puts every
+# IPv4 address it returns into the nftables set `allowed`. Queries for other
+# domains are refused, so nothing resolves them. Outgoing traffic is dropped
+# unless it goes to loopback, to an address in `allowed` on TCP port 443, or
+# (from dnsmasq only) to the upstream resolver on port 53. IPv6 is dropped
+# completely.
 #
 # Unlike a list of IP addresses resolved once at start, this follows CDNs that
 # rotate addresses (static.crates.io, GitHub release downloads).
 #
 # Fails closed: any error stops the container start.
+# `--print-domains [lib_dir]` validates and prints the merged domain list (for tests).
 
 set -euo pipefail
 
@@ -26,6 +28,32 @@ STATE_DIR=/var/lib/kestic-agent
 RUN_DIR=/run/kestic-agent
 LOG_DIR=/var/log/kestic-agent
 DNSMASQ_USER=nobody
+
+load_domains() {
+    local dir="$1"
+    local domain_files=("$dir/allowed-domains.txt")
+    if [[ -f "$dir/agent/allowed-domains.txt" ]]; then
+        domain_files+=("$dir/agent/allowed-domains.txt")
+    fi
+    mapfile -t domains < <(grep -hEv '^[[:space:]]*(#|$)' "${domain_files[@]}" | sort -u)
+    if [[ ${#domains[@]} -eq 0 ]]; then
+        echo "init-firewall: no allowed domains configured" >&2
+        exit 1
+    fi
+    local domain_re='^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+    for domain in "${domains[@]}"; do
+        if [[ ! "$domain" =~ $domain_re ]]; then
+            echo "init-firewall: invalid domain '$domain' in allowed-domains.txt" >&2
+            exit 1
+        fi
+    done
+}
+
+if [[ "${1:-}" == --print-domains ]]; then
+    load_domains "${2:-$LIB_DIR}"
+    printf '%s\n' "${domains[@]}"
+    exit 0
+fi
 
 mkdir -p "$STATE_DIR" "$RUN_DIR" "$LOG_DIR"
 rm -f "$RUN_DIR/ready"
@@ -43,13 +71,7 @@ if [[ ! "$upstream" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$upstream" == 127.0.0.1
 fi
 printf '%s\n' "$upstream" > "$STATE_DIR/upstream"
 
-mapfile -t domains < <(grep -Ev '^[[:space:]]*(#|$)' "$LIB_DIR/allowed-domains.txt")
-for domain in "${domains[@]}"; do
-    if [[ ! "$domain" =~ ^[a-z0-9.-]+$ ]]; then
-        echo "init-firewall: invalid domain '$domain' in allowed-domains.txt" >&2
-        exit 1
-    fi
-done
+load_domains "$LIB_DIR"
 
 dnsmasq_uid="$(id -u "$DNSMASQ_USER")"
 

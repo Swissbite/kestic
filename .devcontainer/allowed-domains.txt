@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Domains the agent container may reach (HTTPS only). Each entry includes its
-# subdomains. Everything else is neither resolved nor routed (init-firewall.sh).
+# Shared domains every agent container may reach (HTTPS only). Each entry
+# includes its subdomains. Agent-specific domains live in
+# agents/<backend>/allowed-domains.txt and are merged by init-firewall.sh.
+# Everything else is neither resolved nor routed.
 
 # GitHub: git, API, release downloads (restic, rest-server, nextest), raw files
 github.com
@@ -45,8 +47,3 @@ keys.openpgp.org
 
 # rclone releases
 downloads.rclone.org
-
-# Claude Code: API and subscription login
-anthropic.com
-claude.ai
-claude.com

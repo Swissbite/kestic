@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Isolated container for a coding agent (Claude Code) working on Kestic.
+# Isolated container for a coding agent working on Kestic.
 #
 # Base: the CI image (.github/ci-image/Dockerfile), so the agent builds and
 # tests with exactly the system packages of the `verify` job. Its tag is the
@@ -10,10 +10,15 @@
 # that script (e.g. the devcontainer CLI); `kestic-agent.sh build` warns when
 # it is stale.
 #
+# Pluggable agent backend: AGENT_BACKEND selects a directory under agents/
+# (default `claude`; shipped variations: `claude`, `antigravity`). Each backend
+# provides its own installer, domain allowlist, config and runtime driver
+# (agents/README.md).
+#
 # Added on top:
-#   - egress firewall: nftables + dnsmasq (allowlisted domains only),
+#   - egress firewall: nftables + dnsmasq (shared + backend allowlisted domains),
 #   - gh, tmux, jq for the GitHub workflow,
-#   - Claude Code (native binary, checksum from the release manifest),
+#   - the selected coding agent binary (installed with checksum verification),
 #   - the scripts in this folder.
 #
 # Not in the image: the repository (cloned inside the container), the Rust
@@ -21,7 +26,7 @@
 # installs them into the home volume, so they always match the checked-out
 # branch), any token or login.
 
-ARG CI_IMAGE=ghcr.io/swissbite/kestic-ci:cb2162f5998cc773
+ARG CI_IMAGE=ghcr.io/swissbite/kestic-ci:7bb64b1d72c42a28
 FROM ${CI_IMAGE}
 
 ARG CI_IMAGE
@@ -37,22 +42,16 @@ RUN apt-get update \
         tmux \
     && rm -rf /var/lib/apt/lists/*
 
-# `stable`, `latest` or an exact version such as 2.1.323.
-ARG CLAUDE_CODE_VERSION=stable
-RUN set -eu; \
-    base=https://downloads.claude.ai/claude-code-releases; \
-    case "$(uname -m)" in x86_64) platform=linux-x64 ;; aarch64) platform=linux-arm64 ;; *) exit 1 ;; esac; \
-    version="$CLAUDE_CODE_VERSION"; \
-    case "$version" in stable|latest) version="$(curl -fsSL "$base/$version")" ;; esac; \
-    echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; \
-    checksum="$(curl -fsSL "$base/$version/manifest.json" | jq -r --arg p "$platform" '.platforms[$p].checksum')"; \
-    echo "$checksum" | grep -Eq '^[0-9a-f]{64}$'; \
-    curl -fsSL -o /usr/local/bin/claude "$base/$version/$platform/claude"; \
-    echo "$checksum  /usr/local/bin/claude" | sha256sum -c -; \
-    chmod 755 /usr/local/bin/claude
-
 # github-thread.sh needs jq and perl with JSON::PP; the build fails without them.
 RUN jq --version && perl -MJSON::PP -e 1
+
+# Owner of the container's main process (entrypoint.sh): a user of its own, so
+# the agent cannot end the container by signalling it.
+RUN useradd --system --no-create-home --home-dir / --shell /usr/sbin/nologin kestic-infra
+
+# Shared clone mount point; backend install.sh creates its own config directory.
+RUN mkdir -p /home/kesticci/kestic \
+    && chown -R kesticci:kesticci /home/kesticci
 
 COPY --chmod=755 entrypoint.sh init-firewall.sh github-thread.sh /usr/local/lib/kestic-agent/
 COPY --chmod=644 github-trust.jq /usr/local/lib/kestic-agent/
@@ -60,26 +59,33 @@ COPY --chmod=755 kestic-agent-inner.sh /usr/local/bin/kestic-agent
 COPY --chmod=755 gh-wrapper.sh /usr/local/bin/gh
 COPY --chmod=755 git-hooks/ /usr/local/lib/kestic-agent/git-hooks/
 COPY --chmod=644 allowed-domains.txt /usr/local/lib/kestic-agent/
-COPY --chmod=644 agent-settings.json /usr/local/lib/kestic-agent/agent-settings.json
 COPY --chmod=644 tmux.conf /etc/tmux.conf
 
-# Owner of the container's main process (entrypoint.sh): a user of its own, so
-# the agent cannot end the container by signalling it.
-RUN useradd --system --no-create-home --home-dir / --shell /usr/sbin/nologin kestic-infra
+# Declared after shared layers so switching backends or agent versions reuses
+# the cached apt and core script layers.
+ARG AGENT_BACKEND=claude
+ARG AGENT_VERSION=
+ARG CLAUDE_CODE_VERSION=stable
+ARG AGY_VERSION=latest
 
-# Mount points of the two volumes and the (empty) clone directory, which is
-# the Dev Container workspace; a new volume copies this ownership.
-RUN mkdir -p /home/kesticci/.claude /home/kesticci/kestic \
-    && chown -R kesticci:kesticci /home/kesticci
+COPY agents/${AGENT_BACKEND}/ /usr/local/lib/kestic-agent/agent/
+
+RUN set -eu; \
+    case "$AGENT_BACKEND" in '' | .* | *[!a-z0-9._-]*) echo "invalid AGENT_BACKEND: $AGENT_BACKEND" >&2; exit 1 ;; esac; \
+    test ! -e /usr/local/lib/kestic-agent/agent/Containerfile; \
+    chown -R root:root /usr/local/lib/kestic-agent/agent; \
+    chmod -R a+rX,go-w /usr/local/lib/kestic-agent/agent; \
+    chmod 755 /usr/local/lib/kestic-agent/agent/install.sh; \
+    if [ -f /usr/local/lib/kestic-agent/agent/hook.sh ]; then \
+        chmod 755 /usr/local/lib/kestic-agent/agent/hook.sh; \
+    fi; \
+    /usr/local/lib/kestic-agent/agent/install.sh
 
 # No CARGO_INCREMENTAL here: unlike CI, the agent keeps its target directory
 # between builds, so cargo's default (incremental for workspace crates in the
 # dev profile) makes each edit-and-rebuild loop several times faster.
 ENV KESTIC_CI_IMAGE=${CI_IMAGE} \
-    CLAUDE_CONFIG_DIR=/home/kesticci/.claude \
-    DISABLE_AUTOUPDATER=1 \
-    DISABLE_TELEMETRY=1 \
-    DISABLE_ERROR_REPORTING=1 \
+    KESTIC_AGENT_BACKEND=${AGENT_BACKEND} \
     PATH=/home/kesticci/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=en_US.UTF-8
 

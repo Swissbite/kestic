@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-if grep -Eiq '^co-authored-by:.*(claude|anthropic|copilot|openai|codex|gemini)|generated (with|by) .*(claude|copilot|codex|gemini)' "$1"; then
+if grep -Eiq '^co-authored-by:.*(claude|anthropic|copilot|openai|codex|gemini|antigravity)|generated (with|by) .*(claude|copilot|codex|gemini|antigravity)' "$1"; then
     echo "commit-msg: remove the AI attribution (Co-Authored-By / Generated with); agents commit without it" >&2
     exit 1
 fi

@@ -8,14 +8,17 @@
 // the devcontainer CLI. The repository is cloned inside the container
 // (postStartCommand) into a named volume, never bind-mounted from the host.
 // The CI image tag must match .github/ci-image/tag.sh; set KESTIC_CI_IMAGE_TAG
-// to override the default.
+// to override the default. To use another backend (e.g. antigravity), set
+// KESTIC_AGENT_BACKEND, KESTIC_AGENT_VOLUME_SUFFIX (gemini) and
+// KESTIC_AGENT_VOLUME_DIR (.gemini) in the host environment.
 {
   "name": "Kestic agent",
   "build": {
     "dockerfile": "Containerfile",
     "context": ".",
     "args": {
-      "CI_IMAGE": "ghcr.io/swissbite/kestic-ci:${localEnv:KESTIC_CI_IMAGE_TAG:cb2162f5998cc773}"
+      "CI_IMAGE": "ghcr.io/swissbite/kestic-ci:${localEnv:KESTIC_CI_IMAGE_TAG:7bb64b1d72c42a28}",
+      "AGENT_BACKEND": "${localEnv:KESTIC_AGENT_BACKEND:claude}"
     }
   },
   "overrideCommand": false,
@@ -38,7 +41,7 @@
   "workspaceMount": "type=volume,source=kestic-agent-home,target=/home/kesticci",
   "workspaceFolder": "/home/kesticci/kestic",
   "mounts": [
-    "type=volume,source=kestic-agent-claude,target=/home/kesticci/.claude"
+    "type=volume,source=kestic-agent-${localEnv:KESTIC_AGENT_VOLUME_SUFFIX:claude},target=/home/kesticci/${localEnv:KESTIC_AGENT_VOLUME_DIR:.claude}"
   ],
   "userEnvProbe": "none",
   "remoteUser": "kesticci",

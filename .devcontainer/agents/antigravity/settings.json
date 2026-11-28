@@ -1,0 +1,21 @@
+{
+  "altScreenMode": "never",
+  "toolPermission": "always-proceed",
+  "artifactReviewPolicy": "always-proceed",
+  "enableTerminalSandbox": false,
+  "notifications": false,
+  "showTips": false,
+  "showFeedbackSurvey": false,
+  "trustedWorkspaces": [
+    "/home/kesticci/kestic"
+  ],
+  "permissions": {
+    "deny": [
+      "command(git push --force)",
+      "command(git push -f)",
+      "command(git push origin main)",
+      "command(pkill)",
+      "command(killall)"
+    ]
+  }
+}

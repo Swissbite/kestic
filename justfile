@@ -35,6 +35,7 @@ _static-checks:
     .devcontainer/test-gh-wrapper.sh
     .devcontainer/test-kestic-agent-watch.sh
     .devcontainer/test-kestic-agent-token.sh
+    .devcontainer/test-kestic-agent-backends.sh
     .devcontainer/test-github-thread.sh
     .agents/skills/leitstand/test-watch.sh .devcontainer/github-trust.jq
     .github/scripts/test-release-version.sh

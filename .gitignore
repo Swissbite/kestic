@@ -5,6 +5,8 @@
 /.idea/
 /skills/
 /.test-tmp/
+/.claude/worktrees/
+/.gemini/worktrees/
 *.orig
 .qmlls.ini
 

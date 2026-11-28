@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Claude Code: API and subscription login
+anthropic.com
+claude.ai
+claude.com
