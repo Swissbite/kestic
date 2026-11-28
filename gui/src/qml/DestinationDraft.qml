@@ -360,8 +360,9 @@ QtObject {
         return JSON.stringify([connectionKey(), setupMode, repoPassword, backendSecretsJson()]);
     }
 
-    // The connection test is on its way to the daemon.
-    readonly property bool testing: testAnswer.waiting
+    // The connection test of the input the form holds is on its way; after an edit the form
+    // can be tested again at once (the older answer is not shown).
+    readonly property bool testing: testAnswer.waiting && testInput() === testedInput
 
     property DaemonAnswer testAnswer: DaemonAnswer {
         backend: draft.appBackend

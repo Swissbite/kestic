@@ -127,7 +127,10 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             draft->setProperty("location", probe + QStringLiteral("/a"));
             draft->setProperty("repoPassword", QStringLiteral("probe-password"));
             QMetaObject::invokeMethod(draft, "runConnectionTest");
+            SMOKE_CHECK("M6", 123, draft->property("testing").toBool(), "precondition: the connection test runs");
             draft->setProperty("location", probe + QStringLiteral("/b"));
+            SMOKE_CHECK("M6", 123, !draft->property("testing").toBool(),
+                "(a) after the location changed the form still shows the test of the old location");
             *dry_run = 0;
             QMetaObject::invokeMethod(backend, "startBackupDryRun", Q_RETURN_ARG(int, *dry_run), Q_ARG(QString, bid),
                 Q_ARG(QString, QString()));
