@@ -5,7 +5,7 @@
 //! locale from the language-independent DTO codes via the shared mapping in
 //! `kestic_i18n::messages`; the DTOs carry no daemon-language texts.
 
-use crate::state_cache::{i18np, tr};
+use crate::i18n::{i18np, tr};
 use kestic_daemon::dbus_api::{BackupAvailabilityDto, DaemonStateDto, blocking_message};
 use kestic_i18n::codes::PendingReasonCode;
 use kestic_i18n::messages::{maintenance_running_message, overall_headline as headline_message};
@@ -63,7 +63,8 @@ pub fn maintenance_status_line(
     if running {
         return tr(&maintenance_running_message());
     }
-    pending.map_or_default(|code| crate::state_cache::pending_reason_line(code, retry_at_unix, now))
+    pending
+        .map_or_default(|code| crate::status_texts::pending_reason_line(code, retry_at_unix, now))
 }
 
 /// Blocking-state text in the GUI locale from `BlockingStateDto.kind` and the

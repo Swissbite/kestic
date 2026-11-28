@@ -885,7 +885,7 @@ impl qobject::Texts {
         let args: Vec<String> = args.iter().map(ToString::to_string).collect();
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let text = if let Some(label) = kestic_i18n::messages::Label::parse(&code) {
-            crate::state_cache::tr(&label.message())
+            crate::i18n::tr(&label.message())
         } else if let Some(text) = crate::ui_texts::GuiText::parse(&code) {
             text.with_args(&args)
         } else {

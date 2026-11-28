@@ -99,7 +99,10 @@ fn size_at(text: &str) -> Option<&str> {
     let mut rest = &text[end..];
     if let Some(blank) = rest.chars().next().filter(|c| c.is_whitespace()) {
         let after = &rest[blank.len_utf8()..];
-        if ["B", "KiB", "MiB", "GiB", "TiB"].iter().any(|u| after.starts_with(u)) {
+        if ["B", "KiB", "MiB", "GiB", "TiB"]
+            .iter()
+            .any(|u| after.starts_with(u))
+        {
             end += blank.len_utf8();
             rest = after;
         }

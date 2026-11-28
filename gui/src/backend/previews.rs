@@ -7,8 +7,11 @@
 use super::daemon_call::{Lane, send_to_daemon, take_forgotten};
 use super::{dbus_error_text, qobject};
 use crate::daemon_events::wake_gui;
+use crate::dto_builders::json_or;
+use crate::i18n::{daemon_unavailable_text, tr_text};
 use crate::retention_texts::{RetentionPreviewView, retention_preview_view};
-use crate::state_cache::{daemon_unavailable_text, format_bytes, json_or, shared_state, tr_text};
+use crate::state_cache::shared_state;
+use crate::summary_texts::format_bytes;
 use cxx_qt_lib::QString;
 use kestic_core::model::{ExcludeRules, RetentionPolicy, normalize_folder_rule};
 use kestic_core::sync::LockUnpoisoned;

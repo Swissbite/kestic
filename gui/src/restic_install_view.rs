@@ -4,7 +4,7 @@
 //! What the restic section of the settings shows for an installation of the restic managed by
 //! Kestic (`ResticInstallStatusDto`).
 
-use crate::state_cache::{i18n, tr};
+use crate::i18n::{i18n, tr};
 use kestic_daemon::dbus_api::ResticInstallStatusDto;
 use kestic_i18n::codes::{ResticInstallPhase, ServiceErrorCode};
 

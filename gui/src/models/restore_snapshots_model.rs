@@ -11,7 +11,9 @@ use super::restore_backups_model::snapshot_count_text;
 use super::restore_groups_model::SnapshotGroup;
 use super::rows::{id_at, row_map, row_of};
 use crate::backend::restore::restore_cache;
-use crate::state_cache::{format_bytes, i18n, shared_state};
+use crate::i18n::i18n;
+use crate::state_cache::shared_state;
+use crate::summary_texts::format_bytes;
 use crate::time_texts::{
     cached_daemon_now, format_datetime_display, format_day_group, format_time_short, to_local,
 };

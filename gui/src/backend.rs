@@ -600,6 +600,73 @@ pub mod qobject {
         #[cxx_name = "formatMaintenanceSummaryJson"]
         fn format_maintenance_summary_json(self: &KesticApp, maintenance_json: &QString)
         -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "retentionFormJson"]
+        fn retention_form_json(self: &KesticApp, policy_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "retentionFormState"]
+        fn retention_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "scheduleFormJson"]
+        fn schedule_form_json(
+            self: &KesticApp,
+            schedule_json: &QString,
+            overdue_threshold: i32,
+            form_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "scheduleFormState"]
+        fn schedule_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+            saved_overdue_threshold: i32,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeFormJson"]
+        fn exclude_form_json(self: &KesticApp, excludes_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeFormState"]
+        fn exclude_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeLintFix"]
+        fn exclude_lint_fix(
+            self: &KesticApp,
+            lines_text: &QString,
+            parent_rule: &QString,
+            suggested_fix: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenanceFormJson"]
+        fn maintenance_form_json(self: &KesticApp, maintenance_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenanceFormState"]
+        fn maintenance_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenancePreviewText"]
+        fn maintenance_preview_text(self: &KesticApp, summary_json: &QString) -> QString;
     }
 
     // Background threads hand the daemon's news to the object on the Qt thread.
@@ -611,13 +678,15 @@ mod daemon_call;
 pub use daemon_call::finish_pending_calls;
 pub(crate) use daemon_call::{Lane, call_daemon_on, send_to_daemon};
 mod destinations;
+mod forms;
 mod previews;
 mod restic_install;
 pub(crate) mod restore;
 mod schedules;
 mod state;
 
-use crate::state_cache::{lookup_backup_summary, not_found_text, shared_state};
+use crate::i18n::not_found_text;
+use crate::state_cache::{lookup_backup_summary, shared_state};
 use cxx_qt_lib::QString;
 use kestic_core::model::Backup;
 use kestic_core::sync::LockUnpoisoned;
@@ -746,7 +815,7 @@ pub struct KesticAppRust {
     restore_snapshots_error: QString,
 }
 
-pub(super) use crate::state_cache::dbus_error_text;
+pub(super) use crate::i18n::dbus_error_text;
 
 /// What a finished daemon call from QML does besides refreshing the state.
 #[derive(Clone, Copy, PartialEq)]

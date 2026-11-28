@@ -6,16 +6,19 @@
 
 use super::daemon_call::Lane;
 use super::qobject;
+use crate::daemon_client::initialize_and_sync;
 use crate::daemon_events::{attach_gui_thread, request_refresh, start_daemon_in_background};
+use crate::i18n::{daemon_unavailable_text, i18n};
 use crate::overall_text::{
     back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::restic_section_view::restic_section_view;
-use crate::state_cache::{
-    daemon_unavailable_text, format_overall_visual, format_pause_line, i18n, initialize_and_sync,
-    localized_condition_override_message, localized_manual_block_message,
-    localized_unmet_conditions, lookup_backup_summary, shared_state,
+use crate::state_cache::{lookup_backup_summary, shared_state};
+use crate::status_texts::{
+    format_overall_visual, localized_condition_override_message, localized_manual_block_message,
+    localized_unmet_conditions,
 };
+use crate::summary_texts::format_pause_line;
 use crate::time_texts::daemon_now;
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;

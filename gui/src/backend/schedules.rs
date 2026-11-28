@@ -6,12 +6,15 @@
 
 use super::daemon_call::Lane;
 use super::{Finish, qobject};
+use crate::dto_builders::{
+    build_provider, clone_updated_backup_conditions, clone_updated_backup_schedule, json_or,
+};
+use crate::i18n::{daemon_unavailable_text, i18n};
 use crate::qt_bridge;
 use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary, run_status};
-use crate::state_cache::{
-    build_provider, cached_destination_kind, clone_updated_backup_conditions,
-    clone_updated_backup_schedule, daemon_unavailable_text, format_duration_ms,
-    format_maintenance_summary, i18n, json_or, preview_next_schedule_slots, shared_state,
+use crate::state_cache::{cached_destination_kind, shared_state};
+use crate::summary_texts::{
+    format_duration_ms, format_maintenance_summary, preview_next_schedule_slots,
 };
 use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
@@ -362,7 +365,7 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_selected_run_result_summary(QString::from(&result_summary));
         let error_summary = detail.error_kind.map_or_default(|kind| {
-            crate::state_cache::tr(&kind.message(
+            crate::i18n::tr(&kind.message(
                 detail.error_exit_code,
                 detail.run.status == kestic_core::model::RunStatus::Warning,
             ))
@@ -420,7 +423,7 @@ impl qobject::KesticApp {
 
     pub fn recovery_action_label(&self, action_code: &QString) -> QString {
         let label = match kestic_core::restic::RecoveryAction::parse(&action_code.to_string()) {
-            Some(action) => crate::state_cache::tr(&action.label_message()),
+            Some(action) => crate::i18n::tr(&action.label_message()),
             None => GuiText::Retry.text(),
         };
         QString::from(&label)

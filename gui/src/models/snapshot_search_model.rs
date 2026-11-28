@@ -9,7 +9,8 @@ use super::qobject;
 use super::snapshot_query::{
     QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
-use crate::state_cache::{format_bytes, i18n, i18np};
+use crate::i18n::{i18n, i18np};
+use crate::summary_texts::format_bytes;
 use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;

@@ -22,7 +22,11 @@ fn every(interval_days: u32, start_date: &str) -> Schedule {
 fn ac_m6_34_2_schedule_form_loads_like_former_qml() {
     let initial = ScheduleForm::default();
     assert_eq!(initial.kind, ScheduleFormKind::Daily, "(c) initial kind");
-    assert_eq!(initial.weekdays, vec![Weekday::Monday], "(c) initial weekday");
+    assert_eq!(
+        initial.weekdays,
+        vec![Weekday::Monday],
+        "(c) initial weekday"
+    );
     assert_eq!((initial.hour, initial.minute), (12, 0), "(c) initial time");
 
     let weekly = ScheduleForm::default().load(
@@ -35,7 +39,11 @@ fn ac_m6_34_2_schedule_form_loads_like_former_qml() {
         TODAY,
         2,
     );
-    assert_eq!(weekly.kind, ScheduleFormKind::SpecificWeekdays, "(c) weekly");
+    assert_eq!(
+        weekly.kind,
+        ScheduleFormKind::SpecificWeekdays,
+        "(c) weekly"
+    );
     assert_eq!(weekly.weekdays, vec![Weekday::Wednesday], "(c) its weekday");
     assert_eq!((weekly.hour, weekly.minute), (7, 5), "(c) its time");
     let weekly_zero = ScheduleForm::default().load(
@@ -63,7 +71,11 @@ fn ac_m6_34_2_schedule_form_loads_like_former_qml() {
     assert_eq!(no_days.weekdays, vec![Weekday::Monday], "(c) no weekday");
 
     let every_n = ScheduleForm::default().load(&every(10, ""), 0, TODAY, 2);
-    assert_eq!(every_n.kind, ScheduleFormKind::EveryNDays, "(c) every n days");
+    assert_eq!(
+        every_n.kind,
+        ScheduleFormKind::EveryNDays,
+        "(c) every n days"
+    );
     assert_eq!(every_n.interval_days, 10, "(c) interval");
     assert_eq!(every_n.start_date, TODAY, "(c) empty start date → today");
 
@@ -71,9 +83,16 @@ fn ac_m6_34_2_schedule_form_loads_like_former_qml() {
     edited.hour = 22;
     let manual = edited.load(&Schedule::ManualOnly, 0, TODAY, 2);
     assert_eq!(manual.kind, ScheduleFormKind::ManualOnly, "(c) manual");
-    assert_eq!((manual.hour, manual.minute), (12, 0), "(c) manual resets the time");
+    assert_eq!(
+        (manual.hour, manual.minute),
+        (12, 0),
+        "(c) manual resets the time"
+    );
     assert_eq!(manual.interval_days, 10, "(c) hidden interval kept");
-    assert_eq!(manual.start_date, "2026-01-02", "(c) hidden start date kept");
+    assert_eq!(
+        manual.start_date, "2026-01-02",
+        "(c) hidden start date kept"
+    );
 
     let own = ScheduleForm::default().load(&Schedule::ManualOnly, 5, TODAY, 2);
     assert!(!own.use_global_overdue, "(c) own threshold");
@@ -140,7 +159,10 @@ fn ac_m6_34_2_schedule_form_state_detects_changes() {
         minute: 0,
     };
     let form = ScheduleForm::default().load(&weekly, 0, TODAY, 2);
-    assert!(!form.state(&weekly, 0, TODAY).dirty, "(c) weekly = one weekday");
+    assert!(
+        !form.state(&weekly, 0, TODAY).dirty,
+        "(c) weekly = one weekday"
+    );
     assert!(form.state(&weekly, 3, TODAY).dirty, "(c) threshold changed");
 
     let days = Schedule::SpecificWeekdays {
@@ -156,7 +178,10 @@ fn ac_m6_34_2_schedule_form_state_detects_changes() {
 
     let saved = every(4, "");
     let form = ScheduleForm::default().load(&saved, 0, TODAY, 2);
-    assert!(!form.state(&saved, 0, TODAY).dirty, "(c) empty start = today");
+    assert!(
+        !form.state(&saved, 0, TODAY).dirty,
+        "(c) empty start = today"
+    );
     let mut form = form;
     form.interval_days = 5;
     let state = form.state(&saved, 0, TODAY);
@@ -176,8 +201,10 @@ fn ac_m6_34_2_schedule_form_state_detects_changes() {
 /// AC-M6-34-2 (a): the date picker opens on the start date, or on today when it is no date.
 #[test]
 fn ac_m6_34_2_schedule_form_picker_date() {
-    let mut form = ScheduleForm::default();
-    form.start_date = "2027-02-03".to_string();
+    let mut form = ScheduleForm {
+        start_date: "2027-02-03".to_string(),
+        ..ScheduleForm::default()
+    };
     assert_eq!(
         form.state(&Schedule::ManualOnly, 0, TODAY).picker_date,
         PickerDate {

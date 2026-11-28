@@ -4,7 +4,7 @@
 //! Unit tests of `restic_install_view`.
 
 use super::*;
-use crate::state_cache::tr;
+use crate::i18n::tr;
 use kestic_i18n::codes::{
     ResticInstallCode, ResticInstallOutcome, ResticInstallPhase, ServiceErrorCode,
 };

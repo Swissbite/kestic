@@ -30,12 +30,24 @@ fn within_on(num: u32, unit: DurationUnit) -> WithinRule {
 #[test]
 fn ac_m6_34_1_retention_form_reads_policies_like_former_qml() {
     let empty = RetentionForm::from_policy(&policy("{}"));
-    assert_eq!(empty, RetentionForm::default(), "(c) empty policy: every rule off");
+    assert_eq!(
+        empty,
+        RetentionForm::default(),
+        "(c) empty policy: every rule off"
+    );
     assert_eq!(empty.keep_last, count_off(10), "(c) keep_last offers 10");
-    assert_eq!(empty.keep_hourly, count_off(24), "(c) keep_hourly offers 24");
+    assert_eq!(
+        empty.keep_hourly,
+        count_off(24),
+        "(c) keep_hourly offers 24"
+    );
     assert_eq!(empty.keep_daily, count_off(7), "(c) keep_daily offers 7");
     assert_eq!(empty.keep_weekly, count_off(4), "(c) keep_weekly offers 4");
-    assert_eq!(empty.keep_monthly, count_off(12), "(c) keep_monthly offers 12");
+    assert_eq!(
+        empty.keep_monthly,
+        count_off(12),
+        "(c) keep_monthly offers 12"
+    );
     assert_eq!(empty.keep_yearly, count_off(5), "(c) keep_yearly offers 5");
     assert_eq!(empty.keep_within, within_off(30, DurationUnit::Days));
     assert_eq!(
@@ -51,10 +63,7 @@ fn ac_m6_34_1_retention_form_reads_policies_like_former_qml() {
         empty.keep_within_monthly,
         within_off(1, DurationUnit::Years)
     );
-    assert_eq!(
-        empty.keep_within_yearly,
-        within_off(5, DurationUnit::Years)
-    );
+    assert_eq!(empty.keep_within_yearly, within_off(5, DurationUnit::Years));
 
     let long = RetentionForm::from_policy(&RetentionPolicy::long());
     assert_eq!(long.keep_daily, on(7), "(c) long: daily 7");
@@ -72,15 +81,27 @@ fn ac_m6_34_1_retention_form_reads_policies_like_former_qml() {
     assert_eq!(zero.keep_last, count_off(10), "(c) a count of 0 is off");
 
     let table: [(&str, WithinRule); 7] = [
-        (r#"{"keep_within":"30d"}"#, within_on(30, DurationUnit::Days)),
+        (
+            r#"{"keep_within":"30d"}"#,
+            within_on(30, DurationUnit::Days),
+        ),
         (
             r#"{"keep_within":" 48h "}"#,
             within_on(48, DurationUnit::Hours),
         ),
-        (r#"{"keep_within":"0m"}"#, within_on(1, DurationUnit::Months)),
+        (
+            r#"{"keep_within":"0m"}"#,
+            within_on(1, DurationUnit::Months),
+        ),
         (r#"{"keep_within":"2y"}"#, within_on(2, DurationUnit::Years)),
-        (r#"{"keep_within":"1y6m"}"#, within_off(30, DurationUnit::Days)),
-        (r#"{"keep_within":"30x"}"#, within_off(30, DurationUnit::Days)),
+        (
+            r#"{"keep_within":"1y6m"}"#,
+            within_off(30, DurationUnit::Days),
+        ),
+        (
+            r#"{"keep_within":"30x"}"#,
+            within_off(30, DurationUnit::Days),
+        ),
         (r#"{"keep_within":"d"}"#, within_off(30, DurationUnit::Days)),
     ];
     for (json, expected) in table {
@@ -114,7 +135,11 @@ fn ac_m6_34_1_retention_form_writes_policies_like_former_qml() {
     let written = form.to_policy();
     assert_eq!(written.keep_last, Some(KeepCount::Count(1)), "(c) 0 → 1");
     assert_eq!(written.keep_yearly, Some(KeepCount::Unlimited), "(c) all");
-    assert_eq!(written.keep_within_daily.as_deref(), Some("1d"), "(c) 0d → 1d");
+    assert_eq!(
+        written.keep_within_daily.as_deref(),
+        Some("1d"),
+        "(c) 0d → 1d"
+    );
     assert_eq!(written.keep_within_weekly, None, "(c) a rule that is off");
     assert_eq!(
         serde_json::to_string(&written).expect("json"),
@@ -188,8 +213,8 @@ fn ac_m6_34_1_retention_form_state_detects_preset_and_changes() {
 /// AC-M6-34-1 (a): the form's JSON is what the editor page reads and sends.
 #[test]
 fn ac_m6_34_1_retention_form_json_shape() {
-    let json = serde_json::to_value(RetentionForm::from_policy(&RetentionPolicy::long()))
-        .expect("json");
+    let json =
+        serde_json::to_value(RetentionForm::from_policy(&RetentionPolicy::long())).expect("json");
     assert_eq!(
         json["keep_yearly"],
         serde_json::json!({"on": true, "all": true, "num": 5}),

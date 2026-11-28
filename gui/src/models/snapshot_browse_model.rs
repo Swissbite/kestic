@@ -10,7 +10,8 @@ use super::qobject;
 use super::snapshot_query::{
     Fetched, QueryList, QueryListModel, QueryListView, count_text, to_i32, too_large_text,
 };
-use crate::state_cache::{format_bytes, i18np};
+use crate::i18n::i18np;
+use crate::summary_texts::format_bytes;
 use crate::time_texts::{iso_date, to_local};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QModelIndex, QString, QStringList};

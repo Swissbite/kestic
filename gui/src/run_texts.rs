@@ -3,7 +3,9 @@
 
 //! Texts of the run detail page and the history rows that differ by run kind.
 
-use crate::state_cache::{format_bytes, format_run_kind_name, format_run_status, i18n, i18np, tr};
+use crate::i18n::{i18n, i18np, tr};
+use crate::status_texts::{format_run_kind_name, format_run_status};
+use crate::summary_texts::format_bytes;
 use crate::time_texts::format_datetime_display;
 use crate::ui_texts::GuiText;
 use kestic_core::model::{BackupId, MaintenanceOutcome, MaintenanceStats, Run, RunKind, RunStatus};

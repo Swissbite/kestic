@@ -10,7 +10,8 @@ use crate::destination_input::{
     build_destination, connection_test_input, connection_test_outcome, generic_credentials_error,
     generic_env_error, generic_url_error,
 };
-use crate::state_cache::{daemon_unavailable_text, i18n, i18np, shared_state, tr, tr_text};
+use crate::i18n::{daemon_unavailable_text, i18n, i18np, tr, tr_text};
+use crate::state_cache::shared_state;
 use cxx_qt_lib::QString;
 use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};

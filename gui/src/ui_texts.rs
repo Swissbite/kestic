@@ -165,6 +165,6 @@ impl GuiText {
 
     /// The text in the GUI language with `%1`, `%2`, … filled from `args`.
     pub fn with_args(self, args: &[&str]) -> String {
-        crate::state_cache::tr(&Message::with_args(self.msgid(), args))
+        crate::i18n::tr(&Message::with_args(self.msgid(), args))
     }
 }

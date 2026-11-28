@@ -16,7 +16,11 @@ fn ac_m6_34_2_exclude_form_loads_like_former_qml() {
             "exclude_trash":true,"exclude_larger_than":"2G","ignore_case":true,
             "exclude_if_present":[".nobackup","CACHEDIR.TAG"]}"#,
     ));
-    assert_eq!(form.folders, vec!["$HOME/.cache".to_string()], "(c) folders");
+    assert_eq!(
+        form.folders,
+        vec!["$HOME/.cache".to_string()],
+        "(c) folders"
+    );
     assert_eq!(form.lines_text, "*.tmp\n!keep", "(c) lines");
     assert!(form.exclude_caches, "(c) caches");
     assert!(form.exclude_trash, "(c) trash");
@@ -97,7 +101,11 @@ fn ac_m6_34_2_exclude_form_writes_like_former_qml() {
 
     let empty = ExcludeForm::from_rules(&ExcludeRules::default());
     assert_eq!(empty.to_rules().lines, Vec::<String>::new(), "(c) no lines");
-    assert_eq!(empty.to_rules().exclude_larger_than, None, "(c) no size limit");
+    assert_eq!(
+        empty.to_rules().exclude_larger_than,
+        None,
+        "(c) no size limit"
+    );
 }
 
 /// AC-M6-34-2 (a) and (c): unchanged rules are not dirty, a blank saved size limit equals none,
