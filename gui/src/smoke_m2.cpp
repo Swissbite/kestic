@@ -428,7 +428,11 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     const QString rid = rm->data(rm->index(0, 0), 0).toString();
     QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 3));
     QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
-    wait_ms(200);
+    // The run's detail arrives from the daemon after the page opened.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("runDetailErrorMessage"));
+        return shown && shown->isVisible();
+    }, 10000);
 
     // A run that ended with a warning (exit 3) shows its cause as a warning, not as an error
     // (Kirigami.MessageType.Warning is 2).
@@ -439,8 +443,9 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     QQuickItem* add_btn = find_visual_item(window, QStringLiteral("addUnreadableExcludeButton"));
     SMOKE_CHECK_VISIBLE("M2", 271, add_btn, "addUnreadableExcludeButton missing or not visible on Exit 3 RunDetailPage");
     SMOKE_CHECK("M2", 272, click_ui_item(window, add_btn, "Add to Exclude Rules"), "failed to click addUnreadableExcludeButton");
-    wait_ms(150);
     QObject* dlg = child_object(window, "addExcludePromptDialog");
+    // The dialog opens once the daemon has said how the rule reads.
+    wait_until([&] { return dlg && dlg->property("visible").toBool(); }, 10000);
     QObject* confirm_act = child_object(window, "confirmAddExcludeAction");
     SMOKE_CHECK3("M2", 273, dlg, dlg->property("visible").toBool(), confirm_act, "addExcludePromptDialog did not open");
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
