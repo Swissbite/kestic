@@ -139,6 +139,7 @@ EditorPage {
         initialData = rootWindow.findBackupData(backupId);
         revision = appBackend.backupRevision(backupId);
         if (initialData) {
+            savedPolicyJson = initialData.retentionJson;
             loadFromPolicyJson(savedPolicyJson);
         }
     }

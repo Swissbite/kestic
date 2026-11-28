@@ -160,6 +160,38 @@ fn ac_m6_34_2_editor_pages_have_no_domain_logic() {
     }
 }
 
+/// AC-M6-34-2 (c): a page that reloads from the daemon (after a refused save, AC-M6-36-10)
+/// takes the saved value it compares against from the reloaded data, also after an earlier save
+/// of its own replaced the binding of that value.
+#[test]
+fn ac_m6_34_2_editor_pages_reload_their_saved_value() {
+    for (path, assignment) in [
+        (
+            "gui/src/qml/BackupExcludesEditPage.qml",
+            "savedExcludesJson = initialData.excludesJson;",
+        ),
+        (
+            "gui/src/qml/BackupRetentionPage.qml",
+            "savedPolicyJson = initialData.retentionJson;",
+        ),
+        (
+            "gui/src/qml/BackupScheduleEditPage.qml",
+            "savedScheduleJson = initialData.scheduleJson;",
+        ),
+    ] {
+        let page = read(path);
+        let start = page
+            .find("function reloadFromDaemon()")
+            .unwrap_or_else(|| panic!("{path} has reloadFromDaemon"));
+        let body = &page[start..];
+        let body = &body[..body.find("\n    }\n").expect("end of reloadFromDaemon")];
+        assert!(
+            body.contains(assignment),
+            "(c) {path}: reloadFromDaemon sets `{assignment}`"
+        );
+    }
+}
+
 /// AC-M6-34-3 (a): the GUI takes the interval range and the default of «every n days» from
 /// `core` instead of spelling them itself.
 #[test]

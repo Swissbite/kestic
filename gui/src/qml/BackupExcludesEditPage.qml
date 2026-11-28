@@ -87,6 +87,7 @@ EditorPage {
         initialData = rootWindow.findBackupData(backupId);
         revision = appBackend.backupRevision(backupId);
         if (initialData) {
+            savedExcludesJson = initialData.excludesJson;
             loadFromExcludesJson(savedExcludesJson);
         }
     }
