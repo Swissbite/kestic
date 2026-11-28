@@ -3,6 +3,7 @@
 
 #include "src/smoke_m3_util.h"
 
+#include <QUuid>
 #include <qsignalspy.h>
 
 namespace kestic::smoke {
@@ -898,7 +899,7 @@ int scenario_revision_conflict(const Ctx& c) {
     const QString typed_name = draft->property("name").toString() + QStringLiteral(" typed");
     draft->setProperty("name", typed_name);
     // A typed password makes the save check the connection; the page treats it as tested.
-    draft->setProperty("repoPassword", QStringLiteral("typed-password"));
+    draft->setProperty("repoPassword", QUuid::createUuid().toString(QUuid::WithoutBraces));
     draft->setProperty("connectionVerified", true);
     wait_ms(100);
     M3_CHECK(6230, dest_page->property("canSave").toBool(), "precondition: the destination form can save");

@@ -19,6 +19,7 @@ use kestic_core::model::{
 use kestic_core::secrets::SecretStore;
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_i18n::codes::DestinationUpdateOutcome;
+use kestic_test_support::password::strong_password;
 use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::Path;
@@ -514,11 +515,12 @@ fn ac_m6_36_9_g_init_with_a_stale_revision_creates_nothing() {
             // The repository there was deleted: `init` would create it anew.
             fs::remove_dir_all(&repo_dir).expect("delete repository");
             fs::create_dir_all(&repo_dir).expect("empty folder");
+            let new_password = strong_password();
             let err = client
                 .update_destination(
                     &dest,
                     "init",
-                    "new-password",
+                    &new_password,
                     &BackendSecrets::default(),
                     true,
                     &stale,
@@ -601,13 +603,14 @@ fn ac_m6_36_7_e_9_d_credentials_of_a_rest_destination() {
             rig.wrapper.hold("cat");
             let bus = rig.variant.bus_name("S36R7E");
             let attempt = saved.clone();
+            let entered = strong_password();
             let saving = thread::spawn(move || {
                 let other = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("client");
                 other.update_destination(
                     &attempt,
                     "connect",
                     "",
-                    &BackendSecrets::rest("a-new-password"),
+                    &BackendSecrets::rest(&entered),
                     true,
                     &before,
                 )
@@ -654,12 +657,14 @@ fn ac_m6_36_9_d_init_keeps_the_password_of_its_new_repository() {
             rig.wrapper.hold("init");
             let bus = rig.variant.bus_name("S36R9DI");
             let attempt = renamed(&dest, |d| d.name = "Fresh renamed".to_string());
+            let new_password = strong_password();
+            let sent_password = new_password.clone();
             let saving = thread::spawn(move || {
                 let other = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("client");
                 other.update_destination(
                     &attempt,
                     "init",
-                    "the-new-password",
+                    &sent_password,
                     &BackendSecrets::default(),
                     true,
                     &read,
@@ -694,7 +699,7 @@ fn ac_m6_36_9_d_init_keeps_the_password_of_its_new_repository() {
                 .map(|s| s.as_str().expect("utf-8").to_string());
             assert_eq!(
                 stored.as_deref(),
-                Some("the-new-password"),
+                Some(new_password.as_str()),
                 "AC-M6-36-9 (d): the new repository keeps its password"
             );
             let current = saved_destination(&rig, &dest);
