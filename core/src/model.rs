@@ -39,6 +39,9 @@ pub enum ModelError {
     /// The repository URL or a variable of a generic destination is refused.
     #[error("invalid destination configuration: {0}")]
     Generic(#[from] crate::generic::GenericInputError),
+    /// A REST address with a user name or password in it.
+    #[error("{}", kestic_i18n::messages::REST_ADDRESS_WITH_LOGIN)]
+    LoginInRestAddress,
 }
 
 fn is_valid_base32_id(raw: &str) -> bool {
@@ -379,6 +382,19 @@ pub fn normalize_rest_url_to_ascii(raw: &str) -> Result<String, ModelError> {
         formatted.pop();
     }
     Ok(formatted)
+}
+
+/// Refuses a REST address with a user name or password in it: both would stand in `config.toml`
+/// and in restic's arguments. An address that does not parse passes here;
+/// [`Destination::validate`] refuses it.
+pub fn refuse_rest_login(url: &str) -> Result<(), ModelError> {
+    let cleaned = strip_invisible_url_chars(url);
+    match url::Url::parse(cleaned.trim()) {
+        Ok(parsed) if !parsed.username().is_empty() || parsed.password().is_some() => {
+            Err(ModelError::LoginInRestAddress)
+        }
+        _ => Ok(()),
+    }
 }
 
 fn normalize_rest_url(raw: &str) -> String {
@@ -744,6 +760,17 @@ impl Destination {
             ));
         }
         self.maintenance.validate()?;
+        Ok(())
+    }
+
+    /// [`Self::validate`] plus the rules for a destination that is entered, added or changed: a
+    /// REST address without a user name or password. Loading a config checks only
+    /// [`Self::validate`], so destinations saved before these rules keep loading.
+    pub fn validate_input(&self) -> Result<(), ModelError> {
+        self.validate()?;
+        if let DestinationKind::Rest { url, .. } = &self.kind {
+            refuse_rest_login(url)?;
+        }
         Ok(())
     }
 }

@@ -343,7 +343,7 @@ pub(crate) fn update_destination_unlocked(
         .map_err(KesticServiceErr::InvalidInput)?
         .credentials();
     updated
-        .validate()
+        .validate_input()
         .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
     let setup_mode = parse_setup_mode(mode)?;
 

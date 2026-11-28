@@ -3,6 +3,7 @@
 
 #include "src/smoke_m6.h"
 #include "src/smoke_helper.h"
+#include "src/smoke_m3_util.h"
 #include <QAbstractItemModel>
 #include <QJSValue>
 #include <QJsonArray>
@@ -479,6 +480,106 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
         }
     });
     poll->start(50);
+}
+
+namespace {
+
+// Scrolls the page `page_name` so that `item` is in view (the narrow window does not show all of
+// it).
+void show_on_page(QQuickWindow* w, const char* page_name, QQuickItem* item) {
+    QQuickItem* page = m3::item_named(w, page_name);
+    auto* flick = page ? qvariant_cast<QQuickItem*>(page->property("flickable")) : nullptr;
+    auto* content = flick ? qvariant_cast<QQuickItem*>(flick->property("contentItem")) : nullptr;
+    if (!content) {
+        return;
+    }
+    const double top = item->mapToItem(content, QPointF(0, 0)).y();
+    const double max_y = std::max(0.0, flick->property("contentHeight").toDouble() - flick->height());
+    flick->setProperty("contentY", std::clamp(top - 20.0, 0.0, max_y));
+    wait_ms(300);
+}
+
+// The other screenshot of a scene: `out_path` with `from` replaced by `to`.
+QString other_shot(const QString& out_path, const char* from, const char* to) {
+    QString shot = out_path;
+    shot.replace(QLatin1String(from), QLatin1String(to));
+    return shot;
+}
+
+// AC-M6-18-2 in the form `prefix` (`wizDest` or `destEdit`): the address `login_url` shows
+// `message` below the field, and «Test Connection» and `locked` (Next or Save) are disabled; the
+// same address without the login (`plain_url`) enables «Test Connection» first.
+int check_rest_login_form(QQuickWindow* w, const char* prefix, const char* page, QObject* locked,
+    const QString& plain_url, const QString& login_url, const QString& message, int code) {
+    using namespace m3;
+    const QByteArray field_name = QByteArray(prefix) + "LocationField";
+    const QByteArray error_name = QByteArray(prefix) + "LocationError";
+    const QByteArray test_name = QByteArray(prefix) + "TestButton";
+    QQuickItem* field = item_named(w, field_name.constData());
+    QQuickItem* test = item_named(w, test_name.constData());
+    M3_CHECK2(code, field != nullptr, test != nullptr, "address field or «Test Connection» missing");
+    field->setProperty("text", plain_url);
+    M3_CHECK(code + 1, wait_until([&] { return test->isEnabled(); }, 2000), "«Test Connection» not enabled without a login");
+    M3_CHECK(code + 2, count_visible(w, error_name.constData()) == 0, "address error shown without a login");
+    field->setProperty("text", login_url);
+    QQuickItem* error = item_named(w, error_name.constData());
+    M3_CHECK(code + 3, wait_until([&] { return error && error->isVisible(); }, 2000), "(a) no message below the address");
+    M3_CHECK_EQ(code + 4, error->property("text").toString(), message, "(a) the message of the daemon");
+    M3_CHECK(code + 5, !test->isEnabled(), "(b) «Test Connection» enabled");
+    M3_CHECK(code + 6, locked != nullptr && !locked->property("enabled").toBool(), "(b) «Next» or «Save» enabled");
+    show_on_page(w, page, error);
+    return 0;
+}
+
+int rest_login_checks(QQuickWindow* w, const QString& lang, const QString& out_path) {
+    using namespace m3;
+    const QString login_url = qEnvironmentVariable("KESTIC_SMOKE_REST_LOGIN_URL");
+    const QString plain_url = qEnvironmentVariable("KESTIC_SMOKE_REST_URL");
+    const QString dest_id = qEnvironmentVariable("KESTIC_SMOKE_DEST_ID");
+    M3_CHECK(1800, !login_url.isEmpty() && !plain_url.isEmpty() && !dest_id.isEmpty(), "KESTIC_SMOKE_* not set");
+    const QString message = loc(lang,
+        "The address must not contain a user name or password. Enter them in the ‘Username’ and ‘Server password’ fields.",
+        "Benutzername und Passwort gehören nicht in die Adresse, sondern in die Felder «Benutzername» und «Server-Passwort».");
+
+    QMetaObject::invokeMethod(w, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
+    QQuickItem* card = nullptr;
+    M3_CHECK(1801, wait_until([&] { return (card = item_named(w, "wizDestTypeCard_rest")) != nullptr; }, 3000), "REST card missing");
+    wait_ms(250);
+    finish_incubation(w);
+    show_on_page(w, "addDestinationWizard", card);
+    M3_CHECK(1802, click_ui_item(w, card, "REST card"), "click on the REST card failed");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(1803, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing REST");
+    M3_CHECK(1804, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(1805, wait_until([&] { return count_visible(w, "wizDestLocationField") == 1; }, 2000), "REST form did not open");
+    m3::item_named(w, "wizDestNameField")->setProperty("text", QStringLiteral("NAS"));
+    if (const int rc = check_rest_login_form(w, "wizDest", "addDestinationWizard", next, plain_url, login_url, message, 1810)) {
+        return rc;
+    }
+    M3_CHECK(1820, save_screenshot(w, out_path), "screenshot failed");
+    QMetaObject::invokeMethod(w, "closeWizardLayer");
+    wait_ms(250);
+
+    QMetaObject::invokeMethod(w, "openDestinationEditPage", Q_ARG(QVariant, dest_id));
+    M3_CHECK(1821, wait_until([&] { return count_visible(w, "destEditLocationField") == 1; }, 3000), "edit page did not open");
+    wait_ms(150);
+    QObject* save = object_named(w, "saveDestinationAction");
+    if (const int rc = check_rest_login_form(w, "destEdit", "destinationEditPage", save, plain_url, login_url, message, 1830)) {
+        return rc;
+    }
+    M3_CHECK(1840, save_screenshot(w, other_shot(out_path, "-wizard-", "-edit-")), "screenshot failed");
+    return 0;
+}
+
+} // namespace
+
+void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path, const QString& lang) {
+    if (const int rc = rest_login_checks(window, lang, out_path)) {
+        smoke_fail("M6", rc, QStringLiteral("AC-M6-18-2 failed with code %1, see stderr").arg(rc));
+        return;
+    }
+    smoke_finish("M6", warnings.get());
 }
 
 } // namespace kestic::smoke

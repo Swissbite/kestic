@@ -93,4 +93,8 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
 void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path);
 
+// AC-M6-18-2: a login in the address of the REST form, in «Add Destination» and on the edit page.
+void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path, const QString& lang);
+
 } // namespace kestic::smoke
