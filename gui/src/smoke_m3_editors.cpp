@@ -330,6 +330,8 @@ int scenario_conditions_defaults(const Ctx& c) {
     M3_CHECK(4105, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3602, page != nullptr, "backupConditionsEditPage did not open");
+    // The known networks arrive from the daemon after the editor opened.
+    wait_until([&] { return item_named(w, "knownNetworkCheck_HomeWifi") != nullptr; }, 10000);
     QQuickItem* ac = item_named(w, "requireAcCheck");
     QQuickItem* net = item_named(w, "requireNetworkCheck");
     QQuickItem* metered = item_named(w, "skipMeteredCheck");
@@ -424,6 +426,8 @@ int scenario_conditions_unsaved(const Ctx& c) {
     M3_CHECK(3740, page != nullptr, "conditions editor did not reopen");
     metered = item_named(w, "skipMeteredCheck");
     M3_CHECK(3741, click_ui_item(w, metered, "skipMeteredCheck"), "failed to click metered option");
+    // The known networks arrive from the daemon after the editor opened.
+    wait_until([&] { return item_named(w, "knownNetworkCheck_HomeWifi") != nullptr; }, 10000);
     QQuickItem* home = item_named(w, "knownNetworkCheck_HomeWifi");
     M3_CHECK(3742, click_ui_item(w, home, "knownNetworkCheck_HomeWifi"), "failed to click HomeWifi");
     wait_ms(150);

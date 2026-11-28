@@ -460,7 +460,8 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     SMOKE_CHECK3("M2", 273, dlg, dlg->property("visible").toBool(), confirm_act, "addExcludePromptDialog did not open");
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
     trigger(confirm_act);
-    wait_until([&] { return is_closed(dlg); }, 600);
+    // The dialog closes once the daemon has saved the rule.
+    wait_until([&] { return is_closed(dlg); }, 10000);
     SMOKE_CHECK_CLOSED("M2", 274, dlg, "addExcludePromptDialog did not close after confirmAddExcludeAction");
 
     // AC-M4-01-7 (d): the unreadable files are one list and one Tab stop; neither a row nor its
@@ -478,7 +479,7 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     SMOKE_CHECK2("M2", 279, row, row && row->property("focusPolicy").toInt() == Qt::ClickFocus,
         "a row of the list takes the focus by click only");
     send_key(window, Qt::Key_Return);
-    SMOKE_CHECK("M2", 269, wait_until([&] { return dlg->property("visible").toBool(); }, 1000),
+    SMOKE_CHECK("M2", 269, wait_until([&] { return dlg->property("visible").toBool(); }, 10000),
         "Enter on an unreadable file asks to add it to the exclude rules");
     QMetaObject::invokeMethod(dlg, "reject");
     wait_until([&] { return is_closed(dlg); }, 600);

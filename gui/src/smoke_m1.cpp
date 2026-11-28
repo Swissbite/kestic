@@ -366,6 +366,8 @@ void scene_keyboard_navigation(const Scene& s) {
     send_key(window, Qt::Key_Return);
     SMOKE_CHECK("M1 keyboard", 125, child_item(window, "runDetailPage"),
         "Return on runListItem did not open RunDetailPage");
+    // The run's detail (its commands among it) arrives from the daemon after the page opened.
+    wait_until([&] { return !backend->property("selected_run_title").toString().isEmpty(); }, 10000);
     // The selected row must use the selection text colour, or it is unreadable on a
     // light selection in the dark theme.
     {
