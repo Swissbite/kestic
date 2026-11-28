@@ -1,0 +1,21 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+# A config saved while Kestic still accepted `..` folders in an SFTP path.
+config_version = 4
+
+[[destinations]]
+id = "sftpdots"
+name = "Server"
+
+[destinations.kind]
+kind = "sftp"
+host = "backup.invalid"
+port = 22
+user = "anna"
+path = "/srv/x/../repo"
+
+[destinations.secrets]
+repo_password_ref = "kestic:dest:sftpdots:repo"
+
+[destinations.maintenance]

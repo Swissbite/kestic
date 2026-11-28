@@ -571,12 +571,92 @@ int rest_login_checks(QQuickWindow* w, const QString& lang, const QString& out_p
     return 0;
 }
 
+// AC-M6-19-2 in the SFTP form `prefix` (`wizDest` or `destEdit`): the path `parent_path` shows
+// `message` below the path field, and «Test Connection» and `locked` (Next or Save) are disabled;
+// a path with `..` inside a folder name (`dotted_path`) enables «Test Connection» first.
+int check_sftp_parent_form(QQuickWindow* w, const char* prefix, const char* page, QObject* locked,
+    const QString& dotted_path, const QString& parent_path, const QString& message, int code) {
+    using namespace m3;
+    const QByteArray field_name = QByteArray(prefix) + "SftpPathField";
+    const QByteArray error_name = QByteArray(prefix) + "SftpPathError";
+    const QByteArray test_name = QByteArray(prefix) + "TestButton";
+    QQuickItem* field = item_named(w, field_name.constData());
+    QQuickItem* test = item_named(w, test_name.constData());
+    M3_CHECK2(code, field != nullptr, test != nullptr, "path field or «Test Connection» missing");
+    field->setProperty("text", dotted_path);
+    M3_CHECK(code + 1, wait_until([&] { return test->isEnabled(); }, 2000), "«Test Connection» not enabled for a name with '..' in it");
+    M3_CHECK(code + 2, count_visible(w, error_name.constData()) == 0, "path error shown for a name with '..' in it");
+    field->setProperty("text", parent_path);
+    QQuickItem* error = item_named(w, error_name.constData());
+    M3_CHECK(code + 3, wait_until([&] { return error && error->isVisible(); }, 2000), "(a) no message below the path");
+    M3_CHECK_EQ(code + 4, error->property("text").toString(), message, "(a) the message");
+    M3_CHECK(code + 5, !test->isEnabled(), "(b) «Test Connection» enabled");
+    M3_CHECK(code + 6, locked != nullptr && !locked->property("enabled").toBool(), "(b) «Next» or «Save» enabled");
+    show_on_page(w, page, error);
+    return 0;
+}
+
+int sftp_parent_checks(QQuickWindow* w, const QString& lang, const QString& out_path) {
+    using namespace m3;
+    const QString dest_id = qEnvironmentVariable("KESTIC_SMOKE_DEST_ID");
+    M3_CHECK(1900, !dest_id.isEmpty(), "KESTIC_SMOKE_DEST_ID not set");
+    const QString dotted_path = QStringLiteral("/srv/a..b/repo");
+    const QString parent_path = QStringLiteral("/srv/x/../repo");
+    const QString message = loc(lang,
+        "The path must not contain ‘..’ as a folder name. Enter the path to the repository without it.",
+        "Der Pfad darf «..» nicht als Ordnernamen enthalten. Den Pfad zum Repository ohne «..» angeben.");
+
+    QMetaObject::invokeMethod(w, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
+    QQuickItem* card = nullptr;
+    M3_CHECK(1901, wait_until([&] { return (card = item_named(w, "wizDestTypeCard_sftp")) != nullptr; }, 3000), "SFTP card missing");
+    wait_ms(250);
+    finish_incubation(w);
+    show_on_page(w, "addDestinationWizard", card);
+    M3_CHECK(1902, click_ui_item(w, card, "SFTP card"), "click on the SFTP card failed");
+    QQuickItem* next = item_named(w, "wizDestNextButton");
+    M3_CHECK(1903, wait_until([&] { return next && next->isEnabled(); }, 2000), "«Next» not enabled after choosing SFTP");
+    M3_CHECK(1904, click_ui_item(w, next, "Next"), "click on «Next» failed");
+    M3_CHECK(1905, wait_until([&] { return count_visible(w, "wizDestSftpPathField") == 1; }, 2000), "SFTP form did not open");
+    item_named(w, "wizDestNameField")->setProperty("text", QStringLiteral("Server"));
+    item_named(w, "wizDestHostField")->setProperty("text", QStringLiteral("backup.invalid"));
+    item_named(w, "wizDestSftpUserField")->setProperty("text", QStringLiteral("anna"));
+    if (const int rc = check_sftp_parent_form(w, "wizDest", "addDestinationWizard", next, dotted_path, parent_path, message, 1910)) {
+        return rc;
+    }
+    wait_ms(300);
+    show_on_page(w, "addDestinationWizard", item_named(w, "wizDestSftpPathError"));
+    M3_CHECK(1920, save_screenshot(w, out_path), "screenshot failed");
+    QMetaObject::invokeMethod(w, "closeWizardLayer");
+    wait_ms(250);
+
+    QMetaObject::invokeMethod(w, "openDestinationEditPage", Q_ARG(QVariant, dest_id));
+    M3_CHECK(1921, wait_until([&] { return count_visible(w, "destEditSftpPathField") == 1; }, 3000), "edit page did not open");
+    wait_ms(150);
+    QObject* save = object_named(w, "saveDestinationAction");
+    if (const int rc = check_sftp_parent_form(w, "destEdit", "destinationEditPage", save, dotted_path, parent_path, message, 1930)) {
+        return rc;
+    }
+    wait_ms(300);
+    show_on_page(w, "destinationEditPage", item_named(w, "destEditSftpPathError"));
+    M3_CHECK(1940, save_screenshot(w, other_shot(out_path, "-wizard-", "-edit-")), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
     const QString& out_path, const QString& lang) {
     if (const int rc = rest_login_checks(window, lang, out_path)) {
         smoke_fail("M6", rc, QStringLiteral("AC-M6-18-2 failed with code %1, see stderr").arg(rc));
+        return;
+    }
+    smoke_finish("M6", warnings.get());
+}
+
+void run_sftp_parent_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
+    const QString& out_path, const QString& lang) {
+    if (const int rc = sftp_parent_checks(window, lang, out_path)) {
+        smoke_fail("M6", rc, QStringLiteral("AC-M6-19-2 failed with code %1, see stderr").arg(rc));
         return;
     }
     smoke_finish("M6", warnings.get());

@@ -42,6 +42,9 @@ pub enum ModelError {
     /// A REST address with a user name or password in it.
     #[error("{}", kestic_i18n::messages::REST_ADDRESS_WITH_LOGIN)]
     LoginInRestAddress,
+    /// An SFTP path with a `..` folder in it.
+    #[error("{}", kestic_i18n::messages::SFTP_PATH_WITH_PARENT)]
+    ParentSegmentInSftpPath,
 }
 
 fn is_valid_base32_id(raw: &str) -> bool {
@@ -764,12 +767,15 @@ impl Destination {
     }
 
     /// [`Self::validate`] plus the rules for a destination that is entered, added or changed: a
-    /// REST address without a user name or password. Loading a config checks only
-    /// [`Self::validate`], so destinations saved before these rules keep loading.
+    /// REST address without a user name or password and an SFTP path without `..` folders.
+    /// Loading a config checks only [`Self::validate`], so destinations saved before these rules
+    /// keep loading.
     pub fn validate_input(&self) -> Result<(), ModelError> {
         self.validate()?;
-        if let DestinationKind::Rest { url, .. } = &self.kind {
-            refuse_rest_login(url)?;
+        match &self.kind {
+            DestinationKind::Rest { url, .. } => refuse_rest_login(url)?,
+            DestinationKind::Sftp { path, .. } => crate::sftp::refuse_parent_segments(path)?,
+            _ => {}
         }
         Ok(())
     }

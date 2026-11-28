@@ -1277,6 +1277,14 @@ msgstr ""
 "Benutzername und Passwort gehören nicht in die Adresse, sondern in die Felder "
 "«Benutzername» und «Server-Passwort»."
 
+#: i18n/src/messages.rs:37
+msgid ""
+"The path must not contain ‘..’ as a folder name. Enter the path to the "
+"repository without it."
+msgstr ""
+"Der Pfad darf «..» nicht als Ordnernamen enthalten. Den Pfad zum Repository "
+"ohne «..» angeben."
+
 #: gui/src/qml/AddDestinationWizard.qml:286
 #: gui/src/qml/DestinationEditPage.qml:259 gui/src/qml/NewBackupWizard.qml:581
 msgid "Path is required."

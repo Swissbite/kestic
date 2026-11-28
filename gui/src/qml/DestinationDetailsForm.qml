@@ -462,7 +462,8 @@ ColumnLayout {
         FieldError {
             objectName: form.namePrefix + "SftpPathError"
             visible: form.draft.kindIsSftp && !form.draft.sftpPathValid
-            text: i18n("Enter an absolute path or one relative to the home folder, not starting with '~'.")
+            text: form.draft.sftpPathError !== "" ? form.draft.sftpPathError
+                : i18n("Enter an absolute path or one relative to the home folder, not starting with '~'.")
             Layout.preferredWidth: Kirigami.Units.gridUnit * 24
         }
 
