@@ -38,6 +38,11 @@ import net.daester.kestic 1.0
 SnapshotBrowseModel {}
 )";
 
+const char* const DIFF_QML = R"(
+import net.daester.kestic 1.0
+SnapshotDiffModel {}
+)";
+
 const char* const DRAFT_QML = R"(
 import net.daester.kestic 1.0
 DestinationDraft { appBackend: root.backendRef }
@@ -276,10 +281,12 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
     const QString dest = qEnvironmentVariable("KESTIC_TEST_DEST");
     const QString snapshot = qEnvironmentVariable("KESTIC_TEST_SNAPSHOT");
+    const QString later = qEnvironmentVariable("KESTIC_TEST_SNAPSHOT_B");
     const QString source = qEnvironmentVariable("KESTIC_TEST_SOURCE");
     const QString probe = qEnvironmentVariable("KESTIC_TEST_PROBE");
-    SMOKE_CHECK("M6", 100, !bid.isEmpty() && !dest.isEmpty() && !snapshot.isEmpty() && !source.isEmpty() && !probe.isEmpty(),
-        "precondition: backup, destination, snapshot and paths");
+    SMOKE_CHECK("M6", 100, !bid.isEmpty() && !dest.isEmpty() && !snapshot.isEmpty() && !later.isEmpty()
+            && !source.isEmpty() && !probe.isEmpty(),
+        "precondition: backup, destination, snapshots and paths");
     QObject* answers = create_in_window(window, ANSWERS_QML);
     SMOKE_CHECK("M6", 100, answers, "precondition: the answer counter");
     auto stop = std::make_shared<bool>(false);
@@ -287,6 +294,7 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
     auto largest_gap = watch_main_thread_gaps(window, stop, building);
     auto requests = std::make_shared<QMap<QString, int>>();
     auto browse = std::make_shared<QObject*>(nullptr);
+    auto diff = std::make_shared<QObject*>(nullptr);
     auto step = std::make_shared<int>(-1);
     auto waited = std::make_shared<QElapsedTimer>();
     waited->start();
@@ -393,7 +401,8 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             // Making the model is QML work, not a wait for the daemon.
             *building = true;
             *browse = create_in_window(window, BROWSE_QML);
-            SMOKE_CHECK("M6", 111, *browse, "the folder list model could not be made");
+            *diff = create_in_window(window, DIFF_QML);
+            SMOKE_CHECK2("M6", 111, *browse, *diff, "the list models could not be made");
             break;
         case 10: {
             QElapsedTimer took;
@@ -402,18 +411,25 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
                 Q_ARG(QString, QStringLiteral("/")));
             SMOKE_CHECK("M6", 111, took.elapsed() < 100,
                 QStringLiteral("(a) opening a folder of a snapshot kept the main thread for %1 ms").arg(took.elapsed()));
+            took.restart();
+            QMetaObject::invokeMethod(*diff, "compare", Q_ARG(QString, dest), Q_ARG(QString, snapshot), Q_ARG(QString, later));
+            SMOKE_CHECK("M6", 111, took.elapsed() < 100,
+                QStringLiteral("(a) starting a comparison kept the main thread for %1 ms").arg(took.elapsed()));
             break;
         }
         default: {
-            // The folder list polls its query like the restore dialog does.
-            if ((*browse)->property("state").toString() == QLatin1String("running")) {
+            // The lists poll their queries like their pages do.
+            bool running = false;
+            for (QObject* model : {*browse, *diff}) {
+                if (model->property("state").toString() != QLatin1String("running")) continue;
+                running = true;
                 QElapsedTimer took;
                 took.start();
-                QMetaObject::invokeMethod(*browse, "poll");
+                QMetaObject::invokeMethod(model, "poll");
                 SMOKE_CHECK("M6", 112, took.elapsed() < 100,
-                    QStringLiteral("(a) polling the folder list kept the main thread for %1 ms").arg(took.elapsed()));
-                return;
+                    QStringLiteral("(a) polling a list kept the main thread for %1 ms").arg(took.elapsed()));
             }
+            if (running) return;
             bool all = true;
             for (auto it = requests->cbegin(); it != requests->cend(); ++it) {
                 all = all && answered(answers, it.value());
@@ -431,6 +447,11 @@ void run_slow_queries_scene(QQuickWindow* window, QObject* backend,
             SMOKE_CHECK3("M6", 115, (*browse)->property("state").toString() == QLatin1String("done"), listed,
                 listed->rowCount() > 0, QStringLiteral("(b) the folder list of the snapshot never arrived: state '%1', error '%2'")
                     .arg((*browse)->property("state").toString(), (*browse)->property("error_text").toString()));
+            // The comparison shows its list and the chips of its kinds of change at once.
+            SMOKE_CHECK2("M6", 116, (*diff)->property("state").toString() == QLatin1String("done"),
+                !(*diff)->property("kind_codes").toStringList().isEmpty(),
+                QStringLiteral("(b) the comparison is done without its kinds of change (state '%1', kinds '%2')")
+                    .arg((*diff)->property("state").toString(), (*diff)->property("kind_codes").toStringList().join(QLatin1Char(','))));
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
         }

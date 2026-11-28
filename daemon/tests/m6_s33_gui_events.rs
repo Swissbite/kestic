@@ -294,7 +294,7 @@ fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
 /// AC-M6-33-1: every reply comes 5 s late. (a) The previews, exclude helpers, source checks,
 /// connection test, restic source and the snapshot query of a folder list return at once and the
 /// main thread never pauses longer than 100 ms; (b) their answers arrive (the dry run's id, the
-/// source check, the folder list of the snapshot).
+/// source check, the folder list of the snapshot, a comparison with its kinds of change).
 #[test]
 fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
     run_isolated_test(
@@ -314,14 +314,19 @@ fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
             client
                 .start_backup(backup.id.as_str())
                 .expect("start the backup");
-            next_finished_run(&client, &BTreeSet::new());
-            let snapshot = client
+            let first_run = next_finished_run(&client, &BTreeSet::new());
+            // A second snapshot with a new file, for a comparison with changes.
+            fs::write(backup.source.path.join("added-later"), b"x").expect("new source file");
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the second backup");
+            next_finished_run(&client, &BTreeSet::from([first_run]));
+            let snapshots = client
                 .list_backup_snapshots(backup.id.as_str())
                 .expect("list the snapshots")
-                .current_snapshots
-                .first()
-                .map(|s| s.id.clone())
-                .expect("precondition: one snapshot");
+                .current_snapshots;
+            assert_eq!(snapshots.len(), 2, "precondition: two snapshots");
+            let (snapshot, later) = (snapshots[0].id.clone(), snapshots[1].id.clone());
             let probe = root.join("probe-repo");
             let source = backup.source.path.to_string_lossy().to_string();
             run_slow_scene(
@@ -333,6 +338,7 @@ fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
                     ("KESTIC_TEST_BACKUP", backup.id.as_str()),
                     ("KESTIC_TEST_DEST", backup.destination_id.as_str()),
                     ("KESTIC_TEST_SNAPSHOT", &snapshot),
+                    ("KESTIC_TEST_SNAPSHOT_B", &later),
                     ("KESTIC_TEST_SOURCE", &source),
                     ("KESTIC_TEST_PROBE", probe.to_str().expect("utf-8 path")),
                 ],

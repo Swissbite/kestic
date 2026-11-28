@@ -1212,11 +1212,8 @@ int scenario_compare(const Ctx& c) {
     M4_CHECK(6023, count != nullptr, "compareCountLabel missing");
     M4_CHECK_EQ(6024, count->property("text").toString(), loc(c.lang, "9 changes", "9 Änderungen"),
         "number of changes");
-    // The kinds of change and their numbers arrive after the list.
-    M4_CHECK(6025, wait_until([&] {
-        return object_named(w, "compareKindChip_added") != nullptr && object_named(w, "compareKindChip_removed") != nullptr;
-    }, 10000), "the chip of new files is shown");
     QObject* added_chip = object_named(w, "compareKindChip_added");
+    M4_CHECK(6025, added_chip != nullptr, "the chip of new files is shown");
     M4_CHECK_EQ(6026, added_chip->property("text").toString(), loc(c.lang, "New · 3", "Neu · 3"),
         "the chip names the kind and its number");
     QObject* removed_chip = object_named(w, "compareKindChip_removed");
