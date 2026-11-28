@@ -46,9 +46,11 @@ EditorPage {
         }
     }
 
-    Component.onCompleted: {
+    // Shows the backup as the daemon has it now, with its revision.
+    function reloadFromDaemon() {
         hydrating = true;
         initialData = rootWindow.findBackupData(backupId);
+        revision = appBackend.backupRevision(backupId);
         if (initialData) {
             sourcePath = initialData.sourcePath;
             detectedKindLabel = initialData.sourceKindLabel;
@@ -57,6 +59,8 @@ EditorPage {
         refreshSourceMetadata();
     }
 
+    Component.onCompleted: reloadFromDaemon()
+
     // Saves; `done(ok)` runs once the daemon has answered.
     function commitSave(done) {
         if (!initialData || !valid || saving) {
@@ -64,8 +68,9 @@ EditorPage {
             return;
         }
         saving = true;
-        rootWindow.afterDaemonCall(appBackend.updateBackupSource(backupId, sourcePath.trim()), function(ok) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupSource(backupId, sourcePath.trim(), page.revision), function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, page.reloadFromDaemon);
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 refreshSourceMetadata();

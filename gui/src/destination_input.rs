@@ -264,6 +264,16 @@ pub fn field_checks(fields_json: &str) -> serde_json::Value {
 }
 
 /// [`destination_from_fields`] with the error as text in the GUI language.
+/// The `revision` an edit page adds to the form fields (empty without one).
+pub fn revision_of_fields(fields_json: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct WithRevision {
+        #[serde(default)]
+        revision: String,
+    }
+    serde_json::from_str::<WithRevision>(fields_json).map_or_else(|_| String::new(), |f| f.revision)
+}
+
 pub fn build_destination(
     existing_id: Option<&str>,
     fields_json: &str,

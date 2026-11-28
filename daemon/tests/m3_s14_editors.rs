@@ -6,6 +6,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::load_config;
 use common::m3::{
     M3Daemon, M3DaemonOpts, StdFakes, add_local_backup, assert_dbus_error_name, backup_summary,
@@ -70,7 +72,7 @@ fn ac_m3_14_7_saved_schedule_updates_config_schedule_and_next_slot() {
             };
             backup.schedule = new_schedule.clone();
             client
-                .update_backup(&backup)
+                .update_backup_now(&backup)
                 .expect("(a) UpdateBackup over D-Bus");
 
             // (b) config.toml and the daemon's own configuration carry the new schedule.
@@ -144,7 +146,7 @@ fn ac_m3_14_8_update_backup_validates_before_writing_config() {
                 let mut draft = backup.clone();
                 draft.schedule = schedule.clone();
                 let err = client
-                    .update_backup(&draft)
+                    .update_backup_now(&draft)
                     .expect_err("(b) core must reject the invalid schedule");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.InvalidInput");
                 // (d) config.toml and the daemon's schedule stay unchanged.
@@ -168,7 +170,7 @@ fn ac_m3_14_8_update_backup_validates_before_writing_config() {
                 minute: 30,
             };
             client
-                .update_backup(&valid)
+                .update_backup_now(&valid)
                 .expect("(a) valid UpdateBackup");
             let on_disk = load_config(&daemon.config_path).expect("load config.toml");
             assert_eq!(

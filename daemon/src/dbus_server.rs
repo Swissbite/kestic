@@ -259,8 +259,10 @@ impl KesticDbusV1Service {
         repo_password: &str,
         backend_secrets_json: &str,
         verify_connection: bool,
+        revision: &str,
     ) -> Result<String, KesticDbusError> {
         let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
+        let revision = revision.to_string();
         let (result, conn_opt, state_dto, tray_state) = self
             .blocking(move |core| {
                 update_destination_unlocked(
@@ -270,6 +272,7 @@ impl KesticDbusV1Service {
                     &form.repo_password,
                     &form.backend_secrets_json,
                     verify_connection,
+                    &revision,
                 )
             })
             .await??;
@@ -319,8 +322,12 @@ impl KesticDbusV1Service {
     }
 
     #[zbus(name = "UpdateBackup")]
-    async fn update_backup(&self, backup_json: &str) -> Result<(), KesticDbusError> {
-        self.mutate_unit(|core| core.update_backup(backup_json))
+    async fn update_backup(
+        &self,
+        backup_json: &str,
+        revision: &str,
+    ) -> Result<String, KesticDbusError> {
+        self.mutate(|core| core.update_backup(backup_json, revision))
             .await
     }
 

@@ -9,6 +9,14 @@ namespace {
 
 using namespace m3;
 
+// The revision of the backup or destination `id` in the window's state.
+QString backend_revision(QObject* backend, const char* kind, const QString& id) {
+    QString revision;
+    QMetaObject::invokeMethod(backend, qstrcmp(kind, "destination") == 0 ? "destinationRevision" : "backupRevision",
+        Q_RETURN_ARG(QString, revision), Q_ARG(QString, id));
+    return revision;
+}
+
 QObject* dialog_action(QObject* dialog, const char* name) {
     return dialog ? dialog->findChild<QObject*>(QString::fromLatin1(name)) : nullptr;
 }
@@ -708,6 +716,186 @@ int scenario_editor_guard_paths(const Ctx& c) {
     return 0;
 }
 
+// Asks the test to change the backup or destination elsewhere (step `step`) and waits until the
+// window has the new revision of `id` (`kind` «backup» or «destination»).
+bool request_change_elsewhere(QObject* backend, const char* kind, const QString& id, int step) {
+    const QString before = backend_revision(backend, kind, id);
+    QFile marker(qEnvironmentVariable("KESTIC_SMOKE_SYNC_DIR") + QStringLiteral("/change-%1").arg(step));
+    if (!marker.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+    marker.close();
+    return wait_until([&] { return backend_revision(backend, kind, id) != before; }, 10000);
+}
+
+// Opens the editor `page` of the backup `bid` with the window function `opener`.
+QQuickItem* open_backup_editor(QQuickWindow* w, const QString& bid, const char* opener, const char* page) {
+    // The page open before must be complete when it closes now.
+    finish_incubation(w);
+    if (!open_backup_detail(w, bid)) {
+        return nullptr;
+    }
+    // The schedule opens through its row on the detail page, like a user would.
+    if (qstrcmp(page, "backupScheduleEditPage") == 0) {
+        return open_editor(w, "editScheduleRow", page);
+    }
+    QMetaObject::invokeMethod(w, opener, Q_ARG(QVariant, bid));
+    wait_until([&] { return item_named(w, page) != nullptr; }, 3000);
+    wait_ms(200);
+    return item_named(w, page);
+}
+
+// Saves `page` through its save function and waits for the answer (`saving` back to false).
+void save_page(QQuickItem* page, const char* method, const QVariantList& args) {
+    switch (args.size()) {
+    case 0:
+        QMetaObject::invokeMethod(page, method, Q_ARG(QVariant, QVariant()));
+        break;
+    case 1:
+        QMetaObject::invokeMethod(page, method, Q_ARG(QVariant, args[0]), Q_ARG(QVariant, QVariant()));
+        break;
+    default:
+        break;
+    }
+    wait_until([&] { return !page->property("saving").toBool(); }, 15000);
+    wait_ms(200);
+    // A reload after the answer may create delegates again; they finish before the page closes.
+    finish_incubation(page->window());
+}
+
+struct ConflictEditor {
+    const char* opener;
+    const char* page;
+    const char* save;
+    // The property the edit changes, and its new value.
+    const char* field;
+    QVariant value;
+};
+
+// AC-M6-36-10 (a)-(c): an editor page opened before a change made elsewhere refuses to overwrite
+// it: the save sends the page's revision, the daemon answers `Conflict`, the page says so,
+// shows the current state and takes its revision.
+int check_conflict(QObject* backend, QQuickItem* page, const char* kind, const QString& id, int step, int base) {
+    M3_CHECK(base, page != nullptr, "editor page did not open");
+    const QString opened_with = page->property("revision").toString();
+    M3_CHECK(base + 1, opened_with == backend_revision(backend, kind, id), "(a) the page keeps the revision it opened with");
+    M3_CHECK(base + 2, request_change_elsewhere(backend, kind, id, step), "the change made elsewhere did not arrive");
+    M3_CHECK(base + 3, page->property("revision").toString() == opened_with,
+        "(a) the page must not take the new revision from the window's state");
+    return 0;
+}
+
+int check_reloaded(QObject* backend, QQuickItem* page, const char* kind, const QString& id, int base) {
+    QQuickItem* message = find_visual_item(page->window(), QStringLiteral("editorChangedElsewhereMessage"));
+    M3_CHECK(base, message && message->isVisible(), "(b) the page must say the backup or destination changed");
+    const QString text = message->property("text").toString();
+    M3_CHECK(base + 1, text.contains(QStringLiteral("changed elsewhere")) || text.contains(QStringLiteral("an anderer Stelle")),
+        "(b) the message must name the change elsewhere");
+    M3_CHECK(base + 2, !page->property("dirty").toBool(), "(c) the page must show the current state again");
+    M3_CHECK(base + 3, page->property("revision").toString() == backend_revision(backend, kind, id),
+        "(c) the page must hold the current revision");
+    return 0;
+}
+
+int scenario_revision_conflict(const Ctx& c) {
+    QQuickWindow* w = c.window;
+    QObject* backend = c.backend;
+    const QString bid = backup_id_at(w, 0);
+    const QString did = destination_id_at(w, 0);
+    M3_CHECK(6100, !bid.isEmpty() && !did.isEmpty(), "no backup or destination found");
+    const ConflictEditor editors[] = {
+        { "openBackupConditionsPage", "backupConditionsEditPage", "saveForGuard", "requireAcPower", false },
+        { "openBackupSchedulePage", "backupScheduleEditPage", "saveForGuard", "hour", 13 },
+        { "openBackupExcludesPage", "backupExcludesEditPage", "saveForGuard", "excludeCaches", true },
+        { "openBackupRetentionPage", "backupRetentionPage", "commitSave", nullptr, QVariant() },
+        { "openBackupSourcePage", "backupSourceEditPage", "saveForGuard", nullptr, QVariant() },
+    };
+    int step = 1;
+    int base = 6110;
+    for (const ConflictEditor& e : editors) {
+        QQuickItem* page = open_backup_editor(w, bid, e.opener, e.page);
+        int rc = check_conflict(backend, page, "backup", bid, step, base);
+        if (rc != 0) {
+            return rc;
+        }
+        if (e.field) {
+            page->setProperty(e.field, e.value);
+            wait_ms(100);
+        }
+        QVariantList args;
+        if (QLatin1String(e.save) == QLatin1String("commitSave")) {
+            QVariant json;
+            QMetaObject::invokeMethod(page, "currentPolicyJson", Q_RETURN_ARG(QVariant, json));
+            args << json;
+        }
+        save_page(page, e.save, args);
+        rc = check_reloaded(backend, page, "backup", bid, base + 4);
+        if (rc != 0) {
+            return rc;
+        }
+        ++step;
+        base += 10;
+    }
+
+    // The destination form: a new name, while the maintenance schedule was changed elsewhere.
+    finish_incubation(w);
+    QMetaObject::invokeMethod(w, "switchTab", Q_ARG(QVariant, 2));
+    wait_ms(150);
+    QMetaObject::invokeMethod(w, "openDestinationDetailById", Q_ARG(QVariant, did));
+    wait_ms(200);
+    QMetaObject::invokeMethod(w, "openDestinationEditPage", Q_ARG(QVariant, did));
+    wait_until([&] { return item_named(w, "destinationEditPage") != nullptr; }, 3000);
+    wait_ms(200);
+    QQuickItem* dest_page = item_named(w, "destinationEditPage");
+    int rc = check_conflict(backend, dest_page, "destination", did, step, 6170);
+    if (rc != 0) {
+        return rc;
+    }
+    QObject* draft = nullptr;
+    for (QObject* child : dest_page->findChildren<QObject*>()) {
+        if (child->metaObject()->indexOfProperty("connectionAccepted") >= 0) {
+            draft = child;
+            break;
+        }
+    }
+    M3_CHECK(6178, draft != nullptr, "destination draft missing");
+    const QString saved_name = draft->property("name").toString();
+    draft->setProperty("name", saved_name + QStringLiteral(" renamed"));
+    wait_ms(100);
+    save_page(dest_page, "saveForGuard", {});
+    rc = check_reloaded(backend, dest_page, "destination", did, 6174);
+    if (rc != 0) {
+        return rc;
+    }
+    M3_CHECK(6179, draft->property("name").toString() == saved_name, "(c) the form must show the saved name again");
+
+    // AC-M6-36-10 (d): two saves right after another on one page, and (e) a second page opened
+    // right after a save: no `Conflict` with the window's own saves.
+    QQuickItem* cond = open_backup_editor(w, bid, "openBackupConditionsPage", "backupConditionsEditPage");
+    M3_CHECK(6180, cond != nullptr, "conditions page did not reopen");
+    cond->setProperty("requireAcPower", !cond->property("requireAcPower").toBool());
+    wait_ms(100);
+    QMetaObject::invokeMethod(cond, "saveForGuard", Q_ARG(QVariant, QVariant()));
+    QMetaObject::invokeMethod(cond, "saveForGuard", Q_ARG(QVariant, QVariant()));
+    wait_until([&] { return !cond->property("saving").toBool(); }, 15000);
+    wait_ms(200);
+    M3_CHECK(6181, !cond->property("changedElsewhere").toBool(), "(d) two quick saves must not conflict");
+    cond->setProperty("requireAcPower", !cond->property("requireAcPower").toBool());
+    wait_ms(100);
+    save_page(cond, "saveForGuard", {});
+    M3_CHECK(6182, !cond->property("changedElsewhere").toBool(), "(d) the next save takes the returned revision");
+    M3_CHECK(6183, !cond->property("dirty").toBool(), "(d) the save went through");
+    QQuickItem* sched = open_backup_editor(w, bid, "openBackupSchedulePage", "backupScheduleEditPage");
+    M3_CHECK(6184, sched != nullptr, "schedule page did not open");
+    sched->setProperty("hour", sched->property("hour").toInt() == 14 ? 15 : 14);
+    wait_ms(100);
+    save_page(sched, "saveForGuard", {});
+    M3_CHECK(6185, !sched->property("changedElsewhere").toBool(), "(e) a page opened after a save must not conflict");
+    M3_CHECK(6186, !sched->property("dirty").toBool(), "(e) the save went through");
+    M3_CHECK(6187, save_screenshot(w, c.out_path), "screenshot failed");
+    return 0;
+}
+
 } // namespace
 
 int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handled) {
@@ -723,6 +911,7 @@ int run_m3_editor_scenario(const m3::Ctx& ctx, const QString& scen, bool* handle
     if (scen == QLatin1String("m3-maintenance-editor-discard")) return scenario_maintenance_discard(ctx);
     if (scen == QLatin1String("m3-settings-monitoring")) return scenario_settings(ctx);
     if (scen == QLatin1String("m3-editor-guard-paths")) return scenario_editor_guard_paths(ctx);
+    if (scen == QLatin1String("m3-revision-conflict")) return scenario_revision_conflict(ctx);
     *handled = false;
     return 0;
 }

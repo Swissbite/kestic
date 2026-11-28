@@ -13,6 +13,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::load_config;
 use common::m3::{
     FakeSetup, M3Rig, StdFakes, backup_summary, connect_local_repo, connect_rest_repo,
@@ -593,7 +595,7 @@ fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
             };
             rig.daemon
                 .client
-                .update_backup(&reset)
+                .update_backup_now(&reset)
                 .expect("reset backup");
             run_m3_gui_smoke(
                 root,
@@ -693,7 +695,7 @@ fn m3_14_9_conditions_editor_asks_before_leaving_and_discard_keeps_config() {
             reset.run_conditions = RunConditions::default();
             rig.daemon
                 .client
-                .update_backup(&reset)
+                .update_backup_now(&reset)
                 .expect("reset backup");
             run_m3_gui_smoke(
                 root,
@@ -1231,4 +1233,97 @@ impl Drop for SetOnDrop<'_> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::SeqCst);
     }
+}
+
+/// Changes made by a second D-Bus client while the smoke `m3-revision-conflict` runs: for each
+/// file `change-<n>` the smoke writes, step 1–5 renames the backup and step 6 sets the
+/// destination's `prune` to daily at `prune_hour`. Returns how many changes it made.
+fn change_elsewhere_on_request(
+    sync: &Path,
+    backup: &BackupId,
+    dest: &Destination,
+    prune_hour: u8,
+    stop: &AtomicBool,
+) -> usize {
+    let client = kestic_daemon::dbus_api::KesticClient::connect(
+        KESTIC_BUS_NAME,
+        kestic_daemon::dbus_api::KESTIC_OBJECT_PATH,
+    )
+    .expect("second D-Bus client");
+    let mut done = 0;
+    for step in 1..=6 {
+        while !sync.join(format!("change-{step}")).exists() {
+            if stop.load(Ordering::SeqCst) {
+                return done;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        if step <= 5 {
+            client
+                .rename_backup(backup.as_str(), &format!("Documents {step}"))
+                .expect("rename backup elsewhere");
+        } else {
+            let maintenance = MaintenanceSchedule {
+                prune: MaintenanceEntrySchedule::Daily {
+                    hour: prune_hour,
+                    minute: 0,
+                },
+                ..MaintenanceSchedule::default()
+            };
+            client
+                .update_destination_maintenance(dest.id.as_str(), &maintenance)
+                .expect("change destination elsewhere");
+        }
+        done += 1;
+    }
+    done
+}
+
+/// AC-M6-36-10 (a)–(e): every backup editor page and the form «Ziel bearbeiten» keep the revision
+/// of their opening; a change a second D-Bus client made meanwhile ends the save in `Conflict`,
+/// the page says so and shows the current state; the window's own saves right after another
+/// and a page opened right after a save do not conflict.
+#[test]
+fn ac_m6_36_10_editor_pages_refuse_to_overwrite_a_change_made_elsewhere() {
+    run_isolated_test(
+        "ac_m6_36_10_editor_pages_refuse_to_overwrite_a_change_made_elsewhere",
+        "KESTIC_M6_36_10_INNER",
+        |root| {
+            let (rig, _fakes, dest, id) = editor_env(root);
+            for (lang, prune_hour) in [("en", 3), ("de", 4)] {
+                let sync = root.join(format!("revision-sync-{lang}"));
+                fs::create_dir_all(&sync).expect("mkdir sync");
+                let stop = AtomicBool::new(false);
+                let changes = std::thread::scope(|scope| {
+                    let changer = scope.spawn(|| {
+                        change_elsewhere_on_request(&sync, &id, &dest, prune_hour, &stop)
+                    });
+                    // Also when the smoke fails, so the changer ends and the failure shows.
+                    let stop_changer = SetOnDrop(&stop);
+                    run_m3_gui_smoke_with_env(
+                        root,
+                        "m3-revision-conflict",
+                        "wide",
+                        lang,
+                        &smoke_artifact("revision-conflict", "wide", lang),
+                        &[("KESTIC_SMOKE_SYNC_DIR", &sync.to_string_lossy())],
+                    );
+                    drop(stop_changer);
+                    changer.join().expect("changer thread")
+                });
+                assert_eq!(changes, 6, "every change elsewhere was asked for ({lang})");
+                // The changes made elsewhere stay: the refused saves overwrote nothing.
+                assert_eq!(saved_backup(&rig, &id).name, "Documents 5", "({lang})");
+                assert_eq!(
+                    saved_maintenance_of(&rig, &dest).prune,
+                    MaintenanceEntrySchedule::Daily {
+                        hour: prune_hour,
+                        minute: 0
+                    },
+                    "({lang})"
+                );
+            }
+            rig.daemon.stop();
+        },
+    );
 }

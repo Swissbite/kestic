@@ -6,6 +6,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes,
     add_local_backup, backup_summary, dest_summary, hold_repo_lock, notifications_for,
@@ -320,7 +322,7 @@ fn ac_m3_04_8_forget_exit_11_under_non_exclusive_lock_is_warning_without_backoff
                     ..RetentionPolicy::empty()
                 };
                 client
-                    .update_backup(&backup)
+                    .update_backup_now(&backup)
                     .expect("keep the last snapshot");
                 rig.seed_snapshot();
                 let backups_before = rig.wrapper.of('E', "backup").len();

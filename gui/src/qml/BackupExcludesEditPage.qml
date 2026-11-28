@@ -114,12 +114,17 @@ EditorPage {
 
     dirty: initialData !== null && canonicalExcludes(currentExcludesJson()) !== canonicalExcludes(savedExcludesJson)
 
-    Component.onCompleted: {
+    // Shows the backup as the daemon has it now, with its revision.
+    function reloadFromDaemon() {
+        initialData = rootWindow.findBackupData(backupId);
+        revision = appBackend.backupRevision(backupId);
         if (initialData) {
             savedExcludesJson = initialData.excludesJson;
             loadFromExcludesJson(savedExcludesJson);
         }
     }
+
+    Component.onCompleted: reloadFromDaemon()
 
     function refreshLint() {
         if (hydrating) return;
@@ -183,8 +188,9 @@ EditorPage {
         }
         saveErrorText = "";
         saving = true;
-        rootWindow.afterDaemonCall(appBackend.updateBackupExcludes(backupId, currentExcludesJson()), function(ok) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupExcludes(backupId, currentExcludesJson(), page.revision), function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, page.reloadFromDaemon);
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -192,7 +198,7 @@ EditorPage {
                     loadFromExcludesJson(savedExcludesJson);
                 }
                 rootWindow.showPassiveNotification(i18n("Exclude rules saved"));
-            } else {
+            } else if (answer !== "conflict") {
                 saveErrorText = appBackend.last_action_error;
             }
             if (done) done(ok);

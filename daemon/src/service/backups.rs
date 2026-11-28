@@ -24,6 +24,7 @@ use kestic_core::provider::resolve_and_check;
 use kestic_core::restic::{
     ResticCommandSpec, Transport, classify_exit_for, parse_recorded_invocation,
 };
+use kestic_core::revision::revision_of;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::ErrorKind;
 use kestic_i18n::messages::deleted_destination_message;
@@ -75,7 +76,14 @@ impl DaemonCore {
         Ok(new_id)
     }
 
-    pub fn update_backup(&mut self, backup_json: &str) -> Result<(), KesticServiceErr> {
+    /// Saves `backup_json` when `revision` is the one of the saved backup; returns the new
+    /// revision. Another revision (also an empty one) means the backup changed since the caller
+    /// read it: `Conflict`, nothing saved.
+    pub fn update_backup(
+        &mut self,
+        backup_json: &str,
+        revision: &str,
+    ) -> Result<String, KesticServiceErr> {
         let mut updated: Backup = serde_json::from_str(backup_json)
             .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid backup JSON: {e}")))?;
         let home = current_home_dir();
@@ -89,6 +97,12 @@ impl DaemonCore {
             .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
 
         let existing = &self.config.backups[idx];
+        if revision_of(existing) != revision {
+            return Err(KesticServiceErr::Conflict(format!(
+                "backup {} was changed meanwhile",
+                updated.id
+            )));
+        }
         let old_schedule = existing.schedule.clone();
         let detected = detect_source_with(
             &updated.source.path,
@@ -132,7 +146,7 @@ impl DaemonCore {
             }
             let _ = self.store_backup_runtime_state(&updated_for_file.id, &rs);
         }
-        Ok(())
+        Ok(revision_of(&self.config.backups[idx]))
     }
 
     pub fn rename_backup(
