@@ -98,7 +98,7 @@ fn spawn_daemon_on_bus(
     root: &Path,
     sub_dir: &Path,
     bus_name: &str,
-    restic_path: PathBuf,
+    restic_path: &Path,
     mount_inspector: Option<Arc<dyn kestic_core::mount::MountInspector>>,
     assume_sni_available: bool,
 ) -> M3Daemon {
@@ -109,7 +109,7 @@ fn spawn_daemon_on_bus(
         M3DaemonOpts {
             mount_inspector,
             assume_sni_available,
-            ..M3DaemonOpts::on_request(&sub, bus_name, &restic_path)
+            ..M3DaemonOpts::on_request(&sub, bus_name, restic_path)
         },
     )
 }
@@ -250,8 +250,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
         "KESTIC_M2_S02_EXCLUDES",
         |root| {
             let (_, restic_bin) = restic_test_binaries().pop().expect("restic binary");
-            let daemon =
-                spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, restic_bin.clone(), None, true);
+            let daemon = spawn_daemon_on_bus(root, root, KESTIC_BUS_NAME, &restic_bin, None, true);
             let client = &daemon.client;
 
             let cfg_path = root.join("cfg").join("kestic").join("config.toml");
@@ -267,15 +266,13 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
 
             let dest = Destination::new(
                 "Local Excludes Repo",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
+                DestinationKind::Local { path: repo_dir },
             )
             .expect("dest");
             connect_local_repo(client, &restic_bin, &dest);
 
-            let mut backup = Backup::new("Docs", Source::folder(&src_dir), dest.id.clone())
-                .expect("valid backup");
+            let mut backup =
+                Backup::new("Docs", Source::folder(&src_dir), dest.id).expect("valid backup");
             backup.excludes = ExcludeRules::from_text("*.log");
             let backup_id_str = client.add_backup(&backup).expect("AddBackup");
             let backup_id = kestic_core::model::BackupId::parse(&backup_id_str).expect("backup id");
@@ -287,7 +284,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
             );
 
             // AC-M2-02-5: Valid UpdateBackup writes config.toml and regenerates `<state>/excludes/<backup-id>.txt`.
-            let mut updated = backup.clone();
+            let mut updated = backup;
             updated.excludes = ExcludeRules {
                 folders: vec![
                     home_sub_excl.to_string_lossy().into_owned(),
@@ -529,7 +526,7 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
         "net.daester.Kestic.M2DryRun_{}",
         label.replace(['.', '-'], "_")
     );
-    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
     let client = &daemon.client;
 
     let dest = Destination::new(
@@ -545,7 +542,7 @@ fn run_dry_run_and_stopped_server_case(root: &Path, label: &str, restic_bin: &Pa
     let mut backup = Backup::new(
         format!("DryRun Docs ({label})"),
         Source::folder(&src_dir),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("backup");
     backup.excludes = ExcludeRules::from_text("*.tmp");
@@ -692,7 +689,7 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
         "net.daester.Kestic.M2Retention_{}",
         label.replace(['.', '-'], "_")
     );
-    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
@@ -706,7 +703,7 @@ fn run_retention_preview_and_update_case(root: &Path, label: &str, restic_bin: &
     let mut backup = Backup::new(
         format!("Retention Docs ({label})"),
         Source::folder(&src_dir),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("backup");
     backup.retention = RetentionPolicy::standard();
@@ -771,8 +768,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                     "net.daester.Kestic.M2ForgetOk_{}",
                     label.replace(['.', '-'], "_")
                 );
-                let daemon =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.clone(), None, true);
+                let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, &restic_bin, None, true);
                 let client = &daemon.client;
                 let signals = KesticSignalCollector::start(
                     &bus_name,
@@ -782,9 +778,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
 
                 let dest = Destination::new(
                     format!("Forget Ok Repo ({label})"),
-                    DestinationKind::Local {
-                        path: repo_dir.clone(),
-                    },
+                    DestinationKind::Local { path: repo_dir },
                 )
                 .expect("dest");
                 connect_local_repo(client, &restic_bin, &dest);
@@ -792,7 +786,7 @@ fn ac_m2_07_1_backup_exit_0_runs_automatic_forget_and_prunes_dual_restic() {
                 let mut backup = Backup::new(
                     format!("Pruned Docs ({label})"),
                     Source::folder(&src_dir),
-                    dest.id.clone(),
+                    dest.id,
                 )
                 .expect("backup");
                 backup.retention = RetentionPolicy {
@@ -1040,7 +1034,7 @@ fn run_exit_3_case(
         "net.daester.Kestic.M2Exit3_{}",
         label.replace(['.', '-'], "_")
     );
-    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
@@ -1054,7 +1048,7 @@ fn run_exit_3_case(
     let mut backup = Backup::new(
         format!("Exit3 Docs ({label})"),
         Source::folder(&src_dir),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("backup");
     backup.retention = RetentionPolicy {
@@ -1287,7 +1281,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
         "net.daester.Kestic.M2Lock11_{}",
         label.replace(['.', '-'], "_")
     );
-    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin.to_path_buf(), None, true);
+    let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, restic_bin, None, true);
     let client = &daemon.client;
     let signals = KesticSignalCollector::start(&bus_name, KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1);
 
@@ -1302,7 +1296,7 @@ fn run_lock11_case(root: &Path, label: &str, restic_bin: &Path) {
     let mut backup = Backup::new(
         format!("Lock11 Docs ({label})"),
         Source::folder(&src_dir),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("backup");
     backup.retention = RetentionPolicy {
@@ -1368,8 +1362,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                     label.replace(['.', '-'], "_")
                 );
                 let wrapper = ResticWrapper::create(&sub.join("wrapper"), &restic_bin);
-                let daemon =
-                    spawn_daemon_on_bus(root, &sub, &bus_name, wrapper.path.clone(), None, true);
+                let daemon = spawn_daemon_on_bus(root, &sub, &bus_name, &wrapper.path, None, true);
                 let client = &daemon.client;
                 let signals = KesticSignalCollector::start(
                     &bus_name,
@@ -1379,9 +1372,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
 
                 let dest = Destination::new(
                     format!("Exit1 Repo ({label})"),
-                    DestinationKind::Local {
-                        path: repo_dir.clone(),
-                    },
+                    DestinationKind::Local { path: repo_dir },
                 )
                 .expect("dest");
                 connect_local_repo(client, &restic_bin, &dest);
@@ -1389,7 +1380,7 @@ fn ac_m2_07_5_backup_exit_1_does_not_run_forget_and_ends_error_dual_restic() {
                 let mut backup = Backup::new(
                     format!("Exit1 Docs ({label})"),
                     Source::folder(&src_dir),
-                    dest.id.clone(),
+                    dest.id,
                 )
                 .expect("backup");
                 backup.retention = RetentionPolicy {
@@ -1681,7 +1672,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
                 root,
                 root,
                 KESTIC_BUS_NAME,
-                real_restic.clone(),
+                &real_restic,
                 Some(fake_inspector.clone()),
                 false,
             );
@@ -1713,8 +1704,7 @@ fn ac_m2_09_1_and_09_2_drive_source_availability_and_manual_run_blocked() {
             );
             assert_eq!(detected.drive_label.as_deref(), Some("MyUSB"));
 
-            let backup =
-                Backup::new("USB Photos", detected, dest.id.clone()).expect("drive backup");
+            let backup = Backup::new("USB Photos", detected, dest.id).expect("drive backup");
             let backup_id = client.add_backup(&backup).expect("AddBackup");
 
             // Install restic spy AFTER the destination setup so any blocked StartBackup guarantees 0 restic invocations.

@@ -339,7 +339,8 @@ struct FakeNotificationsServer {
 
 #[interface(name = "org.freedesktop.Notifications")]
 impl FakeNotificationsServer {
-    #[allow(clippy::too_many_arguments)]
+    // The org.freedesktop.Notifications protocol and the zbus interface macro fix this signature.
+    #[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)]
     fn notify(
         &self,
         app_name: &str,

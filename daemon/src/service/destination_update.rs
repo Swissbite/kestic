@@ -79,7 +79,7 @@ impl EditError {
                 KesticServiceErr::InvalidInput(format!("the folder is not writable: {detail}"))
             }
             Self::Secret(err) => map_secret_err(err),
-            Self::Restic(err) => map_provider_err(err),
+            Self::Restic(err) => map_provider_err(&err),
             Self::Destination(err) => map_destination_err(err),
         }
     }
@@ -553,7 +553,7 @@ fn init_in_place(
             "missing backend credential `{kind}`"
         )));
     }
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(|e| map_provider_err(&e))?;
     let prepared = prepare_repository(
         dest,
         DestinationSetupMode::InitNew,

@@ -752,7 +752,7 @@ fn ac_m3_07_1_to_07_4_pause_per_backup_global_and_until_tomorrow() {
     assert!(eval_b.should_start_now, "unpaused backup starts");
 
     let mut dest_map = HashMap::new();
-    dest_map.insert(bk_a.id.clone(), dest.id.clone());
+    dest_map.insert(bk_a.id, dest.id.clone());
     dest_map.insert(bk_b.id.clone(), dest.id.clone());
     let actions = plan_destination_actions(&[eval_a, eval_b], &[], &HashSet::new(), &dest_map);
     assert_eq!(actions.len(), 1);
@@ -991,7 +991,7 @@ fn ac_m3_05_1_and_05_3_destination_queue_prefers_backups_over_maintenance() {
     };
     let mut map = HashMap::new();
     map.insert(bk_a.id.clone(), dest.id.clone());
-    map.insert(bk_b.id.clone(), dest.id.clone());
+    map.insert(bk_b.id.clone(), dest.id);
     let actions = plan_destination_actions(&[ea, eb], &[maint], &HashSet::new(), &map);
     assert_eq!(actions.len(), 1);
     assert!(matches!(

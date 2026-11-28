@@ -37,6 +37,7 @@ use time::OffsetDateTime;
 use zbus::Connection;
 
 /// A run that has just been recorded and now takes over its destination.
+#[derive(Clone, Copy)]
 pub(super) struct NewActiveRun<'a> {
     pub(super) run: &'a Run,
     /// `None` for maintenance runs, which belong to a destination only.
@@ -74,6 +75,7 @@ struct PendingReasonsSummary {
     unmet_run_conditions: Vec<PendingReasonCode>,
 }
 
+#[derive(Clone, Copy)]
 struct TrayInput<'a> {
     backups: &'a [BackupSummaryDto],
     overall: &'a OverallStatusDto,
@@ -84,6 +86,7 @@ struct TrayInput<'a> {
     now: OffsetDateTime,
 }
 
+#[derive(Clone, Copy)]
 struct BackupPendingSummaryInput<'a> {
     backup: &'a Backup,
     rs: &'a BackupRuntimeState,

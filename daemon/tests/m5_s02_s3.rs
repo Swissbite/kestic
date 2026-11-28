@@ -145,8 +145,8 @@ fn ac_m5_02_1_s3_destination_is_initialised_and_backup_creates_snapshot_in_bucke
                 let src = root.join(&rig.sub).join("src");
                 fs::create_dir_all(&src).expect("mkdir src");
                 fs::write(src.join("file.txt"), b"hello s3").expect("write source");
-                let backup = Backup::new("Documents", Source::folder(&src), dest.id.clone())
-                    .expect("valid backup");
+                let backup =
+                    Backup::new("Documents", Source::folder(&src), dest.id).expect("valid backup");
                 let backup_id =
                     BackupId::parse(client.add_backup(&backup).expect("AddBackup")).expect("id");
                 client

@@ -604,7 +604,7 @@ fn ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus
                 edited.detail, AZURE_NEEDS,
                 "(c) edited destination: the variables are the detail"
             );
-            let mut renamed = saved.clone();
+            let mut renamed = saved;
             renamed.name = "Renamed Azure".to_string();
             let err = client
                 .update_destination_now(&renamed, "connect", "", &BackendSecrets::default(), false)
@@ -617,7 +617,7 @@ fn ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus
                 "(b) nothing saved"
             );
 
-            let mut keyed_renamed = keyed.clone();
+            let mut keyed_renamed = keyed;
             keyed_renamed.name = "Renamed Keyed Azure".to_string();
             client
                 .update_destination_now(

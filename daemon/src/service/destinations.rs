@@ -160,6 +160,7 @@ fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTes
     Ok(dest)
 }
 
+#[derive(Clone, Copy)]
 struct DestinationTestInputs<'a> {
     dest: &'a Destination,
     mode: &'a str,
@@ -178,6 +179,7 @@ struct DestinationTestInputs<'a> {
 }
 
 /// A saved destination whose edited connection is tested.
+#[derive(Clone, Copy)]
 struct EditedDestination<'a> {
     shared: &'a Arc<Mutex<DaemonCore>>,
     saved: &'a Destination,
@@ -553,7 +555,7 @@ pub(crate) fn add_destination_unlocked(
         (guard.restic_deps(), setup)
     };
 
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(|e| map_provider_err(&e))?;
     run_lease.bind(&resolved.binary);
     let repo_pw = SecretValue::from_str_secret(repo_password);
     let prepared = setup_destination(
@@ -625,7 +627,7 @@ pub(crate) fn update_destination_password_unlocked(
             .ok_or_else(|| KesticServiceErr::NotFound(dest_id.to_string()))?;
         (dest, guard.restic_deps())
     };
-    let resolved = resolve_and_check(&deps.provider).map_err(map_provider_err)?;
+    let resolved = resolve_and_check(&deps.provider).map_err(|e| map_provider_err(&e))?;
     run_lease.bind(&resolved.binary);
     let candidate = SecretValue::from_str_secret(new_password);
     let repository_id = verify_and_update_stored_password(

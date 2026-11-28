@@ -147,7 +147,7 @@ pub(super) fn map_config_err(err: ConfigError) -> KesticServiceErr {
     }
 }
 
-pub(super) fn map_provider_err(err: ResticProviderError) -> KesticServiceErr {
+pub(super) fn map_provider_err(err: &ResticProviderError) -> KesticServiceErr {
     KesticServiceErr::ResticUnavailable(err.to_string())
 }
 

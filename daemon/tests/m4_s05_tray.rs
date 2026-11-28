@@ -55,7 +55,7 @@ fn ac_m4_05_24_tray_entry_restore_files() {
                     assume_sni_available: false,
                     ..sandbox_run_config(root)
                 };
-                move || run_daemon(cfg)
+                move || run_daemon(&cfg)
             });
             wait_for_file(&root.join("daemon.ready"), common::DAEMON_READY_TIMEOUT);
             let sni = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
@@ -133,7 +133,7 @@ fn ac_m4_05_24_tray_entry_restore_files() {
                     suppress_ui_spawn: false,
                     ..sandbox_run_config(root)
                 };
-                move || run_daemon(cfg)
+                move || run_daemon(&cfg)
             });
             wait_for_file(&root.join("daemon.ready"), common::DAEMON_READY_TIMEOUT);
             let sni = wait_for_sni_service_at(&watcher_conn, 1, Duration::from_secs(5));

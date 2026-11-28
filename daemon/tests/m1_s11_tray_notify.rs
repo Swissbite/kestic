@@ -70,7 +70,7 @@ struct SniTestCtx<'a> {
 fn assert_real_daemon_sni_state(
     ctx: &mut SniTestCtx<'_>,
     sub_name: &str,
-    cfg: AppConfig,
+    cfg: &AppConfig,
     seeded_status: Option<(RunStatus, Option<i32>)>,
     expected_status: &str,
     expected_overlay: &str,
@@ -81,7 +81,7 @@ fn assert_real_daemon_sni_state(
     let ready_file = sub.join("daemon.ready");
     fs::create_dir_all(&state_dir).expect("mkdir state");
 
-    save_config(&cfg_path, &cfg).expect("save config");
+    save_config(&cfg_path, cfg).expect("save config");
     if let Some((st, exit_code)) = seeded_status {
         let clock = SystemClock;
         let mut run = Run::new_backup(&clock, &cfg.backups[0]).expect("new run");
@@ -100,7 +100,7 @@ fn assert_real_daemon_sni_state(
         ..sandbox_run_config(ctx.root)
     };
 
-    let handle = thread::spawn(move || run_daemon(run_cfg));
+    let handle = thread::spawn(move || run_daemon(&run_cfg));
     wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
     let sni_svc = wait_for_sni_service_at(ctx.watcher_conn, ctx.sni_idx, Duration::from_secs(5));
     ctx.sni_idx += 1;
@@ -136,7 +136,7 @@ fn assert_running_backup_sni_state(ctx: &mut SniTestCtx<'_>) {
         kestic_binary: Some(ctx.kestic_bin.to_path_buf()),
         ..sandbox_run_config(ctx.root)
     };
-    let handle = thread::spawn(move || run_daemon(run_cfg));
+    let handle = thread::spawn(move || run_daemon(&run_cfg));
     wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
     let sni_svc = wait_for_sni_service_at(ctx.watcher_conn, ctx.sni_idx, Duration::from_secs(5));
     ctx.sni_idx += 1;
@@ -271,13 +271,8 @@ fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
             fs::create_dir_all(&repo_dir).expect("mkdir repo");
             fs::create_dir_all(&src_dir).expect("mkdir src");
 
-            let dest = Destination::new(
-                "Local Matrix",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
-            )
-            .expect("dest");
+            let dest = Destination::new("Local Matrix", DestinationKind::Local { path: repo_dir })
+                .expect("dest");
 
             let mut hourly_backup =
                 Backup::new("Hourly Docs", Source::folder(&src_dir), dest.id.clone())
@@ -350,7 +345,7 @@ fn ac_m1_11_1_full_section_10_1_sni_matrix_including_simulated_statuses() {
                 assert_real_daemon_sni_state(
                     &mut ctx,
                     name,
-                    AppConfig {
+                    &AppConfig {
                         restic_provider: provider,
                         destinations: vec![dest.clone()],
                         backups: vec![backup],
@@ -392,7 +387,7 @@ fn ac_m1_11_2_11_3_11_5_dbusmenu_items_quit_confirmation_and_active_progress() {
                 ..sandbox_run_config(root)
             };
 
-            let handle = thread::spawn(move || run_daemon(run_cfg));
+            let handle = thread::spawn(move || run_daemon(&run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
@@ -526,7 +521,7 @@ fn ac_m1_11_4_notifications_only_on_error_and_warning_with_desktop_entry() {
             let ready_file = root.join("daemon.ready");
             let run_cfg = sandbox_run_config(root);
 
-            let handle = thread::spawn(move || run_daemon(run_cfg));
+            let handle = thread::spawn(move || run_daemon(&run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
             let client = common::connect_default_client().expect("connect client");
@@ -730,7 +725,7 @@ fn tray_open_and_quit_respect_live_gui_registration_and_recover_from_stale_windo
                 ..sandbox_run_config(root)
             };
 
-            let handle = thread::spawn(move || run_daemon(run_cfg));
+            let handle = thread::spawn(move || run_daemon(&run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
 
@@ -845,7 +840,7 @@ fn ac_m1_11_6_tray_version_line_opens_about_kestic() {
                 suppress_ui_spawn: false,
                 ..sandbox_run_config(root)
             };
-            let handle = thread::spawn(move || run_daemon(run_cfg));
+            let handle = thread::spawn(move || run_daemon(&run_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
             let sni_svc = wait_for_sni_service(&watcher_conn, Duration::from_secs(5));
             let client = common::connect_default_client().expect("connect client");

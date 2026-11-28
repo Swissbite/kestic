@@ -138,11 +138,12 @@ impl PreparedInstall {
     /// Makes the new binary executable for everyone, writes it to disk and moves it over the
     /// app-managed binary with `rename`.
     pub fn commit(mut self) -> Result<Version, InstallError> {
-        fs::set_permissions(&self.temp, fs::Permissions::from_mode(0o755)).map_err(write_failed)?;
+        fs::set_permissions(&self.temp, fs::Permissions::from_mode(0o755))
+            .map_err(|e| write_failed(&e))?;
         File::open(&self.temp)
             .and_then(|file| file.sync_all())
-            .map_err(write_failed)?;
-        fs::rename(&self.temp, &self.target).map_err(write_failed)?;
+            .map_err(|e| write_failed(&e))?;
+        fs::rename(&self.temp, &self.target).map_err(|e| write_failed(&e))?;
         self.committed = true;
         // The binary is in place; a failed sync of the folder only delays when the rename
         // survives a power loss.
@@ -356,7 +357,7 @@ fn prepare_observed(
     stop_if_cancelled(observer)?;
 
     let temp = request.data_dir.join(temp_name());
-    let mut file = create_exclusive(&temp).map_err(write_failed)?;
+    let mut file = create_exclusive(&temp).map_err(|e| write_failed(&e))?;
     let mut prepared = PreparedInstall {
         temp,
         target,
@@ -365,7 +366,7 @@ fn prepare_observed(
         committed: false,
     };
     unpack(&archive, &mut file, &plan.archive_name)?;
-    file.sync_all().map_err(write_failed)?;
+    file.sync_all().map_err(|e| write_failed(&e))?;
     // The file must be closed before it runs (Linux refuses to run a file open for writing).
     drop(file);
     prepared.version = check_binary_version(&prepared.temp, &version, VERSION_TIMEOUT)?;
@@ -373,7 +374,7 @@ fn prepare_observed(
     Ok(Preparation::Ready(prepared))
 }
 
-fn write_failed(err: std::io::Error) -> InstallError {
+fn write_failed(err: &std::io::Error) -> InstallError {
     InstallError::WriteFailed(err.to_string())
 }
 
@@ -382,14 +383,14 @@ fn write_failed(err: std::io::Error) -> InstallError {
 /// permissions of its target stay as they are.
 fn prepare_data_dir(dir: &Path) -> Result<(), InstallError> {
     if let Some(parent) = dir.parent() {
-        fs::create_dir_all(parent).map_err(write_failed)?;
+        fs::create_dir_all(parent).map_err(|e| write_failed(&e))?;
     }
     match fs::DirBuilder::new().mode(0o700).create(dir) {
         Ok(()) => return Ok(()),
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(write_failed(err)),
+        Err(err) => return Err(write_failed(&err)),
     }
-    let meta = fs::symlink_metadata(dir).map_err(write_failed)?;
+    let meta = fs::symlink_metadata(dir).map_err(|e| write_failed(&e))?;
     if !meta.is_dir() {
         return Err(InstallError::WriteFailed(format!(
             "{} is not a folder",
@@ -399,7 +400,7 @@ fn prepare_data_dir(dir: &Path) -> Result<(), InstallError> {
     let mode = meta.permissions().mode() & 0o7777;
     if mode & 0o077 != 0 {
         fs::set_permissions(dir, fs::Permissions::from_mode(mode & !0o077))
-            .map_err(write_failed)?;
+            .map_err(|e| write_failed(&e))?;
     }
     Ok(())
 }
@@ -525,7 +526,7 @@ pub(crate) fn unpack(archive: &[u8], out: &mut File, name: &str) -> Result<u64, 
                 "{name} unpacks to more than {UNPACKED_LIMIT} bytes"
             )));
         }
-        out.write_all(&buf[..n]).map_err(write_failed)?;
+        out.write_all(&buf[..n]).map_err(|e| write_failed(&e))?;
     }
     if written == 0 {
         return Err(InstallError::AssetMissing(format!("{name} (empty)")));

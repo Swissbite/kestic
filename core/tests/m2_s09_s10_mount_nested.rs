@@ -212,11 +212,11 @@ impl PreflightTestHarness<'_> {
         &self,
         backup: &Backup,
         inspector: &FakeMountInspector,
-        expected: SourceCheckResult,
+        expected: &SourceCheckResult,
     ) {
         assert_eq!(
             check_source_status_with(backup, Some(self.home_dir), inspector),
-            expected
+            *expected
         );
         let err = execute_backup_with_inspector(
             backup,
@@ -237,7 +237,7 @@ impl PreflightTestHarness<'_> {
             BackupRunError::SourceUnavailable(expected.clone()).to_string()
         );
         assert!(
-            matches!(err, BackupRunError::SourceUnavailable(ref got) if *got == expected),
+            matches!(err, BackupRunError::SourceUnavailable(ref got) if got == expected),
             "unexpected error: {err:?}"
         );
         assert!(
@@ -275,7 +275,7 @@ fn verify_drive_mismatch_cases(
     harness.assert_blocked(
         backup_uuid,
         &wrong_uuid_inspector,
-        SourceCheckResult::DriveMismatch,
+        &SourceCheckResult::DriveMismatch,
     );
 
     // Case (b2): Different mount_source or different fs_type on UUID-less mount.
@@ -291,7 +291,7 @@ fn verify_drive_mismatch_cases(
     harness.assert_blocked(
         backup_nfs,
         &wrong_source_inspector,
-        SourceCheckResult::DriveMismatch,
+        &SourceCheckResult::DriveMismatch,
     );
 
     let wrong_fstype_inspector = FakeMountInspector::new(FakeMountState {
@@ -306,7 +306,7 @@ fn verify_drive_mismatch_cases(
     harness.assert_blocked(
         backup_nfs,
         &wrong_fstype_inspector,
-        SourceCheckResult::DriveMismatch,
+        &SourceCheckResult::DriveMismatch,
     );
 }
 
@@ -340,13 +340,7 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     };
     let runtime = rig.runtime_with(&resolved);
 
-    let dest = Destination::new(
-        "Local",
-        DestinationKind::Local {
-            path: repo_dir.clone(),
-        },
-    )
-    .expect("dest");
+    let dest = Destination::new("Local", DestinationKind::Local { path: repo_dir }).expect("dest");
 
     let backup_uuid = Backup::new(
         "USB Drive",
@@ -405,7 +399,7 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     harness.assert_blocked(
         &backup_uuid,
         &unmounted_inspector,
-        SourceCheckResult::DriveNotMounted,
+        &SourceCheckResult::DriveNotMounted,
     );
 
     verify_drive_mismatch_cases(&harness, &backup_uuid, &backup_nfs, &mount_uuid, &mount_nfs);
@@ -432,7 +426,7 @@ fn ac_m2_09_4_drive_preflight_blocks_manual_run_with_zero_restic_invocations() {
     harness.assert_blocked(
         &backup_uuid,
         &empty_drive_inspector,
-        SourceCheckResult::DriveEmpty,
+        &SourceCheckResult::DriveEmpty,
     );
 }
 
@@ -691,8 +685,7 @@ fn ac_m2_10_2_nested_sources_on_different_destinations_produce_no_warning() {
     )
     .expect("dest b");
 
-    let backup_home =
-        Backup::new("Home", Source::folder("/home/david"), dest_a.id.clone()).expect("home");
+    let backup_home = Backup::new("Home", Source::folder("/home/david"), dest_a.id).expect("home");
     let backup_pictures = Backup::new(
         "Bilder",
         Source::folder("/home/david/Bilder"),

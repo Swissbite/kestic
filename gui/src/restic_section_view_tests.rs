@@ -175,7 +175,7 @@ fn ac_m5_07_5_switch_hint_and_remove_offer() {
     };
     let automatic = ResticStatusDto {
         system: chosen.system.clone(),
-        app_managed: chosen.app_managed.clone(),
+        app_managed: chosen.app_managed,
         ..automatic
     };
     let view = restic_section_view(&automatic);

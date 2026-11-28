@@ -602,7 +602,7 @@ fn ac_m6_36_7_e_9_d_credentials_of_a_rest_destination() {
             // AC-9 (d): a refused save writes none of its credentials.
             rig.wrapper.hold("cat");
             let bus = rig.variant.bus_name("S36R7E");
-            let attempt = saved.clone();
+            let attempt = saved;
             let entered = strong_password();
             let saving = thread::spawn(move || {
                 let other = KesticClient::connect(&bus, KESTIC_OBJECT_PATH).expect("client");
