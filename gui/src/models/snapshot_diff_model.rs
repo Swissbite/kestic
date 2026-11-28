@@ -11,7 +11,7 @@ use super::snapshot_query::{
     Fetched, QueryList, QueryListModel, QueryListView, count_text, format_count, to_i32,
     too_large_text,
 };
-use crate::state_cache::{i18n, i18np, tr};
+use crate::i18n::{i18n, i18np, tr};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QString, QStringList};

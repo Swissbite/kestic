@@ -525,7 +525,8 @@ fn m3_14_1_schedule_editor_preselects_daily_1200_and_offers_the_frequencies() {
     );
 }
 
-/// AC-M3-14-2 (no weekday / every 0 days) and AC-M3-14-6 (schedule editor).
+/// AC-M3-14-2 (no weekday / every 0 days) and AC-M3-14-6 (schedule editor). Also AC-M6-34-3 (a):
+/// «every n days» starts with core's default 3, and the field and its message use core's range.
 #[test]
 fn m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable() {
     run_isolated_test(
@@ -558,6 +559,8 @@ fn m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable() 
 }
 
 /// AC-M3-14-8 (d) and AC-M3-14-9 for the schedule editor.
+/// Also AC-M6-34-2 (c) and AC-M6-34-4 (b): the editor, whose fields go through `core`, behaves
+/// as before, and the smoke fails on any QML warning.
 #[test]
 fn m3_14_8_14_9_schedule_editor_asks_before_leaving_and_discard_keeps_config() {
     run_isolated_test(
@@ -748,6 +751,8 @@ fn saved_maintenance_of(rig: &M3Rig, dest: &Destination) -> MaintenanceSchedule 
 
 /// AC-M3-14-5, AC-M3-05-7 (a): the maintenance editor shows the prune preview before confirming;
 /// the confirmed prune schedule is persisted.
+/// Also AC-M6-34-2 (c) and AC-M6-34-4 (b): the editor, whose fields go through `core`, behaves
+/// as before, and the smoke fails on any QML warning.
 #[test]
 fn m3_14_5_05_7_maintenance_editor_shows_prune_preview_before_confirming() {
     run_isolated_test(

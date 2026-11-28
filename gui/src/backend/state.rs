@@ -6,16 +6,19 @@
 
 use super::daemon_call::Lane;
 use super::qobject;
+use crate::daemon_client::initialize_and_sync;
 use crate::daemon_events::{attach_gui_thread, request_refresh, start_daemon_in_background};
+use crate::i18n::{daemon_unavailable_text, i18n};
 use crate::overall_text::{
-    back_up_all_availability, localized_blocking_message, overall_headline, overall_subtitle,
+    back_up_all_hint, localized_blocking_message, overall_headline, overall_subtitle,
 };
 use crate::restic_section_view::restic_section_view;
-use crate::state_cache::{
-    daemon_unavailable_text, format_overall_visual, format_pause_line, i18n, initialize_and_sync,
-    localized_condition_override_message, localized_manual_block_message,
-    localized_unmet_conditions, lookup_backup_summary, shared_state,
+use crate::state_cache::{lookup_backup_summary, shared_state};
+use crate::status_texts::{
+    format_overall_visual, localized_condition_override_message, localized_manual_block_message,
+    localized_unmet_conditions,
 };
+use crate::summary_texts::format_pause_line;
 use crate::time_texts::daemon_now;
 use cxx_qt::Threading;
 use cxx_qt_lib::QString;
@@ -32,7 +35,6 @@ impl qobject::KesticApp {
     pub fn initialize(mut self: Pin<&mut Self>) {
         attach_gui_thread(self.qt_thread());
         initialize_and_sync();
-        self.as_mut().set_initialized(true);
         self.as_mut().apply_cached_state();
         let (show_quit, show_about, show_restore) = {
             let guard = shared_state().lock_unpoisoned();
@@ -54,7 +56,6 @@ impl qobject::KesticApp {
             self.as_mut().set_quit_has_running_run(has_running);
             self.as_mut()
                 .set_quit_running_backup_name(QString::from(&running_name));
-            self.as_mut().set_show_quit_dialog_on_start(true);
             self.as_mut()
                 .quit_confirmation_requested(has_running, QString::from(&running_name));
         }
@@ -155,8 +156,6 @@ impl qobject::KesticApp {
         } else {
             let msg = localized_manual_block_message(&backup_name, reason);
             self.as_mut()
-                .set_manual_run_blocked_backup_id(QString::from(&backup_id));
-            self.as_mut()
                 .set_manual_run_blocked_message(QString::from(&msg));
         }
     }
@@ -201,10 +200,7 @@ impl qobject::KesticApp {
         self.as_mut().set_backups_have_attention(false);
         self.as_mut().set_destinations_have_attention(false);
         self.as_mut().set_backups_count(0);
-        self.as_mut().set_startable_backups_count(0);
         self.as_mut().set_back_up_all_hint(QString::from(""));
-        self.as_mut().set_destinations_count(0);
-        self.as_mut().set_runs_count(0);
         self.as_mut().set_global_paused(false);
         self.as_mut().set_global_paused_line(QString::from(""));
         self.as_mut().set_default_overdue_threshold(2);
@@ -264,9 +260,6 @@ impl qobject::KesticApp {
 
         let now = daemon_now(&state);
         self.as_mut().set_has_config_file(state.has_config_file);
-        self.as_mut().set_config_load_error(QString::from(
-            state.config_load_error.as_deref().unwrap_or(""),
-        ));
         self.as_mut().set_expert_mode(state.config.expert_mode);
         self.as_mut()
             .set_daemon_version(QString::from(&state.daemon_version));
@@ -316,14 +309,8 @@ impl qobject::KesticApp {
             .set_destinations_have_attention(state.overall.destinations_have_attention);
         self.as_mut()
             .set_backups_count(i32::try_from(state.backups.len()).unwrap_or(0));
-        let (startable, hint) = back_up_all_availability(&state);
-        self.as_mut()
-            .set_startable_backups_count(i32::try_from(startable).unwrap_or(0));
+        let hint = back_up_all_hint(&state);
         self.as_mut().set_back_up_all_hint(QString::from(&hint));
-        self.as_mut()
-            .set_destinations_count(i32::try_from(state.destinations.len()).unwrap_or(0));
-        self.as_mut()
-            .set_runs_count(i32::try_from(state.recent_runs.len()).unwrap_or(0));
 
         // Same formatter as the per-backup card so banner and card show identical times.
         let global_paused_line = if state.overall.paused {

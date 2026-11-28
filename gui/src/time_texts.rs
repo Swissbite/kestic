@@ -4,7 +4,8 @@
 //! Dates and times as the GUI shows them: in the local time zone, relative to the daemon's
 //! clock where one is known.
 
-use crate::state_cache::{i18n, shared_state};
+use crate::i18n::i18n;
+use crate::state_cache::shared_state;
 use kestic_core::clock::{Clock, SystemClock};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::DaemonStateDto;

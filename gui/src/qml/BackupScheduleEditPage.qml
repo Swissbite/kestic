@@ -20,14 +20,16 @@ EditorPage {
     property int savedOverdueThreshold: 0
     property bool hydrating: false
 
+    // The fields; the first load fills them with the values core starts the editor with.
+    property bool loaded: false
     property string scheduleKind: "daily"
-    property var selectedWeekdays: ["monday"]
-    property int intervalDays: 3
+    property var selectedWeekdays: []
+    property int intervalDays: 0
     property string startDate: ""
-    property int hour: 12
+    property int hour: 0
     property int minute: 0
     property bool useGlobalOverdue: true
-    property int customOverdueThreshold: 2
+    property int customOverdueThreshold: 0
     property var previewSlots: []
 
     readonly property var frequencyOptions: [
@@ -51,29 +53,24 @@ EditorPage {
         return appBackend.todayIsoDate();
     }
 
-    function isoWeekdayToKey(num) {
-        var keys = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-        if (num >= 1 && num <= 7) return keys[num - 1];
-        return "monday";
+    // The fields as core reads them.
+    function currentForm() {
+        return {
+            kind: scheduleKind,
+            weekdays: selectedWeekdays,
+            interval_days: intervalDays,
+            start_date: startDate,
+            hour: hour,
+            minute: minute,
+            use_global_overdue: useGlobalOverdue,
+            custom_overdue_threshold: customOverdueThreshold
+        };
     }
 
-    function parseIsoDateOrToday(s) {
-        var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec((s || "").trim());
-        if (m) {
-            var y = parseInt(m[1], 10);
-            var mo = parseInt(m[2], 10);
-            var d = parseInt(m[3], 10);
-            var dt = new Date(y, mo - 1, d);
-            if (!isNaN(dt.getTime())) {
-                return dt;
-            }
-        }
-        var fallback = /^(\d{4})-(\d{2})-(\d{2})$/.exec(todayIsoDate());
-        if (fallback) {
-            return new Date(parseInt(fallback[1], 10), parseInt(fallback[2], 10) - 1, parseInt(fallback[3], 10));
-        }
-        return new Date();
-    }
+    // What core makes of the fields: the schedule, the overdue threshold, whether they differ
+    // from the saved ones, and the day the date picker opens on.
+    readonly property var formState: rootWindow.parseJsonOr(appBackend.scheduleFormState(
+        JSON.stringify(currentForm()), savedScheduleJson, savedOverdueThreshold), ({}))
 
     readonly property var validationResult: rootWindow.parseJsonOr(
         appBackend.validateScheduleJson(currentScheduleJson()), { field: "", message: "" })
@@ -84,82 +81,12 @@ EditorPage {
     readonly property bool weekdaysInvalid: validationField === "weekdays"
     readonly property bool valid: validationError === ""
 
-    function currentScheduleObj() {
-        if (scheduleKind === "manual_only") {
-            return { kind: "manual_only" };
-        }
-        if (scheduleKind === "specific_weekdays") {
-            return {
-                kind: "specific_weekdays",
-                weekdays: selectedWeekdays.slice(),
-                hour: hour,
-                minute: minute
-            };
-        }
-        if (scheduleKind === "every_n_days") {
-            return {
-                kind: "every_n_days",
-                interval_days: intervalDays,
-                start_date: startDate.trim(),
-                hour: hour,
-                minute: minute
-            };
-        }
-        return {
-            kind: "daily",
-            hour: hour,
-            minute: minute
-        };
-    }
-
     function currentScheduleJson() {
-        return JSON.stringify(currentScheduleObj());
+        return JSON.stringify(formState.schedule || {});
     }
 
-    function normalizedScheduleJson(rawJson) {
-        var obj = rootWindow.parseJsonOr(rawJson, {});
-        if (obj.kind === "weekly") {
-            return JSON.stringify({
-                kind: "specific_weekdays",
-                weekdays: [isoWeekdayToKey(obj.weekday || 1)],
-                hour: obj.hour !== undefined ? obj.hour : 12,
-                minute: obj.minute !== undefined ? obj.minute : 0
-            });
-        }
-        if (obj.kind === "specific_weekdays") {
-            var days = (obj.weekdays || []).slice();
-            days.sort();
-            return JSON.stringify({
-                kind: "specific_weekdays",
-                weekdays: days,
-                hour: obj.hour !== undefined ? obj.hour : 12,
-                minute: obj.minute !== undefined ? obj.minute : 0
-            });
-        }
-        if (obj.kind === "every_n_days") {
-            return JSON.stringify({
-                kind: "every_n_days",
-                interval_days: obj.interval_days !== undefined ? obj.interval_days : 3,
-                start_date: (obj.start_date || todayIsoDate()).trim(),
-                hour: obj.hour !== undefined ? obj.hour : 12,
-                minute: obj.minute !== undefined ? obj.minute : 0
-            });
-        }
-        if (obj.kind === "manual_only") {
-            return JSON.stringify({ kind: "manual_only" });
-        }
-        return JSON.stringify({
-            kind: "daily",
-            hour: obj.hour !== undefined ? obj.hour : 12,
-            minute: obj.minute !== undefined ? obj.minute : 0
-        });
-    }
-
-    readonly property int effectiveOverdueThreshold: useGlobalOverdue ? 0 : customOverdueThreshold
-    dirty: initialData !== null && (
-        normalizedScheduleJson(currentScheduleJson()) !== normalizedScheduleJson(savedScheduleJson)
-        || effectiveOverdueThreshold !== savedOverdueThreshold
-    )
+    readonly property int effectiveOverdueThreshold: formState.overdue_threshold || 0
+    dirty: initialData !== null && formState.dirty === true
 
     function refreshPreview() {
         if (!valid || scheduleKind === "manual_only") {
@@ -172,37 +99,18 @@ EditorPage {
 
     function loadFromSaved(schedJson, thresholdVal) {
         hydrating = true;
-        var obj = rootWindow.parseJsonOr(schedJson, {});
-        if (obj.kind === "weekly") {
-            scheduleKind = "specific_weekdays";
-            selectedWeekdays = [isoWeekdayToKey(obj.weekday || 1)];
-            hour = obj.hour !== undefined ? obj.hour : 12;
-            minute = obj.minute !== undefined ? obj.minute : 0;
-        } else if (obj.kind === "specific_weekdays") {
-            scheduleKind = "specific_weekdays";
-            selectedWeekdays = (obj.weekdays && obj.weekdays.length > 0) ? obj.weekdays.slice() : ["monday"];
-            hour = obj.hour !== undefined ? obj.hour : 12;
-            minute = obj.minute !== undefined ? obj.minute : 0;
-        } else if (obj.kind === "every_n_days") {
-            scheduleKind = "every_n_days";
-            intervalDays = obj.interval_days !== undefined ? obj.interval_days : 3;
-            startDate = obj.start_date || todayIsoDate();
-            hour = obj.hour !== undefined ? obj.hour : 12;
-            minute = obj.minute !== undefined ? obj.minute : 0;
-        } else if (obj.kind === "manual_only") {
-            scheduleKind = "manual_only";
-            hour = 12;
-            minute = 0;
-        } else {
-            scheduleKind = "daily";
-            hour = obj.hour !== undefined ? obj.hour : 12;
-            minute = obj.minute !== undefined ? obj.minute : 0;
-        }
-        if (!startDate || startDate === "") {
-            startDate = todayIsoDate();
-        }
-        useGlobalOverdue = thresholdVal <= 0;
-        customOverdueThreshold = thresholdVal > 0 ? thresholdVal : Math.max(1, appBackend.default_overdue_threshold);
+        // Fields the saved schedule does not use keep their value, except on the first load.
+        var form = rootWindow.parseJsonOr(appBackend.scheduleFormJson(
+            schedJson, thresholdVal, loaded ? JSON.stringify(currentForm()) : ""), {});
+        loaded = true;
+        scheduleKind = form.kind;
+        selectedWeekdays = form.weekdays;
+        intervalDays = form.interval_days;
+        startDate = form.start_date;
+        hour = form.hour;
+        minute = form.minute;
+        useGlobalOverdue = form.use_global_overdue;
+        customOverdueThreshold = form.custom_overdue_threshold;
         hydrating = false;
         refreshPreview();
     }
@@ -258,7 +166,7 @@ EditorPage {
             savedOverdueThreshold = initialData.overdueThreshold;
             loadFromSaved(savedScheduleJson, savedOverdueThreshold);
         } else {
-            loadFromSaved("{\"kind\":\"daily\",\"hour\":12,\"minute\":0}", 0);
+            loadFromSaved("", 0);
         }
     }
 
@@ -413,7 +321,7 @@ EditorPage {
                         bottomPadding: 0
                         anchors.centerIn: parent
                         from: 0
-                        to: 365
+                        to: page.formState.interval_days_max
                         value: page.intervalDays
                         editable: true
                         Accessible.name: i18n("Interval in days")
@@ -471,7 +379,8 @@ EditorPage {
                     }
 
                     onClicked: {
-                        startDatePickerPopup.value = page.parseIsoDateOrToday(page.startDate);
+                        var day = page.formState.picker_date;
+                        startDatePickerPopup.value = new Date(day.year, day.month - 1, day.day);
                         startDatePickerPopup.open();
                     }
                 }

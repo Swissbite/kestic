@@ -10,12 +10,15 @@ use super::revisions::{
 };
 use super::{Finish, dbus_error_text, qobject};
 use crate::daemon_events::request_refresh;
-use crate::state_cache::{
-    build_new_backup, cached_destination_kind, clone_updated_backup_excludes,
-    clone_updated_backup_retention, clone_updated_backup_source, daemon_unavailable_text, i18n,
+use crate::dto_builders::{
+    build_new_backup, clone_updated_backup_excludes, clone_updated_backup_retention,
+    clone_updated_backup_source,
+};
+use crate::i18n::{daemon_unavailable_text, i18n, not_found_text};
+use crate::state_cache::{cached_destination_kind, lookup_backup_summary, shared_state};
+use crate::status_texts::{
     localized_condition_override_message, localized_manual_block_message,
-    localized_start_all_summary, localized_unmet_conditions, lookup_backup_summary, not_found_text,
-    shared_state,
+    localized_start_all_summary, localized_unmet_conditions,
 };
 use cxx_qt_lib::QString;
 use kestic_core::backup::build_backup_command_spec;
@@ -118,8 +121,6 @@ impl qobject::KesticApp {
         } else {
             let msg = localized_manual_block_message(&backup_name, reason_code);
             self.as_mut()
-                .set_manual_run_blocked_backup_id(QString::from(b_id));
-            self.as_mut()
                 .set_manual_run_blocked_message(QString::from(&msg));
         }
     }
@@ -185,8 +186,6 @@ impl qobject::KesticApp {
     pub fn dismiss_manual_run_blocked(mut self: Pin<&mut Self>) {
         self.as_mut()
             .set_manual_run_blocked_message(QString::from(""));
-        self.as_mut()
-            .set_manual_run_blocked_backup_id(QString::from(""));
     }
 
     pub fn add_backup(
@@ -322,7 +321,7 @@ impl qobject::KesticApp {
                 if is_conflict(&result) {
                     return (false, CONFLICT_ANSWER.to_string());
                 }
-                match app.finish_checked(result, Finish::Saved) {
+                match app.finish_checked(result, Finish::Plain) {
                     Some(new_revision) => (true, new_revision),
                     None => (false, String::new()),
                 }

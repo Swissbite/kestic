@@ -5,11 +5,12 @@
 
 use super::qobject;
 use super::rows::{id_at, row_map, row_of};
+use crate::dto_builders::json_or;
+use crate::i18n::i18n;
 use crate::overall_text::maintenance_status_line;
-use crate::state_cache::{
-    format_destination_status, format_maintenance_entry, format_slot_timestamp, i18n, json_or,
-    shared_state,
-};
+use crate::state_cache::shared_state;
+use crate::status_texts::format_destination_status;
+use crate::summary_texts::{format_maintenance_entry, format_slot_timestamp};
 use crate::time_texts::{daemon_now, format_datetime_display};
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;

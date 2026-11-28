@@ -11,7 +11,7 @@ use crate::dbus_api::{
     DaemonStateDto, DestinationSummaryDto, OverallStatusDto, OverallStatusKind, ResticStatusDto,
     blocking_message,
 };
-use crate::dbus_server::{emit_run_updated, emit_status_changed};
+use crate::dbus_server::{emit_run_updated, emit_status_changed, emit_status_changed_async};
 use crate::i18n::{i18n, tr};
 use crate::tray::{KesticTrayState, TrayBackupItem, TrayHandle, compute_tray_presentation};
 use kestic_core::history::{BackupRuntimeState, PauseState};
@@ -50,7 +50,6 @@ pub(super) struct NewActiveRun<'a> {
 pub(super) struct ActivatedRun {
     pub(super) cancel: CancelHandle,
     pub(super) conn_opt: Option<Connection>,
-    pub(super) tray_opt: Option<Arc<TrayHandle>>,
 }
 
 struct OverallStatusCounts {
@@ -97,7 +96,7 @@ struct BackupPendingSummaryInput<'a> {
 
 /// The state snapshot taken under the daemon lock, published (tray and `StatusChanged`) after
 /// the lock is released.
-pub(super) struct StatePublication {
+pub(crate) struct StatePublication {
     conn: Option<Connection>,
     state_dto: DaemonStateDto,
     tray: Option<Arc<TrayHandle>>,
@@ -114,11 +113,21 @@ impl StatePublication {
             emit_status_changed(conn, &self.state_dto);
         }
     }
+
+    /// [`Self::publish`] for a D-Bus method: the method returns once `StatusChanged` is sent.
+    pub(crate) async fn publish_async(self) {
+        if let Some(tray) = self.tray {
+            tray.set_full_state(self.tray_state);
+        }
+        if let Some(conn) = &self.conn {
+            emit_status_changed_async(conn, &self.state_dto).await;
+        }
+    }
 }
 
 impl DaemonCore {
     /// The state snapshot to publish once the lock is released.
-    pub(super) fn state_publication(&self) -> StatePublication {
+    pub(crate) fn state_publication(&self) -> StatePublication {
         let (state_dto, tray_state) = self.build_state_and_tray();
         StatePublication {
             conn: self.conn.clone(),
@@ -192,17 +201,12 @@ impl DaemonCore {
         }
 
         let conn_opt = self.conn.clone();
-        let tray_opt = self.tray.clone();
         let state_dto = self.push_tray_state();
         if let Some(conn) = &conn_opt {
             emit_run_updated(conn, new.run);
             emit_status_changed(conn, &state_dto);
         }
-        ActivatedRun {
-            cancel,
-            conn_opt,
-            tray_opt,
-        }
+        ActivatedRun { cancel, conn_opt }
     }
 
     /// Why the daemon stopped the active run `run_id`, if it did (sleep or `SIGTERM`).

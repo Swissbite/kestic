@@ -564,9 +564,9 @@ msgstr "Erneut versuchen"
 msgid "Select at least one weekday."
 msgstr "Mindestens einen Wochentag auswählen."
 
-#: gui/src/backend/schedules.rs:560
-msgid "Interval must be between 2 and 365 days."
-msgstr "Das Intervall muss zwischen 2 und 365 Tagen liegen."
+#: gui/src/backend/schedules.rs:465
+msgid "Interval must be between %1 and %2 days."
+msgstr "Das Intervall muss zwischen %1 und %2 Tagen liegen."
 
 #: gui/src/backend/schedules.rs:565
 msgid "Enter a valid start date in YYYY-MM-DD format."
@@ -2603,24 +2603,23 @@ msgstr "Letzter"
 msgid "Maintenance schedule saved"
 msgstr "Wartungszeitplan gespeichert"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:166
+#: gui/src/backend/forms.rs:148
 msgid "Data blocks to remove: %1"
 msgstr "Zu entfernende Datenblöcke: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:169
+#: gui/src/backend/forms.rs:151
 msgid "Data blocks to keep: %1"
 msgstr "Zu behaltende Datenblöcke: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:176
+#: gui/src/backend/forms.rs:154
 msgid "Space to free: %1"
 msgstr "Frei werdender Speicher: %1"
 
-#: gui/src/qml/DestinationMaintenancePage.qml:179
+#: gui/src/backend/forms.rs:157
 msgid "The preview reported no data to remove."
 msgstr "Die Vorschau meldet keine Daten, die entfernt würden."
 
-#: gui/src/qml/DestinationMaintenancePage.qml:186
-#: gui/src/qml/DestinationMaintenancePage.qml:197
+#: gui/src/backend/forms.rs:143
 msgid "The preview could not read the repository. It may be unreachable or locked."
 msgstr "Die Vorschau konnte das Repository nicht lesen. Es ist vielleicht nicht erreichbar oder gesperrt."
 

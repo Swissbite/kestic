@@ -7,7 +7,8 @@
 use super::qobject;
 use super::rows::{id_at, row_of};
 use crate::backend::restore::restore_cache;
-use crate::state_cache::{i18np, shared_state, tr};
+use crate::i18n::{i18np, tr};
+use crate::state_cache::shared_state;
 use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};

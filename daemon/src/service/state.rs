@@ -9,10 +9,11 @@ use super::restic_status::restic_status_with;
 use super::restore_runner::{PendingRestore, RestoreClaim};
 use super::run_errors::unreadable_items_from_lines;
 use super::snapshot_queries::SharedResult;
+use super::state_summary::StatePublication;
 use super::supervision::SupervisionConfig;
 use crate::dbus_api::{
-    ActiveRunProgressDto, BlockingStateDto, DaemonStateDto, DestinationAvailabilityDto,
-    KESTIC_BUS_NAME, ResticStatusDto, SecretStoreStatusDto,
+    ActiveRunProgressDto, BlockingStateDto, DestinationAvailabilityDto, KESTIC_BUS_NAME,
+    ResticStatusDto, SecretStoreStatusDto,
 };
 use crate::i18n::tr;
 use crate::job_view::DEFAULT_JOB_VIEW_DEST;
@@ -900,15 +901,7 @@ pub(crate) fn refresh_probe_unlocked(shared: &Arc<Mutex<DaemonCore>>) {
 pub(crate) fn set_restic_provider_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     provider_json: &str,
-) -> Result<
-    (
-        ResticStatusDto,
-        Option<Connection>,
-        DaemonStateDto,
-        KesticTrayState,
-    ),
-    KesticServiceErr,
-> {
+) -> Result<(ResticStatusDto, StatePublication), KesticServiceErr> {
     let provider: ResticProvider = serde_json::from_str(provider_json)
         .map_err(|e| KesticServiceErr::InvalidInput(format!("invalid provider JSON: {e}")))?;
     let secret_store = {
@@ -945,6 +938,5 @@ pub(crate) fn set_restic_provider_unlocked(
     guard.persist_config(next)?;
     guard.record_probe(probe);
     restic_status.install_id = guard.running_restic_install();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((restic_status, guard.conn.clone(), state_dto, tray_state))
+    Ok((restic_status, guard.state_publication()))
 }

@@ -13,7 +13,8 @@ use crate::destination_input::{
     build_destination, connection_test_input, connection_test_outcome, generic_credentials_error,
     generic_env_error, generic_url_error, rest_url_error, revision_of_fields,
 };
-use crate::state_cache::{daemon_unavailable_text, i18n, i18np, shared_state, tr, tr_text};
+use crate::i18n::{daemon_unavailable_text, i18n, i18np, tr, tr_text};
+use crate::state_cache::shared_state;
 use cxx_qt_lib::QString;
 use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
@@ -301,10 +302,7 @@ impl qobject::KesticApp {
                     return (false, String::new());
                 };
                 match update_refusal(result.outcome) {
-                    None => {
-                        app.as_mut().set_has_unsaved_changes(false);
-                        (true, result.revision)
-                    }
+                    None => (true, result.revision),
                     Some(code) => {
                         // The edit page shows it like the connection test, with its action.
                         app.as_mut().show_action_error(&tr_text(&code.text("")));
@@ -413,13 +411,9 @@ impl qobject::KesticApp {
                     Ok(Err(err)) => (None, dbus_error_text(&err)),
                     Err(_) => (None, daemon_unavailable_text()),
                 };
-                let has_prev = dto
-                    .as_ref()
-                    .is_some_and(|d| !d.previous_destinations.is_empty());
                 shared_state().lock_unpoisoned().snapshots = dto;
                 app.as_mut().set_snapshots_loading(false);
                 app.as_mut().set_snapshots_error(QString::from(&error));
-                app.as_mut().set_snapshots_has_previous(has_prev);
                 app.as_mut().set_snapshots_backup_id(QString::from(&wanted));
                 app.as_mut().snapshots_updated();
             },

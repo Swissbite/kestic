@@ -19,6 +19,7 @@ mod restic_status;
 mod restore_preview;
 mod restore_runner;
 mod run_errors;
+mod run_progress;
 mod runtime;
 mod scheduler;
 mod shutdown;

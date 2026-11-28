@@ -6,10 +6,11 @@
 //! changed, and both wake the Qt thread when the window has something to show.
 
 use crate::backend::qobject::KesticApp;
-use crate::state_cache::{
-    daemon_unavailable_text, drop_gui_connection, ensure_daemon_and_refresh, gui_connection,
-    refresh_state_now, shared_state,
+use crate::daemon_client::{
+    drop_gui_connection, ensure_daemon_and_refresh, gui_connection, refresh_state_now,
 };
+use crate::i18n::daemon_unavailable_text;
+use crate::state_cache::shared_state;
 use cxx_qt::CxxQtThread;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{ActiveRunProgressDto, KESTIC_INTERFACE_V1, KesticClient};

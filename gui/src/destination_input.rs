@@ -3,7 +3,7 @@
 
 //! Fields of the destination form: the destination they make and its connection test.
 
-use crate::state_cache::{dbus_error_text, i18n, tr, tr_text};
+use crate::i18n::{dbus_error_text, i18n, tr, tr_text};
 use crate::ui_texts::GuiText;
 use kestic_core::generic::{EnteredSecret, EnvVar, GenericInputError};
 use kestic_core::local_path::NotALocalPath;

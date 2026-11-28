@@ -8,9 +8,9 @@ use super::error::{KesticServiceErr, map_config_err};
 use super::restore_runner::restore_error_kind;
 use super::run_errors::{error_run_kind, unreadable_items_from_lines};
 use super::state::DaemonCore;
-use crate::dbus_api::{DaemonStateDto, ExcludeRulePreviewDto, RunDetailDto};
+use super::state_summary::StatePublication;
+use crate::dbus_api::{ExcludeRulePreviewDto, RunDetailDto};
 use crate::i18n::tr;
-use crate::tray::KesticTrayState;
 use kestic_core::backup::{exclude_file_path, write_exclude_file};
 use kestic_core::config::ConfigError;
 use kestic_core::model::{
@@ -31,7 +31,6 @@ use kestic_i18n::messages::deleted_destination_message;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use zbus::Connection;
 
 impl DaemonCore {
     pub fn add_backup(&mut self, backup_json: &str) -> Result<String, KesticServiceErr> {
@@ -385,20 +384,11 @@ pub(crate) fn add_exclude_rule_for_item_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     backup_id: &str,
     item_path: &str,
-) -> Result<
-    (
-        ExcludeRulePreviewDto,
-        Option<Connection>,
-        DaemonStateDto,
-        KesticTrayState,
-    ),
-    KesticServiceErr,
-> {
+) -> Result<(ExcludeRulePreviewDto, StatePublication), KesticServiceErr> {
     let preview = format_exclude_rule_for_item(item_path)?;
     let mut guard = shared.lock_unpoisoned();
     guard.add_exclude_rule(backup_id, &preview)?;
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((preview, guard.conn.clone(), state_dto, tray_state))
+    Ok((preview, guard.state_publication()))
 }
 
 /// Run detail inputs captured under the `DaemonCore` lock.

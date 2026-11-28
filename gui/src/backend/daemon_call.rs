@@ -6,10 +6,9 @@
 //! things do not wait for each other. Each result goes back to the Qt thread.
 
 use super::{Finish, qobject};
+use crate::daemon_client::{make_client, refresh_state_now};
 use crate::daemon_events::request_refresh;
-use crate::state_cache::{
-    daemon_unavailable_text, dbus_error_text, make_client, refresh_state_now,
-};
+use crate::i18n::{daemon_unavailable_text, dbus_error_text};
 use cxx_qt::{CxxQtThread, Threading};
 use cxx_qt_lib::QString;
 use kestic_core::sync::LockUnpoisoned;
@@ -300,9 +299,6 @@ impl qobject::KesticApp {
     {
         let failure = match result {
             Ok(Ok(value)) => {
-                if how == Finish::Saved {
-                    self.as_mut().set_has_unsaved_changes(false);
-                }
                 self.as_mut().show_action_error("");
                 request_refresh();
                 return Some(value);

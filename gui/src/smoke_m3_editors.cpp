@@ -172,6 +172,9 @@ int scenario_schedule_validation(const Ctx& c) {
     QQuickItem* interval = item_named(w, "scheduleIntervalSpinBox");
     QQuickItem* interval_border = item_named(w, "scheduleIntervalInvalidBorder");
     M3_CHECK2(3420, interval, interval_border, "interval controls missing");
+    // AC-M6-34-3 (a): the field starts at core's default and ends where core's range ends.
+    M3_CHECK(3426, interval->property("value").toInt() == 3, "«every n days» starts with core's default");
+    M3_CHECK(3427, interval->property("to").toInt() == 365, "the interval field ends at core's range end");
     interval->setProperty("value", 0);
     wait_ms(200);
     M3_CHECK(3421, !save_btn->isEnabled(), "(a) Save button must be disabled for «every 0 days»");
@@ -179,6 +182,9 @@ int scenario_schedule_validation(const Ctx& c) {
     M3_CHECK(3423, interval_border->isVisible(), "(b) interval field must be marked (visible)");
     M3_CHECK(3424, border_width(interval_border) == 2, "(b) interval marking must be a 2px border");
     M3_CHECK(3425, banner->isVisible(), "validation message must be shown for interval 0");
+    M3_CHECK_EQ(3428, banner->property("text").toString(),
+        loc(c.lang, "Interval must be between 2 and 365 days.", "Das Intervall muss zwischen 2 und 365 Tagen liegen."),
+        "AC-M6-34-3 (a): the message names core's range");
 
     // The start date is chosen with the date picker (primary control), Escape closes it.
     QQuickItem* picker = item_named(w, "scheduleStartDatePickerButton");

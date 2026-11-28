@@ -6,7 +6,8 @@
 
 use super::daemon_call::Lane;
 use super::qobject;
-use crate::state_cache::{daemon_unavailable_text, dbus_error_text, shared_state, tr};
+use crate::i18n::{daemon_unavailable_text, dbus_error_text, tr};
+use crate::state_cache::shared_state;
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
 use kestic_i18n::codes::ErrorKind;

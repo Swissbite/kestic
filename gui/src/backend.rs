@@ -14,9 +14,7 @@ pub mod qobject {
     extern "RustQt" {
         #[qobject]
         #[qml_element]
-        #[qproperty(bool, initialized)]
         #[qproperty(bool, has_config_file)]
-        #[qproperty(QString, config_load_error)]
         #[qproperty(bool, expert_mode)]
         #[qproperty(QString, daemon_version)]
         #[qproperty(QString, daemon_build_commit)]
@@ -56,12 +54,8 @@ pub mod qobject {
         #[qproperty(bool, backups_have_attention)]
         #[qproperty(bool, destinations_have_attention)]
         #[qproperty(i32, backups_count)]
-        #[qproperty(i32, startable_backups_count)]
         #[qproperty(QString, back_up_all_hint)]
-        #[qproperty(i32, destinations_count)]
-        #[qproperty(i32, runs_count)]
         #[qproperty(QString, manual_run_blocked_message)]
-        #[qproperty(QString, manual_run_blocked_backup_id)]
         #[qproperty(bool, connection_test_ok)]
         #[qproperty(QString, connection_test_message)]
         #[qproperty(QString, connection_test_error_kind)]
@@ -70,7 +64,6 @@ pub mod qobject {
         #[qproperty(bool, snapshots_loading)]
         #[qproperty(QString, snapshots_backup_id)]
         #[qproperty(QString, snapshots_error)]
-        #[qproperty(bool, snapshots_has_previous)]
         #[qproperty(QString, selected_run_id)]
         #[qproperty(QString, selected_run_title)]
         #[qproperty(QString, selected_run_status_line)]
@@ -86,20 +79,12 @@ pub mod qobject {
         #[qproperty(QString, selected_run_transparent_command)]
         #[qproperty(QString, selected_run_log_path)]
         #[qproperty(QString, selected_run_backup_id)]
-        #[qproperty(bool, has_unsaved_changes)]
         #[qproperty(QString, last_action_error)]
-        #[qproperty(bool, show_quit_dialog_on_start)]
         #[qproperty(bool, show_about_on_start)]
         #[qproperty(bool, show_restore_on_start)]
         #[qproperty(bool, quit_has_running_run)]
         #[qproperty(QString, quit_running_backup_name)]
-        #[qproperty(QString, dry_run_preview_id)]
-        #[qproperty(QString, dry_run_state)]
-        #[qproperty(QString, dry_run_result_json)]
         #[qproperty(QString, dry_run_error)]
-        #[qproperty(QString, retention_preview_id)]
-        #[qproperty(QString, retention_preview_state)]
-        #[qproperty(QString, retention_preview_result_json)]
         #[qproperty(QString, retention_preview_error)]
         #[qproperty(bool, global_paused)]
         #[qproperty(QString, global_paused_line)]
@@ -620,6 +605,73 @@ pub mod qobject {
         #[cxx_name = "formatMaintenanceSummaryJson"]
         fn format_maintenance_summary_json(self: &KesticApp, maintenance_json: &QString)
         -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "retentionFormJson"]
+        fn retention_form_json(self: &KesticApp, policy_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "retentionFormState"]
+        fn retention_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "scheduleFormJson"]
+        fn schedule_form_json(
+            self: &KesticApp,
+            schedule_json: &QString,
+            overdue_threshold: i32,
+            form_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "scheduleFormState"]
+        fn schedule_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+            saved_overdue_threshold: i32,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeFormJson"]
+        fn exclude_form_json(self: &KesticApp, excludes_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeFormState"]
+        fn exclude_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "excludeLintFix"]
+        fn exclude_lint_fix(
+            self: &KesticApp,
+            lines_text: &QString,
+            parent_rule: &QString,
+            suggested_fix: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenanceFormJson"]
+        fn maintenance_form_json(self: &KesticApp, maintenance_json: &QString) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenanceFormState"]
+        fn maintenance_form_state(
+            self: &KesticApp,
+            form_json: &QString,
+            saved_json: &QString,
+        ) -> QString;
+
+        #[qinvokable]
+        #[cxx_name = "maintenancePreviewText"]
+        fn maintenance_preview_text(self: &KesticApp, summary_json: &QString) -> QString;
     }
 
     // Background threads hand the daemon's news to the object on the Qt thread.
@@ -631,6 +683,7 @@ mod daemon_call;
 pub use daemon_call::finish_pending_calls;
 pub(crate) use daemon_call::{Lane, call_daemon_on, send_to_daemon};
 mod destinations;
+mod forms;
 mod previews;
 mod restic_install;
 pub(crate) mod restore;
@@ -638,7 +691,8 @@ mod revisions;
 mod schedules;
 mod state;
 
-use crate::state_cache::{lookup_backup_summary, not_found_text, shared_state};
+use crate::i18n::not_found_text;
+use crate::state_cache::{lookup_backup_summary, shared_state};
 use cxx_qt_lib::QString;
 use kestic_core::model::Backup;
 use kestic_core::sync::LockUnpoisoned;
@@ -648,9 +702,7 @@ use std::pin::Pin;
 
 #[derive(Default)]
 pub struct KesticAppRust {
-    initialized: bool,
     has_config_file: bool,
-    config_load_error: QString,
     expert_mode: bool,
     daemon_version: QString,
     daemon_build_commit: QString,
@@ -702,12 +754,8 @@ pub struct KesticAppRust {
     backups_have_attention: bool,
     destinations_have_attention: bool,
     backups_count: i32,
-    startable_backups_count: i32,
     back_up_all_hint: QString,
-    destinations_count: i32,
-    runs_count: i32,
     manual_run_blocked_message: QString,
-    manual_run_blocked_backup_id: QString,
     connection_test_ok: bool,
     connection_test_message: QString,
     connection_test_error_kind: QString,
@@ -718,7 +766,6 @@ pub struct KesticAppRust {
     snapshots_loading: bool,
     snapshots_backup_id: QString,
     snapshots_error: QString,
-    snapshots_has_previous: bool,
     selected_run_id: QString,
     selected_run_title: QString,
     selected_run_status_line: QString,
@@ -734,20 +781,12 @@ pub struct KesticAppRust {
     selected_run_transparent_command: QString,
     selected_run_log_path: QString,
     selected_run_backup_id: QString,
-    has_unsaved_changes: bool,
     last_action_error: QString,
-    show_quit_dialog_on_start: bool,
     show_about_on_start: bool,
     show_restore_on_start: bool,
     quit_has_running_run: bool,
     quit_running_backup_name: QString,
-    dry_run_preview_id: QString,
-    dry_run_state: QString,
-    dry_run_result_json: QString,
     dry_run_error: QString,
-    retention_preview_id: QString,
-    retention_preview_state: QString,
-    retention_preview_result_json: QString,
     retention_preview_error: QString,
     global_paused: bool,
     global_paused_line: QString,
@@ -767,15 +806,13 @@ pub struct KesticAppRust {
     restore_snapshots_error: QString,
 }
 
-pub(super) use crate::state_cache::dbus_error_text;
+pub(super) use crate::i18n::dbus_error_text;
 
 /// What a finished daemon call from QML does besides refreshing the state.
 #[derive(Clone, Copy, PartialEq)]
 enum Finish {
     /// Only clear or show the error line.
     Plain,
-    /// The call saved an editor page: it has no unsaved changes any more.
-    Saved,
     /// A failure is also shown as a passive notification.
     NotifyOnError,
 }
