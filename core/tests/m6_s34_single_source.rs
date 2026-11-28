@@ -160,6 +160,38 @@ fn ac_m6_34_2_editor_pages_have_no_domain_logic() {
     }
 }
 
+/// AC-M6-34-3 (a): the GUI takes the interval range and the default of «every n days» from
+/// `core` instead of spelling them itself.
+#[test]
+fn ac_m6_34_3_interval_values_come_from_core() {
+    let spelled: Vec<String> = files("gui/src", "rs")
+        .into_iter()
+        .filter(|(_, text)| text.contains("2..=365") || text.contains("365 days"))
+        .map(|(path, _)| path)
+        .collect();
+    assert!(
+        spelled.is_empty(),
+        "(a) the GUI spells the range in {spelled:?}"
+    );
+    assert!(
+        read("gui/src/backend/schedules.rs").contains("EVERY_N_DAYS_RANGE"),
+        "(a) the field message takes the range from core"
+    );
+    let page = read("gui/src/qml/BackupScheduleEditPage.qml");
+    assert!(
+        page.contains("to: page.formState.interval_days_max"),
+        "(a) the interval field ends where core's range ends"
+    );
+    assert!(
+        !page.contains("to: 365"),
+        "(a) the page spells the range end"
+    );
+    assert!(
+        !page.contains("intervalDays: 3"),
+        "(a) the page spells the default interval"
+    );
+}
+
 /// AC-M6-34-4 (a): the invokables nobody calls stay gone.
 #[test]
 fn ac_m6_34_4_dead_invokables_are_gone() {

@@ -564,9 +564,9 @@ msgstr "Erneut versuchen"
 msgid "Select at least one weekday."
 msgstr "Mindestens einen Wochentag auswählen."
 
-#: gui/src/backend/schedules.rs:560
-msgid "Interval must be between 2 and 365 days."
-msgstr "Das Intervall muss zwischen 2 und 365 Tagen liegen."
+#: gui/src/backend/schedules.rs:465
+msgid "Interval must be between %1 and %2 days."
+msgstr "Das Intervall muss zwischen %1 und %2 Tagen liegen."
 
 #: gui/src/backend/schedules.rs:565
 msgid "Enter a valid start date in YYYY-MM-DD format."

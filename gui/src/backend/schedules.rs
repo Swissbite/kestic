@@ -21,7 +21,8 @@ use crate::ui_texts::GuiText;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::{
-    BackupId, MaintenanceSchedule, NotificationSettings, RunConditions, Schedule,
+    BackupId, EVERY_N_DAYS_RANGE, MaintenanceSchedule, NotificationSettings, RunConditions,
+    Schedule,
 };
 use kestic_core::scheduler::PauseDuration;
 use kestic_core::sync::LockUnpoisoned;
@@ -457,11 +458,14 @@ impl qobject::KesticApp {
                         ("weekdays", i18n("Select at least one weekday.").to_string())
                     }
                     Schedule::EveryNDays { interval_days, .. }
-                        if !(2..=365).contains(interval_days) =>
+                        if !EVERY_N_DAYS_RANGE.contains(interval_days) =>
                     {
                         (
                             "interval",
-                            i18n("Interval must be between 2 and 365 days.").to_string(),
+                            i18n("Interval must be between %1 and %2 days.").subs(&[
+                                &EVERY_N_DAYS_RANGE.start().to_string(),
+                                &EVERY_N_DAYS_RANGE.end().to_string(),
+                            ]),
                         )
                     }
                     Schedule::EveryNDays { .. } => (

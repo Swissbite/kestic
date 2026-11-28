@@ -5,8 +5,11 @@
 //! written back to them and compared with the saved ones.
 
 use crate::model::Weekday;
-use crate::retention::Schedule;
+use crate::retention::{EVERY_N_DAYS_RANGE, Schedule};
 use serde::{Deserialize, Serialize};
+
+/// The interval the editor offers for «every n days» before the user picks one.
+pub const DEFAULT_EVERY_N_DAYS: u32 = 3;
 
 /// How often the editor runs a backup. A weekly schedule is shown as one weekday.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +22,7 @@ pub enum ScheduleFormKind {
 }
 
 /// The fields of the schedule editor. Fields the chosen kind does not use keep their value, so
-/// switching back shows them again; the page holds the values it starts with.
+/// switching back shows them again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleForm {
     pub kind: ScheduleFormKind,
@@ -54,6 +57,24 @@ pub struct ScheduleFormState {
     pub dirty: bool,
     /// The day the date picker opens on: the start date, or `today` when it is not a date.
     pub picker_date: PickerDate,
+    /// The longest interval «every n days» allows; the page's field goes up to it.
+    pub interval_days_max: u32,
+}
+
+impl Default for ScheduleForm {
+    /// The fields the editor starts with: daily at 12:00 with the global overdue threshold.
+    fn default() -> Self {
+        Self {
+            kind: ScheduleFormKind::Daily,
+            weekdays: vec![Weekday::Monday],
+            interval_days: DEFAULT_EVERY_N_DAYS,
+            start_date: String::new(),
+            hour: 12,
+            minute: 0,
+            use_global_overdue: true,
+            custom_overdue_threshold: 2,
+        }
+    }
 }
 
 /// The weekday of an ISO number; Monday for a number out of range.
@@ -227,6 +248,7 @@ impl ScheduleForm {
             dirty: normalized(&schedule, today) != normalized(saved, today)
                 || overdue_threshold != saved_overdue,
             picker_date: picker_date(&self.start_date).unwrap_or(fallback),
+            interval_days_max: *EVERY_N_DAYS_RANGE.end(),
             schedule,
             overdue_threshold,
         }
