@@ -20,13 +20,14 @@ use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::destination::{
     DestinationError, DestinationSetupMode, check_existing_repository, prepare_repository,
 };
-use kestic_core::model::{Destination, DestinationKind};
+use kestic_core::model::{Destination, DestinationId, DestinationKind};
 use kestic_core::provider::{ResticProviderError, resolve_and_check};
 use kestic_core::repo_identity::{
     RepositoryId, RepositoryMatch, connection_changed, decide, same_server,
 };
 use kestic_core::restic::{ResticRuntime, SECRET_KIND_REPO};
 use kestic_core::restic_gate::ResticBinaryGate;
+use kestic_core::revision::revision_of;
 use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionTestCode, DestinationUpdateOutcome};
@@ -302,10 +303,10 @@ type UpdateReply = (
     KesticTrayState,
 );
 
-fn reply(guard: &DaemonCore, outcome: DestinationUpdateOutcome) -> UpdateReply {
+fn reply(guard: &DaemonCore, outcome: DestinationUpdateOutcome, revision: String) -> UpdateReply {
     let (state_dto, tray_state) = guard.build_state_and_tray();
     (
-        DestinationUpdateResultDto { outcome },
+        DestinationUpdateResultDto { outcome, revision },
         guard.conn.clone(),
         state_dto,
         tray_state,
@@ -320,9 +321,10 @@ struct Accepted {
     new_repository: bool,
 }
 
-/// `UpdateDestination`: checks every change of the connection or of the credentials (whatever
-/// `verify_connection` says; it only decides about checking an otherwise unchanged connection),
-/// then saves the secrets and `config.toml` together under the daemon lock.
+/// `UpdateDestination`: checks `revision` against the saved destination before any restic call,
+/// checks every change of the connection or of the credentials (whatever `verify_connection`
+/// says; it only decides about checking an otherwise unchanged connection), then checks the
+/// revision again and saves the secrets and `config.toml` together under the daemon lock.
 pub(crate) fn update_destination_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_json: &str,
@@ -330,6 +332,7 @@ pub(crate) fn update_destination_unlocked(
     repo_password: &str,
     backend_secrets_json: &str,
     verify_connection: bool,
+    revision: &str,
 ) -> Result<UpdateReply, KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
@@ -351,6 +354,7 @@ pub(crate) fn update_destination_unlocked(
             .destination(&updated.id)
             .cloned()
             .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
+        refuse_stale_revision(&saved, revision)?;
         guard.refuse_while_restoring(&updated.id)?;
         guard.refuse_duplicate(&updated)?;
         let changed = connection_changed(&saved.kind, &updated.kind);
@@ -387,8 +391,7 @@ pub(crate) fn update_destination_unlocked(
     let accepted = if setup_mode == DestinationSetupMode::InitNew {
         if changed {
             // A new repository has a new ID: at another address it is another destination.
-            let guard = shared.lock_unpoisoned();
-            return Ok(reply(&guard, DestinationUpdateOutcome::OtherRepository));
+            return other_repository(shared, &updated.id, revision);
         }
         init_in_place(&updated, repo_password, &entered, &deps)?
     } else if changed || !entered.is_empty() || verify_connection {
@@ -408,10 +411,7 @@ pub(crate) fn update_destination_unlocked(
                 repository_id: Some(repository_id),
                 new_repository: false,
             },
-            EditVerdict::Other => {
-                let guard = shared.lock_unpoisoned();
-                return Ok(reply(&guard, DestinationUpdateOutcome::OtherRepository));
-            }
+            EditVerdict::Other => return other_repository(shared, &updated.id, revision),
         }
     } else {
         Accepted {
@@ -421,14 +421,93 @@ pub(crate) fn update_destination_unlocked(
         }
     };
 
-    save_update(&mut shared.lock_unpoisoned(), &saved, updated, accepted)?;
+    let new_repository_id = accepted
+        .new_repository
+        .then(|| accepted.repository_id.clone());
+    // Bound first: the lock taken for the save ends with this statement, before the error arm
+    // takes it again.
+    let save_result = save_update(
+        &mut shared.lock_unpoisoned(),
+        &saved,
+        updated,
+        accepted,
+        revision,
+    );
+    let saved_revision = match save_result {
+        Ok(saved_revision) => saved_revision,
+        Err(err) => {
+            if let Some(id) = new_repository_id {
+                keep_new_repository_id(&shared.lock_unpoisoned(), &saved, id.as_ref());
+            }
+            return Err(err);
+        }
+    };
     // An SFTP destination moved to another server leaves the old server's lines in Kestic's
     // `known_hosts` only while another destination uses it.
     if changed {
         super::host_keys::forget_unused_host(shared, &saved);
     }
     let guard = shared.lock_unpoisoned();
-    Ok(reply(&guard, DestinationUpdateOutcome::Saved))
+    Ok(reply(
+        &guard,
+        DestinationUpdateOutcome::Saved,
+        saved_revision,
+    ))
+}
+
+/// `OtherRepository`: nothing is saved. Also here a destination changed or removed meanwhile is
+/// `Conflict` or `NotFound`, so the answer never names a state the caller did not see.
+fn other_repository(
+    shared: &Arc<Mutex<DaemonCore>>,
+    dest_id: &DestinationId,
+    revision: &str,
+) -> Result<UpdateReply, KesticServiceErr> {
+    let guard = shared.lock_unpoisoned();
+    let current = guard
+        .config
+        .destination(dest_id)
+        .ok_or_else(|| KesticServiceErr::NotFound(dest_id.as_str().to_string()))?;
+    refuse_stale_revision(current, revision)?;
+    let current_revision = revision_of(current);
+    Ok(reply(
+        &guard,
+        DestinationUpdateOutcome::OtherRepository,
+        current_revision,
+    ))
+}
+
+/// After a refused save, the repository `init` already created at the unchanged address keeps
+/// its ID in the history (its password is stored already), so the next save recognises it.
+fn keep_new_repository_id(guard: &DaemonCore, saved: &Destination, id: Option<&RepositoryId>) {
+    let Some(current) = guard.config.destination(&saved.id) else {
+        return;
+    };
+    if current.kind != saved.kind {
+        return;
+    }
+    match id {
+        Some(id) => store_repository_id(guard, current, id),
+        None => {
+            if let Err(err) = guard.history.forget_repository_id(&current.id) {
+                eprintln!(
+                    "kestic-daemon: failed to forget the repository ID of destination {}: {err}",
+                    current.id
+                );
+            }
+        }
+    }
+}
+
+/// `Conflict` unless `revision` is the one of `saved` (also when it is empty or unknown).
+fn refuse_stale_revision(saved: &Destination, revision: &str) -> Result<(), KesticServiceErr> {
+    if revision_of(saved) == revision {
+        Ok(())
+    } else {
+        Err(KesticServiceErr::Conflict(format!(
+            "destination {} was changed meanwhile",
+            saved.id
+        )))
+    }
 }
 
 impl DaemonCore {
@@ -496,27 +575,26 @@ fn init_in_place(
     })
 }
 
-/// Saves an accepted edit under the daemon lock: checks again that the destination exists with
-/// the connection that was checked and that its location is free, writes the secrets, then
+/// Saves an accepted edit under the daemon lock: checks again that the destination exists
+/// unchanged since `revision` was read and that its location is free, writes the secrets, then
 /// `config.toml`; when the config cannot be written the secrets get their previous values back.
+/// The password of a repository `init` created in this call is already stored, so that
+/// repository stays readable also when this check fails.
 fn save_update(
     guard: &mut DaemonCore,
     saved: &Destination,
     updated: Destination,
     accepted: Accepted,
-) -> Result<(), KesticServiceErr> {
+    revision: &str,
+) -> Result<String, KesticServiceErr> {
     let idx = guard
         .config
         .destinations
         .iter()
         .position(|d| d.id == updated.id)
         .ok_or_else(|| KesticServiceErr::NotFound(updated.id.as_str().to_string()))?;
-    // The check was made against the connection saved then; another save in between voids it.
-    if guard.config.destinations[idx].kind != saved.kind {
-        return Err(KesticServiceErr::InvalidInput(
-            "the destination was changed meanwhile; check the connection again".to_string(),
-        ));
-    }
+    // The check was made against the destination saved then; any change in between voids it.
+    refuse_stale_revision(&guard.config.destinations[idx], revision)?;
     // This call changes the name and the connection; the maintenance schedule has a call of its
     // own and keeps its saved value. The recovery kit belongs to the repository: it is kept for
     // the same repository at a new address and dropped for one created anew.
@@ -564,5 +642,8 @@ fn save_update(
         }
         None => {}
     }
-    Ok(())
+    Ok(guard
+        .config
+        .destination(&updated.id)
+        .map_or_else(String::new, revision_of))
 }

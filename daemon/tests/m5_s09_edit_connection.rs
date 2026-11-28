@@ -11,6 +11,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, add_folder_backup, add_local_destination,
     assert_dbus_error_name, latest_variant, restic_variants, seed_local_destination,
@@ -136,7 +138,7 @@ fn assert_other_repository(
     );
     let result = daemon
         .client
-        .update_destination(edited, "connect", "", &none(), true)
+        .update_destination_now(edited, "connect", "", &none(), true)
         .expect("UpdateDestination");
     assert_eq!(
         result.outcome,
@@ -211,7 +213,7 @@ fn ac_m5_05_4_local_path_change_checks_password_and_repository_id() {
                     "(a) {tested:?}"
                 );
                 let err = client
-                    .update_destination(&foreign, "connect", "", &none(), true)
+                    .update_destination_now(&foreign, "connect", "", &none(), true)
                     .expect_err("(a) UpdateDestination with a password that does not fit");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.WrongPassword");
                 // (d)
@@ -229,7 +231,7 @@ fn ac_m5_05_4_local_path_change_checks_password_and_repository_id() {
                     "(b) {tested:?}"
                 );
                 let result = client
-                    .update_destination(&other, "connect", "", &none(), true)
+                    .update_destination_now(&other, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(
                     result.outcome,
@@ -266,7 +268,7 @@ fn ac_m5_05_4_local_path_change_checks_password_and_repository_id() {
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(c) the test passes: {tested:?}");
                 let result = client
-                    .update_destination(&moved, "connect", "", &none(), true)
+                    .update_destination_now(&moved, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(c)");
                 assert_eq!(saved(&daemon, &dest).kind, moved.kind, "(c) new path saved");
@@ -317,7 +319,7 @@ fn ac_m5_05_5_copied_repository_keeps_its_id_and_parent() {
                 // (b)
                 let calls_before = wrapper.entries().len();
                 let result = client
-                    .update_destination(&moved, "connect", "", &none(), true)
+                    .update_destination_now(&moved, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
                 assert_eq!(saved(&daemon, &dest).kind, moved.kind, "(b) saved");
@@ -389,7 +391,7 @@ fn ac_m5_05_7_other_repository_is_refused() {
                 );
                 // (a)
                 let result = client
-                    .update_destination(&edited, "connect", "", &none(), true)
+                    .update_destination_now(&edited, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(
                     result.outcome,
@@ -439,7 +441,7 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
                 // (c) the old address answers: its ID decides, and is stored.
                 copy_dir(&dir.join("a"), &dir.join("a2"));
                 let result = client
-                    .update_destination(
+                    .update_destination_now(
                         &local(&old_answers, &dir.join("a2")),
                         "connect",
                         "",
@@ -464,7 +466,7 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
                 assert!(tested.ok, "(a) compared with the stored ID: {tested:?}");
                 // (b)
                 let result = client
-                    .update_destination(&edited, "connect", "", &none(), true)
+                    .update_destination_now(&edited, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
 
@@ -473,7 +475,7 @@ fn ac_m5_09_3_stored_id_decides_when_old_address_is_gone() {
                 fs::remove_dir_all(dir.join("g")).expect("remove old address");
                 let started = Instant::now();
                 let result = client
-                    .update_destination(
+                    .update_destination_now(
                         &local(&old_gone, &dir.join("g2")),
                         "connect",
                         "",
@@ -539,7 +541,7 @@ fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
             let mut moved = local(&dest, &copy);
             moved.name = "Disk copy".to_string();
             let result = client
-                .update_destination(&moved, "connect", "", &none(), true)
+                .update_destination_now(&moved, "connect", "", &none(), true)
                 .expect("UpdateDestination");
             assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
             let after = saved(&daemon, &dest);
@@ -554,7 +556,7 @@ fn m5_09_saving_a_connection_keeps_the_maintenance_schedule() {
             fs::remove_dir_all(&copy).expect("remove repository");
             fs::create_dir_all(&copy).expect("mkdir");
             let result = client
-                .update_destination(&moved, "init", "", &none(), true)
+                .update_destination_now(&moved, "init", "", &none(), true)
                 .expect("UpdateDestination init in place");
             assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
             let renewed = saved(&daemon, &dest);
@@ -615,7 +617,7 @@ fn ac_m5_09_1_rest_server_on_new_port_is_the_same_repository() {
                 assert!(tested.ok, "(a) same repository: {tested:?}");
                 // (b)
                 let result = client
-                    .update_destination(&edited, "connect", "", &none(), true)
+                    .update_destination_now(&edited, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
                 assert_eq!(saved(&daemon, &dest).kind, edited.kind, "(b) new URL saved");
@@ -723,7 +725,7 @@ fn ac_m5_09_2_sftp_new_host_asks_for_host_key_then_saves() {
                     "(a) the host key comes first: {tested:?}"
                 );
                 let err = client
-                    .update_destination(&edited, "connect", "", &none(), true)
+                    .update_destination_now(&edited, "connect", "", &none(), true)
                     .expect_err("(a) UpdateDestination before the key is trusted");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.HostKeyUnknown");
                 assert_eq!(config_bytes(&rig.daemon), before, "(a) nothing saved");
@@ -737,7 +739,7 @@ fn ac_m5_09_2_sftp_new_host_asks_for_host_key_then_saves() {
                 assert!(tested.ok, "(b) same repository: {tested:?}");
                 // (c)
                 let result = client
-                    .update_destination(&edited, "connect", "", &none(), true)
+                    .update_destination_now(&edited, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(c)");
                 assert_eq!(saved(&rig.daemon, &dest).kind, edited.kind, "(c) new host");
@@ -791,7 +793,7 @@ fn ac_m5_01_8_line_stays_for_a_destination_moved_meanwhile() {
             let client = rig.daemon.client.clone();
             let updating = std::thread::spawn({
                 let moved = moved.clone();
-                move || client.update_destination(&moved, "connect", &password, &none(), true)
+                move || client.update_destination_now(&moved, "connect", &password, &none(), true)
             });
             // The update checks the repository at the new address with restic.
             rig.wrapper
@@ -847,7 +849,7 @@ fn ac_m5_01_6_sftp_path_change_is_checked_before_saving() {
                 );
                 assert!(
                     client
-                        .update_destination(&empty, "connect", "", &none(), true)
+                        .update_destination_now(&empty, "connect", "", &none(), true)
                         .is_err(),
                     "(c) UpdateDestination fails"
                 );
@@ -887,7 +889,7 @@ fn ac_m5_01_6_sftp_path_change_is_checked_before_saving() {
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(a) {tested:?}");
                 let result = client
-                    .update_destination(&moved, "connect", "", &none(), true)
+                    .update_destination_now(&moved, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
                 assert_eq!(saved(&rig.daemon, &dest).kind, moved.kind, "(b) new path");
@@ -953,7 +955,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     "(d) {tested:?}"
                 );
                 let err = client
-                    .update_destination(&other_bucket, "connect", "", &wrong, true)
+                    .update_destination_now(&other_bucket, "connect", "", &wrong, true)
                     .expect_err("(d) UpdateDestination with a wrong key");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.AuthFailed");
                 assert_eq!(config_bytes(&daemon), before, "(d) config unchanged");
@@ -979,7 +981,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                 );
                 assert!(
                     client
-                        .update_destination(&moved, "connect", "", &none(), true)
+                        .update_destination_now(&moved, "connect", "", &none(), true)
                         .is_err(),
                     "UpdateDestination without keys for a new endpoint"
                 );
@@ -1000,7 +1002,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(a) {tested:?}");
                 let result = client
-                    .update_destination(&other_bucket, "connect", "", &none(), true)
+                    .update_destination_now(&other_bucket, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
                 assert_eq!(
@@ -1011,7 +1013,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
 
                 // (c) keys entered with the new endpoint are saved, only in the Secret Service.
                 let result = client
-                    .update_destination(&moved, "connect", "", &keys, true)
+                    .update_destination_now(&moved, "connect", "", &keys, true)
                     .expect("UpdateDestination with keys");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(c)");
                 let config_text = fs::read_to_string(&daemon.config_path).expect("config");
@@ -1035,7 +1037,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     )
                     .expect("stale key");
                 let err = client
-                    .update_destination(&moved, "connect", "", &wrong, false)
+                    .update_destination_now(&moved, "connect", "", &wrong, false)
                     .expect_err("wrong keys without verify_connection");
                 assert_dbus_error_name(&err, "net.daester.Kestic.Error.AuthFailed");
                 assert_eq!(
@@ -1044,7 +1046,7 @@ fn ac_m5_02_5_s3_change_is_checked_and_keys_stay_in_secret_service() {
                     "wrong keys are not saved"
                 );
                 let result = client
-                    .update_destination(&moved, "connect", "", &keys, false)
+                    .update_destination_now(&moved, "connect", "", &keys, false)
                     .expect("keys without verify_connection");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
                 assert_eq!(
@@ -1190,7 +1192,7 @@ fn ac_m5_03_6_generic_change_is_checked_before_saving() {
                     "(a) the repository ID is compared: {tested:?}"
                 );
                 let result = client
-                    .update_destination(&own_init, "connect", "", &none(), true)
+                    .update_destination_now(&own_init, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(
                     result.outcome,
@@ -1205,7 +1207,7 @@ fn ac_m5_03_6_generic_change_is_checked_before_saving() {
                     .expect("TestDestinationConnection");
                 assert!(tested.ok, "(a) {tested:?}");
                 let result = client
-                    .update_destination(&moved, "connect", "", &none(), true)
+                    .update_destination_now(&moved, "connect", "", &none(), true)
                     .expect("UpdateDestination");
                 assert_eq!(result.outcome, DestinationUpdateOutcome::Saved, "(b)");
                 assert_eq!(saved(&daemon, &dest).kind, moved.kind, "(b) saved");
@@ -1241,7 +1243,7 @@ fn m5_09_verify_connection_false_still_checks_changes() {
             let before = config_bytes(&daemon);
             let calls_before = wrapper.entries().len();
             let result = client
-                .update_destination(
+                .update_destination_now(
                     &local(&dest, &dir.join("other")),
                     "connect",
                     "",
@@ -1262,7 +1264,7 @@ fn m5_09_verify_connection_false_still_checks_changes() {
             renamed.name = "Renamed".to_string();
             let calls_before = wrapper.entries().len();
             let result = client
-                .update_destination(&renamed, "connect", "", &none(), false)
+                .update_destination_now(&renamed, "connect", "", &none(), false)
                 .expect("UpdateDestination");
             assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
             assert_eq!(
@@ -1321,7 +1323,7 @@ fn m5_09_failed_config_write_restores_secrets() {
                 .expect("config dir")
                 .to_path_buf();
             fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o555)).expect("chmod");
-            let result = client.update_destination(&dest, "connect", "", &keys, true);
+            let result = client.update_destination_now(&dest, "connect", "", &keys, true);
             fs::set_permissions(&config_dir, fs::Permissions::from_mode(0o755)).expect("chmod");
             assert!(result.is_err(), "the config write failed: {result:?}");
             assert_eq!(
@@ -1374,7 +1376,7 @@ fn m5_09_init_only_in_place() {
                 "the test of init elsewhere: {tested:?}"
             );
             let result = client
-                .update_destination(
+                .update_destination_now(
                     &local(&dest, &dir.join("elsewhere")),
                     "init",
                     "",
@@ -1396,7 +1398,7 @@ fn m5_09_init_only_in_place() {
             fs::remove_dir_all(dir.join("repo")).expect("remove repository");
             fs::create_dir_all(dir.join("repo")).expect("mkdir");
             let result = client
-                .update_destination(&dest, "init", "", &none(), true)
+                .update_destination_now(&dest, "init", "", &none(), true)
                 .expect("UpdateDestination init in place");
             assert_eq!(result.outcome, DestinationUpdateOutcome::Saved);
             assert!(
@@ -1406,7 +1408,7 @@ fn m5_09_init_only_in_place() {
             // The new repository's ID is the one known now: a copy of it is the same repository.
             copy_dir(&dir.join("repo"), &dir.join("copy"));
             let result = client
-                .update_destination(
+                .update_destination_now(
                     &local(&dest, &dir.join("copy")),
                     "connect",
                     "",
@@ -1498,13 +1500,13 @@ fn m5_09_swapped_repository_at_the_saved_address_is_refused() {
                 "the swapped repository: {tested:?}"
             );
             let result = client
-                .update_destination(&dest, "connect", "", &none(), true)
+                .update_destination_now(&dest, "connect", "", &none(), true)
                 .expect("UpdateDestination");
             assert_eq!(result.outcome, DestinationUpdateOutcome::OtherRepository);
             assert_eq!(config_bytes(&daemon), before, "nothing saved");
 
             let result = client
-                .update_destination(
+                .update_destination_now(
                     &local(&dest, &dir.join("original")),
                     "connect",
                     "",

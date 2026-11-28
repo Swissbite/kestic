@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::load_config;
 use common::m3::{
     LockableSecretStore, M3DaemonOpts, assert_dbus_error_name, connect_local_repo, spawn_m3_daemon,
@@ -143,7 +145,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             let mut invalid_upd = backup.clone();
             invalid_upd.source = Source::folder("");
             let upd_err = client
-                .update_backup(&invalid_upd)
+                .update_backup_now(&invalid_upd)
                 .expect_err("empty source UpdateBackup must fail");
             assert_dbus_error_name(&upd_err, "net.daester.Kestic.Error.InvalidInput");
             assert_eq!(fs::read(&cfg_path).expect("read config"), before_bytes);
@@ -179,7 +181,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             let mut updated_backup = backup.clone();
             updated_backup.excludes.lines = vec!["*.tmp".to_string()];
             client
-                .update_backup(&updated_backup)
+                .update_backup_now(&updated_backup)
                 .expect("UpdateBackup valid");
             let state = client.get_state().expect("GetState");
             assert_eq!(state.backups[0].backup.excludes.lines, vec!["*.tmp"]);
@@ -382,7 +384,7 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
                 username: Some("alice".to_string()),
             };
             let upd_dest_err = client
-                .update_destination(
+                .update_destination_now(
                     &bad_dest,
                     "connect",
                     &strong_password(),
@@ -614,7 +616,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
                 path: PathBuf::from(format!("{}/", repo_dir.display())),
             };
             let upd_dup_err = client
-                .update_destination(
+                .update_destination_now(
                     &dest2_collision,
                     "connect",
                     "",
@@ -650,7 +652,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             // UpdateDestination with mode="init" initializes the repo in the empty folder while
             // keeping DestinationId, stored secrets, and attached backup intact.
             client
-                .update_destination(&dest1, "init", "", &BackendSecrets::default(), true)
+                .update_destination_now(&dest1, "init", "", &BackendSecrets::default(), true)
                 .expect("UpdateDestination init on empty folder");
             assert!(
                 repo_dir.join("config").is_file(),

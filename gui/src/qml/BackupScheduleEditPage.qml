@@ -226,8 +226,9 @@ EditorPage {
             return;
         }
         saving = true;
-        rootWindow.afterDaemonCall(appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold), function(ok) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupSchedule(backupId, currentScheduleJson(), effectiveOverdueThreshold, page.revision), function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, page.reloadFromDaemon);
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -248,8 +249,10 @@ EditorPage {
         commitSave(false, done);
     }
 
-    Component.onCompleted: {
+    // Shows the backup as the daemon has it now, with its revision.
+    function reloadFromDaemon() {
         initialData = rootWindow.findBackupData(backupId);
+        revision = appBackend.backupRevision(backupId);
         if (initialData) {
             savedScheduleJson = initialData.scheduleJson;
             savedOverdueThreshold = initialData.overdueThreshold;
@@ -258,6 +261,8 @@ EditorPage {
             loadFromSaved("{\"kind\":\"daily\",\"hour\":12,\"minute\":0}", 0);
         }
     }
+
+    Component.onCompleted: reloadFromDaemon()
 
     actions: [
         Kirigami.Action {

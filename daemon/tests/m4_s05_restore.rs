@@ -8,6 +8,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{ResticVariant, restic_variants};
 use common::m4::{big_page, small_tree};
 use common::m4_restore::{RestoreFixture, for_each_variant, set_mtime, tree_contents};
@@ -2937,7 +2939,7 @@ fn m4_s05_destination_of_a_running_restore_cannot_change() {
                 .rig
                 .daemon
                 .client
-                .update_destination(&renamed, "connect", "", &BackendSecrets::default(), false)
+                .update_destination_now(&renamed, "connect", "", &BackendSecrets::default(), false)
                 .expect_err("(b) UpdateDestination refused");
             common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
             fx.rig.wrapper.release("restore");
@@ -3252,12 +3254,12 @@ fn m4_s05_destination_of_a_waiting_restore_cannot_change() {
                 .expect_err("(a) RemoveDestination refused");
             common::m3::assert_dbus_error_name(&removed, "net.daester.Kestic.Error.RestoreRunning");
             let updated = client
-                .update_destination(&fx.dest, "connect", "", &BackendSecrets::default(), false)
+                .update_destination_now(&fx.dest, "connect", "", &BackendSecrets::default(), false)
                 .expect_err("(b) UpdateDestination refused");
             common::m3::assert_dbus_error_name(&updated, "net.daester.Kestic.Error.RestoreRunning");
             client.cancel_run(&run_id).expect("CancelRun");
             assert_eq!(fx.wait_run(&run_id).run.status, RunStatus::Cancelled);
-            let renamed = client.update_destination(
+            let renamed = client.update_destination_now(
                 &fx.dest,
                 "connect",
                 "",
@@ -3296,7 +3298,7 @@ fn m4_s05_update_racing_a_restore_keeps_the_stored_password() {
             fx.rig.wrapper.hold("cat");
             let updated = std::thread::scope(|s| {
                 let call = s.spawn(|| {
-                    fx.rig.daemon.client.update_destination(
+                    fx.rig.daemon.client.update_destination_now(
                         &fx.dest,
                         "connect",
                         "second key",

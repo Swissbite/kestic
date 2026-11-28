@@ -191,7 +191,8 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
         Qt::DirectConnection,
         Q_RETURN_ARG(int, invalid_request),
         Q_ARG(QString, bid),
-        Q_ARG(QString, QStringLiteral("{invalid-json"))
+        Q_ARG(QString, QStringLiteral("{invalid-json")),
+        Q_ARG(QString, QString())
     );
     SMOKE_CHECK2("M2", 222, invalid_request == 0, !backend->property("last_action_error").toString().isEmpty(),
         "invalid updateBackupExcludes should fail with last_action_error");

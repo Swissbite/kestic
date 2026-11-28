@@ -7,6 +7,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     M3DaemonOpts, M3Rig, ResticVariant, ResticWrapper, StdFakes, backup_summary, daemon_paths,
     notifications_for, restic_variants, seed_local_destination, settle, spawn_m3_daemon,
@@ -300,14 +302,14 @@ fn ac_m3_01_8_saved_schedules_count_from_the_change() {
                 hour: 14,
                 minute: 0,
             };
-            client.update_backup(&changed).expect("change schedule");
+            client.update_backup_now(&changed).expect("change schedule");
             let mut switched = manual.clone();
             switched.schedule = Schedule::Daily {
                 hour: 12,
                 minute: 0,
             };
             client
-                .update_backup(&switched)
+                .update_backup_now(&switched)
                 .expect("switch from manual only");
             settle();
             assert!(

@@ -9,6 +9,7 @@ import net.daester.kestic 1.0
 
 EditorPage {
     id: page
+    revisionOf: "destination"
     objectName: "destinationEditPage"
     title: i18n("Edit Connection")
 
@@ -27,9 +28,11 @@ EditorPage {
         setupMode: "connect"
     }
 
+    // Shows the destination as the daemon has it now, with its revision; typed passwords go.
     function loadInitialData() {
         var data = rootWindow.findDestinationData(destinationId);
         initialData = data;
+        revision = appBackend.destinationRevision(destinationId);
         if (data) {
             destDraft.loadFromRow(data);
             initialConnection = destDraft.connectionKey();
@@ -58,17 +61,27 @@ EditorPage {
             if (done) done(false);
             return;
         }
+        var fields = JSON.parse(destDraft.fieldsJson());
+        fields.revision = page.revision;
         var request = appBackend.updateDestination(
                 destinationId,
-                destDraft.fieldsJson(),
+                JSON.stringify(fields),
                 destDraft.setupMode,
                 destDraft.repoPassword,
                 destDraft.backendSecretsJson(),
                 page.needsVerification
             );
         saving = true;
-        rootWindow.afterDaemonCall(request, function(ok) {
+        rootWindow.afterDaemonCall(request, function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, function() {
+                page.loadInitialData();
+                destDraft.setupMode = "connect";
+                destDraft.clearSecrets();
+                destDraft.connectionVerified = false;
+                destDraft.testFeedback = "";
+                destDraft.testFeedbackOk = false;
+            });
             if (ok) {
                 initialData = rootWindow.findDestinationData(destinationId);
                 initialConnection = destDraft.connectionKey();
@@ -78,7 +91,7 @@ EditorPage {
                 destDraft.testFeedback = "";
                 destDraft.testFeedbackOk = false;
                 rootWindow.showPassiveNotification(Texts.label("destination_saved"));
-            } else {
+            } else if (answer !== "conflict") {
                 destDraft.showError(appBackend.last_action_error);
                 if (appBackend.connection_test_error_kind === "other_repository") {
                     destDraft.connectionVerified = false;

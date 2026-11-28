@@ -971,7 +971,10 @@ void run_slow_order_scene(QQuickWindow* window, QObject* backend,
         case 5: {
             const int row = row_of(window, "backupsModel", "backupId", backup_a);
             const QString excludes = role_value(model_named(window, "backupsModel"), row, "excludesJson").toString();
-            QMetaObject::invokeMethod(backend, "updateBackupExcludes", Q_ARG(QString, backup_a), Q_ARG(QString, excludes));
+            QString revision;
+            QMetaObject::invokeMethod(backend, "backupRevision", Q_RETURN_ARG(QString, revision), Q_ARG(QString, backup_a));
+            QMetaObject::invokeMethod(backend, "updateBackupExcludes", Q_ARG(QString, backup_a), Q_ARG(QString, excludes),
+                Q_ARG(QString, revision));
             settled->start();
             break;
         }

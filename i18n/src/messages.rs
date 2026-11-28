@@ -580,6 +580,7 @@ impl ServiceErrorCode {
             Self::RestoreRunning => {
                 i18n_noop("A restore from this destination is running or waiting.")
             }
+            Self::Conflict => i18n_noop("Changed elsewhere in the meantime; nothing was saved."),
             Self::Internal => i18n_noop("Internal error in the background service."),
             Self::DaemonUnreachable => i18n_noop("Background service unavailable."),
         };

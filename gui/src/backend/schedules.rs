@@ -94,6 +94,7 @@ impl qobject::KesticApp {
         backup_id: &QString,
         schedule_json: &QString,
         overdue_threshold: i32,
+        revision: &QString,
     ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return 0;
@@ -102,7 +103,7 @@ impl qobject::KesticApp {
             return 0;
         };
         let threshold_opt = u32::try_from(overdue_threshold).ok().filter(|&t| t > 0);
-        self.save_backup_edit(existing.id, move |backup, _| {
+        self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
             clone_updated_backup_schedule(backup, schedule, threshold_opt)
                 .map_err(|err| err.to_string())
         })
@@ -112,6 +113,7 @@ impl qobject::KesticApp {
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         conditions_json: &QString,
+        revision: &QString,
     ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return 0;
@@ -122,7 +124,7 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        self.save_backup_edit(existing.id, move |backup, _| {
+        self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
             // The destination as it is now: an earlier reassign on the same lane is in effect.
             let dest_kind = cached_destination_kind(backup.destination_id.as_str());
             clone_updated_backup_conditions(backup, conditions, dest_kind.as_ref())

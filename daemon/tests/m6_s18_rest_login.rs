@@ -10,6 +10,7 @@
 mod common;
 
 use common::m3::{M3Rig, assert_dbus_error_name, connect_rest_repo, daemon_paths, latest_variant};
+use common::revision::destination_revision;
 use common::{isolated_secret_store, run_isolated_test};
 use kestic_core::backend_credentials::SECRET_KIND_REST;
 use kestic_core::model::{Destination, DestinationId, DestinationKind};
@@ -96,8 +97,9 @@ fn ac_m6_18_1_login_in_rest_address_is_refused() {
                 "(a) AddDestination"
             );
 
+            let revision = destination_revision(client, &saved);
             let updated = client
-                .update_destination(&edited, "connect", "", &server_password, true)
+                .update_destination(&edited, "connect", "", &server_password, true, &revision)
                 .expect_err("UpdateDestination refuses a login in the address");
             assert_dbus_error_name(&updated, "net.daester.Kestic.Error.InvalidInput");
             assert_eq!(
