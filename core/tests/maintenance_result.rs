@@ -348,7 +348,7 @@ fn finding1_history_keeps_maintenance_result_and_backup_stats() {
     backup_run.finish(&clock, RunStatus::Ok, Some(0));
     history.upsert_run(&backup_run, &[]).expect("store backup");
 
-    let mut bare = Run::new_maintenance(&clock, dest.id.clone()).expect("run");
+    let mut bare = Run::new_maintenance(&clock, dest.id).expect("run");
     bare.finish(&clock, RunStatus::Ok, Some(0));
     history
         .upsert_run(&bare, &[])

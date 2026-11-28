@@ -428,7 +428,7 @@ fn ac_m4_05_26_selection_of_every_top_entry_is_the_whole_snapshot() {
         !selection_is_whole_folder(&outside, top, 3),
         "(b) an entry outside the top folder"
     );
-    let mut sibling = all.clone();
+    let mut sibling = all;
     sibling.push("/home/u2/f".to_string());
     assert!(
         !selection_is_whole_folder(&sibling, top, 3),

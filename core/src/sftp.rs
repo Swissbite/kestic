@@ -754,7 +754,7 @@ mod tests {
         assert!(sftp_args(&quoted).is_err());
         let expanded = KnownHostsPaths {
             kestic: PathBuf::from("/home/a%hb/.local/share/kestic/known_hosts"),
-            ..quoted.clone()
+            ..quoted
         };
         assert!(sftp_args(&expanded).is_err(), "ssh expands % in the path");
     }

@@ -234,7 +234,7 @@ pub(crate) fn restore_progress_text(progress: &str, speed_bps: u64) -> String {
     if speed_bps == 0 {
         return progress.to_string();
     }
-    let speed = i18n("%1/s").subs(&[&format_bytes(speed_bps)]).to_string();
+    let speed = i18n("%1/s").subs(&[&format_bytes(speed_bps)]);
     GuiText::TwoParts.with_args(&[progress, &speed])
 }
 
@@ -599,7 +599,7 @@ impl qobject::RestorePreviewModel {
         };
         // One run per preview: a second click must not start another restore.
         self.as_mut().set_can_restore(false);
-        let target = result.target.check.detail.clone();
+        let target = result.target.check.detail;
         call_daemon_on(
             &self.qt_thread(),
             Lane::slow("restore"),

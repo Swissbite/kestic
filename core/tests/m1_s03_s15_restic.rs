@@ -114,13 +114,8 @@ fn ac_m1_15_3_exit_error_json_from_real_restic_stderr_is_captured() {
         let dir = TempDir::new().expect("tempdir");
         let cache_dir = common::restic_cache_dir(dir.path());
         let missing_repo = dir.path().join("nonexistent-repo");
-        let dest = Destination::new(
-            "Missing",
-            DestinationKind::Local {
-                path: missing_repo.clone(),
-            },
-        )
-        .expect("dest");
+        let dest = Destination::new("Missing", DestinationKind::Local { path: missing_repo })
+            .expect("dest");
 
         let clock = FakeClock::new(datetime!(2026-12-01 12:00:00 UTC));
         let mut spec = ResticCommandSpec::for_destination(

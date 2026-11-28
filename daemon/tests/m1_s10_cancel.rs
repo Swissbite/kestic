@@ -46,7 +46,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     let backup = Backup::new(
         format!("Large Dataset ({label})"),
         Source::folder(&src_dir),
-        dest.id.clone(),
+        dest.id,
     )
     .expect("valid backup");
     let backup_id = client.add_backup(&backup).expect("add backup");
@@ -170,12 +170,8 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
                 },
             )
             .expect("dest");
-            let backup = Backup::new(
-                "Crash Backup",
-                Source::folder(root.join("src")),
-                dest.id.clone(),
-            )
-            .expect("backup");
+            let backup = Backup::new("Crash Backup", Source::folder(root.join("src")), dest.id)
+                .expect("backup");
             let clock = SystemClock;
             let stale_run = Run::new_backup(&clock, &backup).expect("new running run");
             assert_eq!(stale_run.status, RunStatus::Running);
@@ -213,7 +209,7 @@ fn ac_m1_10_2_preseeded_running_run_transitions_to_interrupted_on_daemon_startup
             let ready_file = root.join("daemon.ready");
             let mut daemon_cfg = run_cfg;
             daemon_cfg.ready_file = Some(ready_file.clone());
-            let handle = thread::spawn(move || run_daemon(daemon_cfg));
+            let handle = thread::spawn(move || run_daemon(&daemon_cfg));
             wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
 
             let client = common::connect_default_client().expect("connect client");

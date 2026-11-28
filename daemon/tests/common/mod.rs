@@ -348,7 +348,7 @@ impl FakeNotificationsServer {
         summary: &str,
         body: &str,
         _actions: Vec<String>,
-        hints: HashMap<String, OwnedVariant>,
+        hints: &HashMap<String, OwnedVariant>,
         _expire_timeout: i32,
     ) -> u32 {
         let desktop_entry = hints

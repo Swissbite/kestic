@@ -907,7 +907,7 @@ fn dry_run_preview_uses_isolated_temp_exclude_file_and_cleans_up() {
         let saved_before = fs::read_to_string(&saved_excl_path).expect("read saved excl");
         assert_eq!(saved_before, "*.tmp\n");
 
-        let mut preview_backup = saved_backup.clone();
+        let mut preview_backup = saved_backup;
         preview_backup.excludes.lines = vec!["*.log".to_string()];
 
         let dry_res = execute_backup_dry_run_with(

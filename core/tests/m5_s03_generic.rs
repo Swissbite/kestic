@@ -22,7 +22,7 @@ use kestic_test_support::password::{assert_no_secret, strong_password};
 use kestic_test_support::tools::write_executable;
 use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::TempDir;
 use time::macros::datetime;
 
@@ -44,8 +44,8 @@ fn fake_restic(dir: &Path) -> ResolvedRestic {
     }
 }
 
-fn read(path: PathBuf) -> String {
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 fn var(name: &str, secret: bool, value: Option<&str>) -> EnvVar {
@@ -159,7 +159,7 @@ fn ac_m5_03_2_secret_variable_only_in_store_and_restic_environment() {
         ..AppConfig::default()
     };
     save_config(&config_path, &config).expect("save config");
-    let saved = read(config_path);
+    let saved = read(&config_path);
     assert_no_secret(&saved, &secret, "(b) config.toml");
     assert!(
         saved.contains("B2_ACCOUNT_KEY"),
@@ -177,7 +177,7 @@ fn ac_m5_03_2_secret_variable_only_in_store_and_restic_environment() {
         vec!["snapshots".to_string()],
     );
     run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
-    let env = read(dir.path().join("env.log"));
+    let env = read(&dir.path().join("env.log"));
     assert_eq!(
         env_value(&env, "B2_ACCOUNT_KEY").as_deref(),
         Some(secret.as_str()),
@@ -189,7 +189,7 @@ fn ac_m5_03_2_secret_variable_only_in_store_and_restic_environment() {
         "(c) and the plain variable"
     );
     assert_no_secret(
-        &read(dir.path().join("args.log")),
+        &read(&dir.path().join("args.log")),
         &secret,
         "(c) restic arguments",
     );
@@ -379,7 +379,7 @@ fn run_hand_edited(mut vars: Vec<EnvVar>, secret: Option<(&str, &str)>) -> Strin
     );
     let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
     run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
-    read(dir.path().join("env.log"))
+    read(&dir.path().join("env.log"))
 }
 
 /// M5-S03, variables of the generic form: a variable named `RESTIC_CACHE_DIR` does not move
@@ -412,7 +412,7 @@ fn m5_03_kestic_cache_dir_wins_over_a_variable() {
     let clock = FakeClock::new(datetime!(2026-12-01 10:00:00 UTC));
     run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
     assert_eq!(
-        env_value(&read(dir.path().join("env.log")), "RESTIC_CACHE_DIR").as_deref(),
+        env_value(&read(&dir.path().join("env.log")), "RESTIC_CACHE_DIR").as_deref(),
         Some(cache.to_string_lossy().as_ref()),
         "Kestic's cache directory"
     );

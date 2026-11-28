@@ -608,7 +608,7 @@ fn ac_m5_09_1_rest_server_on_new_port_is_the_same_repository() {
                 let mut edited = dest.clone();
                 edited.kind = DestinationKind::Rest {
                     url: moved_server.url.clone(),
-                    username: Some(user.clone()),
+                    username: Some(user),
                 };
                 // (a)
                 let tested = client
@@ -786,14 +786,13 @@ fn ac_m5_01_8_line_stays_for_a_destination_moved_meanwhile() {
                     .any(|l| l.starts_with(&format!("[localhost]:{} ", rig.server.port)))
             };
             assert!(localhost_line(), "the trusted line of localhost");
-            let mut moved = moving.clone();
+            let mut moved = moving;
             moved.kind = rig.kind("localhost", "a");
             let cats_before = rig.wrapper.of('S', "cat").len();
             rig.wrapper.hold("cat");
             let client = rig.daemon.client.clone();
-            let updating = std::thread::spawn({
-                let moved = moved.clone();
-                move || client.update_destination_now(&moved, "connect", &password, &none(), true)
+            let updating = std::thread::spawn(move || {
+                client.update_destination_now(&moved, "connect", &password, &none(), true)
             });
             // The update checks the repository at the new address with restic.
             rig.wrapper

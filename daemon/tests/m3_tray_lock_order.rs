@@ -77,7 +77,6 @@ fn tray_menu_during_backup_progress_does_not_block_daemon() {
             let hammer = {
                 let stop = Arc::clone(&stop);
                 let menu_calls = Arc::clone(&menu_calls);
-                let sni_service = sni_service.clone();
                 thread::spawn(move || {
                     let conn = zbus::block_on(zbus::Connection::session()).expect("session bus");
                     while !stop.load(Ordering::SeqCst) {

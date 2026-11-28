@@ -213,7 +213,6 @@ impl qobject::KesticApp {
                     detected,
                     cached_destination_kind(&dest_id).as_ref(),
                 )
-                .map_err(|err| err.to_string())
                 .map(|backup| client.add_backup(&backup))
             },
             |app, result| match app.finish_checked(result, Finish::Plain) {
@@ -239,7 +238,7 @@ impl qobject::KesticApp {
             return 0;
         };
         self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
-            clone_updated_backup_excludes(backup, excludes).map_err(|err| err.to_string())
+            clone_updated_backup_excludes(backup, excludes)
         })
     }
 
@@ -259,7 +258,7 @@ impl qobject::KesticApp {
             return 0;
         };
         self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
-            clone_updated_backup_retention(backup, retention).map_err(|err| err.to_string())
+            clone_updated_backup_retention(backup, retention)
         })
     }
 
@@ -277,7 +276,7 @@ impl qobject::KesticApp {
             let source = client
                 .detect_source(&trimmed)
                 .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
-            clone_updated_backup_source(backup, source).map_err(|err| err.to_string())
+            clone_updated_backup_source(backup, source)
         })
     }
 

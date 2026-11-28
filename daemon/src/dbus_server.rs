@@ -376,6 +376,8 @@ impl KesticDbusV1Service {
         Ok(())
     }
 
+    // The zbus interface macro passes the message header by value.
+    #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "RegisterGui")]
     fn register_gui(
         &self,
@@ -388,6 +390,8 @@ impl KesticDbusV1Service {
         Ok(())
     }
 
+    // The zbus interface macro passes the message header by value.
+    #[allow(clippy::needless_pass_by_value)]
     #[zbus(name = "ConfirmQuit")]
     fn confirm_quit(
         &self,

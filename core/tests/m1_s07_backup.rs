@@ -102,7 +102,7 @@ fn verify_snapshots_ls_and_transparent_shell(
         runtime.kestic_binary,
     )
     .expect("build spec");
-    let mut sh_spec = cmd_spec.clone();
+    let mut sh_spec = cmd_spec;
     sh_spec.password_command_override = Some(format!(
         "{} secret get {}",
         runtime.kestic_binary.display(),

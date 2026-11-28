@@ -134,7 +134,7 @@ impl QueryListModel for qobject::SnapshotDiffModel {
             self.load_kind_counts_then_show(diff);
             return;
         }
-        self.show_page(diff);
+        self.show_page(&diff);
     }
 
     fn completing_first_page(&self) -> bool {
@@ -196,9 +196,9 @@ impl qobject::SnapshotDiffModel {
     }
 
     /// Shows `diff` as the first page of the list.
-    fn show_page(mut self: Pin<&mut Self>, diff: DiffResultDto) {
+    fn show_page(mut self: Pin<&mut Self>, diff: &DiffResultDto) {
         let changes = &diff.changes;
-        let rows = self.page_rows(&diff);
+        let rows = self.page_rows(diff);
         self.as_mut().reset_rows(rows);
         self.as_mut().set_identical(diff.identical);
         self.as_mut().set_too_large(changes.too_large);
@@ -239,10 +239,10 @@ impl qobject::SnapshotDiffModel {
                         .map(|(change, page)| (change, page.changes.matched))
                         .collect();
                     model.as_mut().apply_kind_counts(&counts);
-                    model.show_page(diff);
+                    model.show_page(&diff);
                 }
                 // The comparison ended before the counts were asked for, so it cannot run.
-                Fetched::Running => model.show_page(diff),
+                Fetched::Running => model.show_page(&diff),
                 Fetched::Gone => model.restart(),
                 Fetched::Failed(failure) => model.fail_query(&failure),
             }

@@ -846,7 +846,7 @@ pub(super) fn probe_for_run(
     let (probe, resolved) = probe_restic_and_secrets_resolved(provider, secret_store);
     let result = match resolved {
         Ok(resolved) if probe.1.available => Ok(resolved),
-        Err(err) if probe.1.available => Err(map_provider_err(err)),
+        Err(err) if probe.1.available => Err(map_provider_err(&err)),
         _ => Err(secret_store_locked(probe.1.detail.clone())),
     };
     (probe, result)
@@ -919,7 +919,7 @@ pub(crate) fn set_restic_provider_unlocked(
         Err(_) if provider == ResticProvider::AppManaged && probe.0.app_managed.is_none() => {
             return Err(not_installed());
         }
-        Err(err) => return Err(map_provider_err(err)),
+        Err(err) => return Err(map_provider_err(&err)),
     };
     let mut restic_status = probe.0.clone();
 

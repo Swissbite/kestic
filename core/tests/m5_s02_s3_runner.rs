@@ -22,7 +22,7 @@ use kestic_test_support::password::{assert_no_secret, s3_key, strong_password};
 use kestic_test_support::tools::write_executable;
 use std::fs;
 use std::net::TcpListener;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::thread;
 use tempfile::TempDir;
 use time::macros::datetime;
@@ -88,13 +88,13 @@ fn s3_destination(endpoint: &str) -> Destination {
     .expect("S3 destination")
 }
 
-fn read(path: PathBuf) -> String {
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+fn read(path: &Path) -> String {
+    fs::read_to_string(path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
 fn assert_keys_only_in_env(dir: &Path, keys: &Keys, what: &str) {
-    let args = read(dir.join("args.log"));
-    let env = read(dir.join("env.log"));
+    let args = read(&dir.join("args.log"));
+    let env = read(&dir.join("env.log"));
     assert!(!args.contains(&keys.access), "{what}: access key in argv");
     assert_no_secret(&args, &keys.secret, &format!("{what}: argv"));
     assert!(
@@ -479,7 +479,7 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
         vec!["snapshots".to_string()],
     );
     run_restic(&spec, &dest, Some(&store), &clock, None, &[], |_| {}).expect("run");
-    let run_env = read(dir.path().join("env.log"));
+    let run_env = read(&dir.path().join("env.log"));
     for (name, value) in &foreign {
         assert!(
             !run_env.contains(value),
@@ -546,7 +546,7 @@ fn m5_02_inherited_aws_variables_do_not_reach_restic() {
         &runtime,
     )
     .expect("setup");
-    let probe_env = read(dir.path().join("env.log"));
+    let probe_env = read(&dir.path().join("env.log"));
     for (name, value) in &foreign {
         assert!(
             !probe_env.contains(value),
@@ -608,7 +608,7 @@ fn m5_02_empty_backend_password_is_absent_and_never_sent() {
     )
     .expect("setup");
 
-    let env = read(dir.path().join("env.log"));
+    let env = read(&dir.path().join("env.log"));
     assert_eq!(
         env_value(&env, "RESTIC_REST_PASSWORD"),
         None,

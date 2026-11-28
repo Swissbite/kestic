@@ -54,7 +54,7 @@ fn ac_m1_09_1_single_instance_lock_exits_cleanly_as_already_running() {
                 ready_file: None,
                 ..sandbox_run_config(root)
             };
-            let second_outcome = run_daemon(second_cfg).expect("second daemon run");
+            let second_outcome = run_daemon(&second_cfg).expect("second daemon run");
             assert_eq!(second_outcome, DaemonOutcome::AlreadyRunning);
 
             // Also verify CLI `kestic daemon` exits 0 cleanly while first daemon holds the name.
@@ -104,20 +104,16 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             fs::write(source_dir.join("hello.txt"), b"kestic backup data\n").expect("write file");
 
             // AC-M1-09-3: Add destination + backup purely over D-Bus; daemon writes config.toml.
-            let dest = Destination::new(
-                "Local Test Repo",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
-            )
-            .expect("valid dest");
+            let dest =
+                Destination::new("Local Test Repo", DestinationKind::Local { path: repo_dir })
+                    .expect("valid dest");
             let repo_password = strong_password();
             let dest_id = client
                 .add_destination(&dest, "init", &repo_password, &BackendSecrets::default())
                 .expect("AddDestination");
             assert_eq!(dest_id, dest.id.as_str());
 
-            let backup = Backup::new("Documents", Source::folder(&source_dir), dest.id.clone())
+            let backup = Backup::new("Documents", Source::folder(&source_dir), dest.id)
                 .expect("valid backup");
             let backup_id = client.add_backup(&backup).expect("AddBackup");
             assert_eq!(backup_id, backup.id.as_str());
@@ -178,7 +174,7 @@ fn ac_m1_09_2_09_3_09_4_crud_validation_config_persistence_and_signals() {
             }));
 
             // Verify backup CRUD update + remove + destination remove.
-            let mut updated_backup = backup.clone();
+            let mut updated_backup = backup;
             updated_backup.excludes.lines = vec!["*.tmp".to_string()];
             client
                 .update_backup_now(&updated_backup)
@@ -227,17 +223,12 @@ fn ac_m1_09_6_and_09_7_missing_source_blocks_without_restic_and_respects_window_
             fs::create_dir_all(&repo_dir).expect("mkdir repo");
             fs::create_dir_all(&source_dir).expect("mkdir src");
 
-            let dest = Destination::new(
-                "Local Repo",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
-            )
-            .expect("dest");
+            let dest = Destination::new("Local Repo", DestinationKind::Local { path: repo_dir })
+                .expect("dest");
             connect_local_repo(client, &real_restic, &dest);
 
-            let backup = Backup::new("Photos", Source::folder(&source_dir), dest.id.clone())
-                .expect("backup");
+            let backup =
+                Backup::new("Photos", Source::folder(&source_dir), dest.id).expect("backup");
             let backup_id = client.add_backup(&backup).expect("add backup");
 
             // Install spy provider AFTER init so only StartBackup would hit it.
@@ -343,13 +334,8 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
             fs::create_dir_all(&repo_dir).expect("mkdir repo");
             fs::create_dir_all(&src_dir).expect("mkdir src");
 
-            let dest = Destination::new(
-                "Primary Repo",
-                DestinationKind::Local {
-                    path: repo_dir.clone(),
-                },
-            )
-            .expect("dest");
+            let dest = Destination::new("Primary Repo", DestinationKind::Local { path: repo_dir })
+                .expect("dest");
             let initial_password = connect_local_repo(client, &restic_bin, &dest);
             let dest_id = dest.id.as_str().to_string();
 
@@ -377,7 +363,7 @@ fn ac_m1_19_1_19_4_19_6_rename_in_use_and_verify_connection() {
 
             // AC-M1-19-6: UpdateDestination with verify_connection = true fails on unreachable endpoint,
             // leaving config.toml and stored password untouched.
-            let mut bad_dest = dest.clone();
+            let mut bad_dest = dest;
             bad_dest.name = "Broken Endpoint".to_string();
             bad_dest.kind = DestinationKind::Rest {
                 url: format!("http://127.0.0.1:{}/alice", free_loopback_port()),
@@ -611,7 +597,7 @@ fn duplicate_destination_location_rejected_and_edit_reinit_empty_folder() {
             .expect("dest2");
             connect_local_repo(client, &restic_bin, &dest2);
 
-            let mut dest2_collision = dest2.clone();
+            let mut dest2_collision = dest2;
             dest2_collision.kind = DestinationKind::Local {
                 path: PathBuf::from(format!("{}/", repo_dir.display())),
             };

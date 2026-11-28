@@ -299,7 +299,7 @@ fn ac_m6_17_2_plan_then_one_forget_with_ids() {
         );
         assert_eq!(
             ids,
-            BTreeSet::from([own_old.clone(), own_mid.clone()]),
+            BTreeSet::from([own_old, own_mid]),
             "{label}: (c) `forget` gets exactly the remaining IDs"
         );
         let extra: Vec<String> = after_forget(forgets[0])
@@ -676,11 +676,7 @@ fn ac_m6_17_2_failed_forget_is_not_done() {
     let id = "ab".repeat(32);
     fake.plan_removing(&[&id]);
     let run = fake.retention().expect("retention ran");
-    assert_eq!(
-        run.forget_ids,
-        vec![id.clone()],
-        "forget got the planned ID"
-    );
+    assert_eq!(run.forget_ids, vec![id], "forget got the planned ID");
     assert!(!run.succeeded(), "a failed `forget` is not done");
     assert_eq!(run.removed_count(), None, "no removed snapshots counted");
     assert_eq!(fake.calls().len(), 2, "plan and one `forget`");

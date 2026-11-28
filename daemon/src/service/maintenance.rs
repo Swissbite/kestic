@@ -415,6 +415,7 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
     });
 }
 
+#[derive(Clone, Copy)]
 struct MaintenanceOpsInput<'a> {
     dest: &'a Destination,
     runtime: &'a ResticRuntime<'a>,

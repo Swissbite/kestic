@@ -289,7 +289,7 @@ fn only_a_root_owned_gpgv_is_trusted() {
     assert_eq!(trusted_gpgv(&dir.path().join("missing")), None);
     // (c) only absolute PATH entries count
     let search = std::env::join_paths([Path::new("relative"), own.as_path()]).expect("PATH");
-    assert_eq!(gpgv_in_path(Some(&search)), Some(fake.clone()));
+    assert_eq!(gpgv_in_path(Some(&search)), Some(fake));
     assert_eq!(gpgv_in_path(Some(OsStr::new("relative"))), None);
     // (d) the release build's choice: the system gpgv first, then only a trusted one from PATH
     let missing = dir.path().join("no-system-gpgv");

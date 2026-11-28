@@ -562,7 +562,7 @@ fn ac_m5_06_8_install_waits_for_running_preview() {
             rig.wrapper.hold("backup");
             // The start waits for the preview's version check, so it runs on its own connection.
             let bus = latest_variant().bus_name("S06B8P");
-            let backup_id = fx.backup_id_str.clone();
+            let backup_id = fx.backup_id_str;
             let starter = std::thread::spawn(move || {
                 KesticClient::connect(&bus, KESTIC_OBJECT_PATH)
                     .expect("connect")

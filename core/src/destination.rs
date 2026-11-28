@@ -496,6 +496,7 @@ fn map_execution_failure(dest: &Destination, res: &ResticExecutionResult) -> Des
     }
 }
 
+#[derive(Clone, Copy)]
 struct ProbeRuntime<'a> {
     resolved: &'a ResolvedRestic,
     kestic_binary: &'a Path,

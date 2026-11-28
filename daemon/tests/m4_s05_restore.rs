@@ -577,12 +577,7 @@ fn ac_m4_05_15_default_target_needs_no_dry_run_and_targets_are_checked() {
                     v.label
                 );
                 let run_id = fx
-                    .start_restore(
-                        &["a.txt"],
-                        p.target.target.clone(),
-                        RestoreOverwrite::Never,
-                        None,
-                    )
+                    .start_restore(&["a.txt"], p.target.target, RestoreOverwrite::Never, None)
                     .expect("(b) StartRestore without preview");
                 assert_eq!(
                     fx.wait_run(&run_id).run.status,
@@ -1498,7 +1493,7 @@ fn ac_m4_05_12_restore_run_carries_its_backup_from_the_start() {
                 let run_id = fx
                     .start_restore(
                         &["a.txt"],
-                        p.target.target.clone(),
+                        p.target.target,
                         RestoreOverwrite::Never,
                         Some(&id),
                     )
@@ -1807,7 +1802,7 @@ fn m4_s05_failed_restore_leaves_the_backup_status_alone() {
             let restore_run = fx
                 .start_restore(
                     &["a.txt"],
-                    p.target.target.clone(),
+                    p.target.target,
                     RestoreOverwrite::Never,
                     Some(&preview_id),
                 )
@@ -2674,8 +2669,7 @@ fn m4_s05_second_restore_into_the_same_target_is_refused() {
             fx.rig
                 .wrapper
                 .wait_for('S', "restore", 1, std::time::Duration::from_secs(30));
-            let running =
-                fx.start_restore(&["b.bin"], target.clone(), RestoreOverwrite::Never, None);
+            let running = fx.start_restore(&["b.bin"], target, RestoreOverwrite::Never, None);
             assert!(
                 matches!(running, Err(KesticDbusError::AlreadyRunning(_))),
                 "(b) refused while the first runs: {running:?}"

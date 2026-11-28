@@ -206,8 +206,8 @@ fn m3_start_all_queues_same_destination_and_notifies_when_warning_disabled() {
                 b.schedule = Schedule::ManualOnly;
                 b.source = Source::folder(&src_missing);
             });
-            let id1 = first.backup.id.clone();
-            let id2 = second.id.clone();
+            let id1 = first.backup.id;
+            let id2 = second.id;
             let id2_str = id2.as_str().to_string();
             let id_miss_str = missing.id.as_str().to_string();
 
@@ -220,7 +220,7 @@ fn m3_start_all_queues_same_destination_and_notifies_when_warning_disabled() {
             );
             assert_eq!(
                 res.queued_backup_ids,
-                vec![id2_str.clone()],
+                vec![id2_str],
                 "SecondBk on same destination must be queued, not skipped: {res:?}"
             );
             assert_eq!(res.skipped.len(), 1, "Only MissingBk should skip: {res:?}");
@@ -573,12 +573,7 @@ fn m3_unlock_refuses_foreign_host_lock() {
                 M3DaemonOpts {
                     enable_monitors: false,
                     enable_scheduler: false,
-                    ..M3DaemonOpts::new(
-                        "locks",
-                        "net.daester.Kestic.M3RevLock",
-                        &wrapper,
-                        clock.clone(),
-                    )
+                    ..M3DaemonOpts::new("locks", "net.daester.Kestic.M3RevLock", &wrapper, clock)
                 },
             );
             let client = &daemon.client;
@@ -626,7 +621,7 @@ fn m3_failed_maintenance_with_open_forget_enters_backoff() {
 
             let fx = rig.add_backup("ForgetBk", |b| b.schedule = Schedule::ManualOnly);
             let dest = fx.dest.clone();
-            let bid = fx.backup.id.clone();
+            let bid = fx.backup.id;
 
             rig.wrapper
                 .fail("forget", 1, "Fatal: forget failed for test");
@@ -1884,8 +1879,8 @@ fn m3_s04_state_dtos_carry_stable_codes() {
                 b.schedule = Schedule::ManualOnly;
                 b.source = Source::folder(&no_such_dir);
             });
-            let pw_id = pw.backup.id.clone();
-            let missing_id = missing.id.clone();
+            let pw_id = pw.backup.id;
+            let missing_id = missing.id;
 
             // (a) Exit 12 -> error_kind `wrong_password`, raw text as detail, exit code 12.
             rig.wrapper

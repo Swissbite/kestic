@@ -81,7 +81,7 @@ fn m2_gui_smoke_excludes_simple_expert_and_lint_wide_narrow_en_de() {
         ],
         ..ExcludeRules::default()
     };
-    backup.excludes = initial_excludes.clone();
+    backup.excludes = initial_excludes;
 
     let initial_cfg = AppConfig {
         restic_provider: ResticProvider::Custom {
