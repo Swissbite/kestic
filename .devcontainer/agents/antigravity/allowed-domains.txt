@@ -1,0 +1,8 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Antigravity CLI: OAuth login, model backend and Remote Control
+antigravity.google
+googleapis.com
+google.com
+gstatic.com

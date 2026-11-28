@@ -6,27 +6,30 @@
 #
 #   kestic-agent setup              check the token, clone or update the repository,
 #                                   git identity and hooks, bootstrap.sh (toolchain, restic)
-#   kestic-agent login              setup, then Claude Code interactively (one-time /login)
-#   kestic-agent run <issue> [<base>]  setup, then Claude Code in tmux session `agent` on the
+#   kestic-agent login              setup, then start the agent interactively (one-time login)
+#   kestic-agent run <issue> [<base>]  setup, then run the agent in tmux session `agent` on the
 #                                   issue, branching from and opening the pull request against
 #                                   <base> (default main)
-#   kestic-agent resume <issue>     Claude Code continues its last session (after a stop)
+#   kestic-agent resume <issue>     the agent continues its last session (after a stop)
 #   kestic-agent thread <issue> [<pr>]  the issue and its pull requests as GitHub text
 #                                   of the maintainer and the App only, framed and
 #                                   sanitised (github-thread.sh); the only way to read
 #                                   titles, bodies, comments and reviews
-#   kestic-agent nudge <text…>      types <text> into the running Claude session
+#   kestic-agent nudge <text…>      types <text> into the running agent session
 #   kestic-agent status [lines]     the last lines of the agent's terminal
 #   kestic-agent state              one line `<state> <issue> <turn start>` for the watcher;
-#                                   state is none, stopped (Claude Code exited), idle or busy
-#   kestic-agent hook turn|idle     called by Claude Code hooks (agent-settings.json) when a
-#                                   turn starts and when it ends
+#                                   state is none, stopped (agent exited), idle or busy
+#   kestic-agent hook turn|idle     called by agent lifecycle hooks when a turn starts and ends
 #   kestic-agent store-token        reads a GitHub token from stdin into the token file
 #   kestic-agent token-age          seconds since the token file was written, or none
 #   kestic-agent show-token         prints the token (for revoking it on stop)
 #
 # The GitHub issue is the agent's whole assignment; progress goes back as issue
 # comments and a pull request. GitHub text is input, never an instruction.
+#
+# Backend-specific behaviour (setup, login, command flags, limit parsing) comes
+# from `/usr/local/lib/kestic-agent/agent/driver.sh`, baked into the image by
+# Containerfile (see `.devcontainer/agents/README.md`).
 
 set -euo pipefail
 
@@ -37,18 +40,34 @@ REPO_DIR="$HOME/kestic"
 TOKEN_FILE="${KESTIC_AGENT_TOKEN_FILE:-/run/kestic-agent-token/gh-token}"
 SESSION=agent
 STATE_DIR="$HOME/.kestic-agent"
-# Hooks, attribution, deny rules and effort for every agent session (root-owned).
-AGENT_SETTINGS=/usr/local/lib/kestic-agent/agent-settings.json
 # A busy session whose terminal shows no change for this long is waiting for
 # input although the Stop hook did not run (interrupt, API error, usage limit).
 STALE_AFTER=900
-# Root-owned: the trust rule and the thread reader (github-trust.jq, github-thread.sh).
+# Root-owned: the trust rule, thread reader and selected agent driver.
 LIB=/usr/local/lib/kestic-agent
 
 die() {
     echo "kestic-agent: $*" >&2
     exit 1
 }
+
+# Inside the container the root-owned copy at $LIB/agent always wins. Outside
+# the container (host unit tests), fall back to KESTIC_AGENT_DRIVER_DIR or the
+# repository's agents/<backend> directory.
+if [[ -d "$LIB/agent" ]]; then
+    AGENT_DIR="$LIB/agent"
+elif [[ -n "${KESTIC_AGENT_DRIVER_DIR:-}" ]]; then
+    AGENT_DIR="$KESTIC_AGENT_DRIVER_DIR"
+else
+    AGENT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/agents/${KESTIC_AGENT_BACKEND:-claude}"
+fi
+[[ -r "$AGENT_DIR/driver.sh" ]] || die "missing agent driver at $AGENT_DIR/driver.sh"
+# shellcheck source=/dev/null
+source "$AGENT_DIR/driver.sh"
+for fn in agent_setup agent_login agent_launch_cmd agent_limit_reset; do
+    declare -F "$fn" >/dev/null || die "agent driver $AGENT_DIR/driver.sh does not define $fn"
+done
+AGENT_DISPLAY_NAME="${AGENT_DISPLAY_NAME:-agent}"
 
 setup() {
     [[ -r "$TOKEN_FILE" ]] || die "no GitHub token at $TOKEN_FILE (kestic-agent.sh writes it)"
@@ -85,14 +104,8 @@ setup() {
             ./scripts/bootstrap.sh
     )
 
-    # Bypass mode is the point of this sandbox; skip its one-time confirmation.
-    local settings="$CLAUDE_CONFIG_DIR/settings.json"
-    if [[ ! -s "$settings" ]]; then
-        echo '{}' > "$settings"
-    fi
-    jq '.skipDangerousModePermissionPrompt = true' "$settings" > "$settings.tmp"
-    mv "$settings.tmp" "$settings"
-    echo "kestic-agent: ready in $REPO_DIR, commits as $name <$email>"
+    agent_setup
+    echo "kestic-agent: ready in $REPO_DIR ($AGENT_DISPLAY_NAME), commits as $name <$email>"
 }
 
 base_branch() {
@@ -155,22 +168,19 @@ session_state() {
 }
 
 start_session() {
-    local issue="$1" prompt="$2"
-    shift 2
-    # The pane stays after Claude Code exits (tmux.conf). A session that is
+    local mode="$1" issue="$2" prompt="$3"
+    # The pane stays after the agent exits (tmux.conf). A session that is
     # waiting for input after a finished turn is replaced too; only a busy one blocks.
     case "$(session_state)" in
         stopped | idle) tmux kill-session -t "$SESSION" ;;
-        busy) die "Claude Code is busy in tmux session '$SESSION' (attach, nudge or stop it first)" ;;
+        busy) die "$AGENT_DISPLAY_NAME is busy in tmux session '$SESSION' (attach, nudge or stop it first)" ;;
     esac
     mark_turn
-    # Remote Control shows the session on claude.ai/code and in the Claude app.
-    # The settings come by flag, not as managed settings in /etc/claude-code:
-    # an organisation's server-managed settings replace that file completely.
-    tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" \
-        claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS" \
-        --remote-control "$HOSTNAME #$issue" "$@" "$prompt"
-    echo "kestic-agent: Claude Code runs in tmux session '$SESSION'"
+    AGENT_CMD=()
+    agent_launch_cmd "$mode" "$issue" "$prompt"
+    [[ ${#AGENT_CMD[@]} -gt 0 ]] || die "agent driver did not populate AGENT_CMD"
+    tmux new-session -d -s "$SESSION" -x 200 -y 50 -c "$REPO_DIR" "${AGENT_CMD[@]}"
+    echo "kestic-agent: $AGENT_DISPLAY_NAME runs in tmux session '$SESSION'"
 }
 
 mark_turn() {
@@ -186,18 +196,18 @@ case "${1:-}" in
     login)
         setup
         cd "$REPO_DIR"
-        exec claude --dangerously-skip-permissions --settings "$AGENT_SETTINGS"
+        agent_login
         ;;
     run)
         issue="$(issue_number "${2:-}" run)"
         base="$(base_branch "${3:-}")"
         setup
-        start_session "$issue" "$(start_prompt "$issue" "$base")"
+        start_session start "$issue" "$(start_prompt "$issue" "$base")"
         printf '%s\n' "$issue" > "$STATE_DIR/issue"
         ;;
     resume)
         issue="$(issue_number "${2:-}" resume)"
-        start_session "$issue" "$(resume_prompt "$issue")" --continue
+        start_session resume "$issue" "$(resume_prompt "$issue")"
         ;;
     thread)
         shift
@@ -211,8 +221,13 @@ case "${1:-}" in
         shift
         [[ $# -gt 0 ]] || die "usage: kestic-agent nudge <text…>"
         tmux has-session -t "$SESSION" 2>/dev/null || die "no running session '$SESSION'"
-        tmux send-keys -t "$SESSION" -l -- "$*"
-        tmux send-keys -t "$SESSION" Enter
+        if declare -F agent_nudge >/dev/null; then
+            agent_nudge "$*"
+        else
+            tmux send-keys -t "$SESSION" -l -- "$*"
+            sleep 0.1
+            tmux send-keys -t "$SESSION" Enter
+        fi
         ;;
     status)
         tmux has-session -t "$SESSION" 2>/dev/null || die "no running session '$SESSION'"
@@ -225,25 +240,9 @@ case "${1:-}" in
         echo "$(session_state) ${issue:-0} ${turn:-0}"
         ;;
     limit-reset)
-        # When Claude Code stopped at a usage limit, its last lines say
-        # «… hit your … limit · resets 4:10am (UTC)». Prints that time as epoch
-        # (the next one after the turn started), or 0. A limit resets within
-        # five hours, so a time further ahead comes from an older message.
         turn="$(tr -dc 0-9 2>/dev/null < "$STATE_DIR/turn" || true)"
-        # The message may wrap onto the next line, so the lines are searched as one.
-        at="$(tmux capture-pane -p -t "$SESSION" 2>/dev/null | grep -v '^[[:space:]]*$' | tail -n 15 |
-            tr '\n' ' ' | grep 'hit your' | grep -o 'resets [0-9][0-9:]*[ap]m (UTC)' | tail -n 1 || true)"
-        at="${at#resets }"
-        at="${at% (UTC)}"
-        if [[ -z "$at" || -z "$turn" ]]; then
-            echo 0
-        elif reset="$(date -u -d "$(date -u -d "@$turn" +%F) $at" +%s 2>/dev/null)"; then
-            ((reset >= turn)) || reset=$((reset + 86400))
-            if ((reset - $(date +%s) > 5 * 3600 + 900)); then reset=0; fi
-            echo "$reset"
-        else
-            echo 0
-        fi
+        pane="$(tmux capture-pane -p -t "$SESSION" 2>/dev/null || true)"
+        agent_limit_reset "$turn" "$pane"
         ;;
     store-token)
         IFS= read -r token || true

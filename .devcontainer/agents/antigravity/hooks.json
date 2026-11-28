@@ -1,0 +1,16 @@
+{
+  "kestic-agent": {
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "/usr/local/lib/kestic-agent/agent/hook.sh pre-invocation"
+      }
+    ],
+    "Stop": [
+      {
+        "type": "command",
+        "command": "/usr/local/lib/kestic-agent/agent/hook.sh stop"
+      }
+    ]
+  }
+}

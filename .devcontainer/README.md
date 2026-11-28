@@ -5,10 +5,12 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Agent container
 
-A rootless Podman container in which a coding agent (Claude Code) works on
+A rootless Podman container in which a coding agent works on
 Kestic on its own, from a GitHub issue to a pull request. It is based on the CI
 image (`.github/ci-image/Dockerfile`), so `just verify` runs with the same
-system packages as the `verify` job.
+system packages as the `verify` job. The agent backend is pluggable
+([agents/README.md](agents/README.md)); shipped variations are `claude` (Claude
+Code, default) and `antigravity` (Antigravity CLI, `agy`).
 
 The agent talks to the outside world only through GitHub: it gets its
 assignment from an issue, reports progress as issue comments and delivers a
@@ -24,9 +26,9 @@ milestone's integration branch under that milestone's rules
 | Repository checkout | not mounted; the agent clones `Swissbite/kestic` into the volume `kestic-agent-home` |
 | GitHub credentials | only a one-hour installation token of the GitHub App `kestic-agent`, limited to this repository, in `/run/kestic-agent-token/gh-token` (tmpfs, owner `kesticci`, mode 0400; read per call by `gh` and git, never in argv, environment, image or volume). The App's private key stays on the host. |
 | Home directory, keyring, D-Bus, SSH agent | not mounted, no sockets, no environment variables passed |
-| Network | IPv4 HTTPS to the domains in [allowed-domains.txt](allowed-domains.txt) only; no host loopback, no LAN, no IPv6 |
+| Network | IPv4 HTTPS to the shared domains in [allowed-domains.txt](allowed-domains.txt) plus the selected backend's `agents/<backend>/allowed-domains.txt` only; no host loopback, no LAN, no IPv6 |
 | User | the agent runs as `kesticci` (uid 1001 in the container, an unprivileged sub-uid on the host) without capabilities and with `no_new_privs`; `sudo` does not work. The container's main process runs as `kestic-infra`, out of the agent's reach. |
-| Claude Code login | the volume `kestic-agent-claude` (`CLAUDE_CONFIG_DIR`) |
+| Agent login | the volume `<name>-<volume_suffix>` (e.g. `kestic-agent-claude` at `/home/kesticci/.claude` for Claude Code, `kestic-agent-gemini` at `/home/kesticci/.gemini` for Antigravity CLI) |
 
 The entrypoint starts as container root with six capabilities
 (`NET_ADMIN` for nftables, `NET_BIND_SERVICE` for dnsmasq on port 53, `SETUID`
@@ -172,14 +174,17 @@ reader in `just verify`.
 Podman keeps secrets unencrypted in its storage on the host
 (`~/.local/share/containers/storage/secrets/`), readable by the host user only.
 
-No AI attribution: [agent-settings.json](agent-settings.json) switches off
+No AI attribution: Claude's [settings.json](agents/claude/settings.json) switches off
 Claude Code's `Co-Authored-By` and "Generated with" lines, and a `commit-msg`
-hook rejects such trailers.
+hook rejects such trailers for all backends.
 
-The agent's settings (hooks, attribution, deny rules, effort) are passed with
-`--settings` from a root-owned file. They are not managed settings in
+Each backend's settings (hooks, attribution, deny rules) live under
+`agents/<backend>/` and are copied root-owned into the image. For Claude Code
+they are passed with `--settings` rather than as managed settings in
 `/etc/claude-code/`: when the Claude account belongs to an organisation with
-server-managed settings, Claude Code ignores that file completely.
+server-managed settings, Claude Code ignores that file completely. For
+Antigravity CLI, `settings.json` is passed with `--settings` and its lifecycle
+hooks (`PreInvocation`, `Stop`) are merged into `~/.gemini/config/hooks.json`.
 
 ## One-time setup (maintainer)
 
@@ -247,7 +252,7 @@ session starts with Remote Control (`--remote-control "kestic-agent #42"`), so i
 can also be followed and answered on claude.ai/code and in the Claude app.
 Telemetry and error reports are off (`DISABLE_TELEMETRY`,
 `DISABLE_ERROR_REPORTING`); `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` would
-also hide Remote Control. Effort is `high` (agent-settings.json).
+also hide Remote Control. Effort is `high` (`agents/claude/settings.json`).
 
 From the host, without entering the container:
 
@@ -298,8 +303,9 @@ pass per call:
   (§GitHub text). New issues therefore queue at the end; a «blocked by» link
   changes the order.
 
-Busy or idle comes from two Claude Code hooks in
-[agent-settings.json](agent-settings.json): a prompt starts a turn, the end
+Busy or idle comes from each backend's lifecycle hooks (for example
+[agents/claude/settings.json](agents/claude/settings.json) or
+[agents/antigravity/hooks.json](agents/antigravity/hooks.json)): a prompt starts a turn, the end
 of a turn marks the session idle (`kestic-agent.sh agent-state`). A session
 whose terminal has not changed for 15 minutes counts as idle too, because the
 Stop hook does not run after an interrupt or an API error. The watcher treats
@@ -450,19 +456,38 @@ responsive without slowing the agent on an idle host. Optional limits:
 `KESTIC_AGENT_MEMORY` (default `24g`), `KESTIC_AGENT_NICE` (default 0; with
 another value the test that checks restic's niceness fails, because nice adds up).
 
-## Other agents
+## Other agents and variations
 
-The container does not depend on Claude Code except for these parts:
+The container core is backend-agnostic; each variation lives in its own
+directory under [agents/](agents/README.md) (`backend.conf`, `install.sh`,
+`allowed-domains.txt`, `driver.sh`). Other systems can reuse a shipped
+variation (`KESTIC_AGENT_BACKEND=claude` or `KESTIC_AGENT_BACKEND=antigravity`)
+or add their own in-tree (`.devcontainer/agents/<name>/`) or out-of-tree
+(`KESTIC_AGENT_BACKENDS_DIR=/path/to/agents KESTIC_AGENT_BACKEND=<name>`)
+without modifying the core scripts.
 
-- **Codex CLI:** install it in the Containerfile instead of (or next to)
-  Claude Code; add its API host to `allowed-domains.txt`; log in with
-  `codex login --device-auth` into a volume for `~/.codex`; run it in the tmux
-  session with `codex exec --full-auto` (or the interactive TUI). It reads
-  `AGENTS.md` directly. The attribution settings do not apply, the git hook does.
-- **Antigravity:** an IDE agent. It would attach to the container as a Dev
-  Container (devcontainer.json) instead of running headless in tmux; its model
-  endpoints go into `allowed-domains.txt`. Long unattended sessions are not its
-  normal mode of operation.
+```bash
+.devcontainer/kestic-agent.sh backends                           # list variations
+KESTIC_AGENT_BACKEND=antigravity .devcontainer/kestic-agent.sh build
+KESTIC_AGENT_NAME=kestic-agent-2 KESTIC_AGENT_BACKEND=antigravity \
+    .devcontainer/kestic-agent.sh login                          # one-time Google OAuth
+KESTIC_AGENT_NAME=kestic-agent-2 KESTIC_AGENT_BACKEND=antigravity \
+    KESTIC_AGENT_MODEL=gemini-4-carbon-high \
+    .devcontainer/kestic-agent.sh start 42 m6
+```
+
+- **Claude Code (`claude`, default):** volume `<name>-claude`
+  (`/home/kesticci/.claude`), domains `anthropic.com`, `claude.ai`, `claude.com`.
+- **Antigravity CLI (`antigravity`):** volume `<name>-gemini`
+  (`/home/kesticci/.gemini`, with `~/.config/antigravity` symlinked inside it so
+  file-based OAuth tokens survive a home-volume wipe), domains
+  `antigravity.google`, `googleapis.com`, `google.com`, `gstatic.com`,
+  `altScreenMode=never` for tmux scrollback, `artifactReviewPolicy=always-proceed`,
+  and `PreInvocation`/`Stop` hooks for turn/idle tracking.
+- **Additional agents (e.g. Codex CLI):** add a new backend directory following
+  [agents/README.md](agents/README.md).
+  Tested by [test-kestic-agent-backends.sh](test-kestic-agent-backends.sh) in
+  `just verify`.
 
 ## Cleaning up
 

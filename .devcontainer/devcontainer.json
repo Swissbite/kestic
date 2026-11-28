@@ -15,7 +15,8 @@
     "dockerfile": "Containerfile",
     "context": ".",
     "args": {
-      "CI_IMAGE": "ghcr.io/swissbite/kestic-ci:${localEnv:KESTIC_CI_IMAGE_TAG:cb2162f5998cc773}"
+      "CI_IMAGE": "ghcr.io/swissbite/kestic-ci:${localEnv:KESTIC_CI_IMAGE_TAG:7bb64b1d72c42a28}",
+      "AGENT_BACKEND": "${localEnv:KESTIC_AGENT_BACKEND:claude}"
     }
   },
   "overrideCommand": false,

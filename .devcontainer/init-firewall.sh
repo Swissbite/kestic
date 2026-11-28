@@ -43,7 +43,15 @@ if [[ ! "$upstream" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ || "$upstream" == 127.0.0.1
 fi
 printf '%s\n' "$upstream" > "$STATE_DIR/upstream"
 
-mapfile -t domains < <(grep -Ev '^[[:space:]]*(#|$)' "$LIB_DIR/allowed-domains.txt")
+domain_files=("$LIB_DIR/allowed-domains.txt")
+if [[ -f "$LIB_DIR/agent/allowed-domains.txt" ]]; then
+    domain_files+=("$LIB_DIR/agent/allowed-domains.txt")
+fi
+mapfile -t domains < <(grep -hEv '^[[:space:]]*(#|$)' "${domain_files[@]}" | sort -u)
+if [[ ${#domains[@]} -eq 0 ]]; then
+    echo "init-firewall: no allowed domains configured" >&2
+    exit 1
+fi
 for domain in "${domains[@]}"; do
     if [[ ! "$domain" =~ ^[a-z0-9.-]+$ ]]; then
         echo "init-firewall: invalid domain '$domain' in allowed-domains.txt" >&2
