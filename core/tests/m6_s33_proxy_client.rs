@@ -142,20 +142,8 @@ const DAEMON_MODULES: [&str; 3] = [
     "gui/src/backend/daemon_call.rs",
 ];
 
-/// Daemon calls whose result QML uses at once; they still run on the Qt thread. Per file.
-const NOT_YET_OFF_THE_QT_THREAD: [(&str, usize); 8] = [
-    ("gui/src/backend.rs", 1),
-    ("gui/src/backend/previews.rs", 10),
-    ("gui/src/backend/restic_install.rs", 8),
-    ("gui/src/backend/restore.rs", 2),
-    ("gui/src/backend/schedules.rs", 1),
-    ("gui/src/destination_input.rs", 1),
-    ("gui/src/models/restore_preview_model.rs", 3),
-    ("gui/src/models/snapshot_query.rs", 2),
-];
-
 /// AC-M6-33-1 (a), source side: outside the daemon modules, no GUI code reaches the daemon
-/// synchronously, apart from the listed calls whose result QML uses at once.
+/// synchronously.
 #[test]
 fn ac_m6_33_1_gui_reaches_the_daemon_only_off_the_qt_thread() {
     let root = workspace_root();
@@ -196,12 +184,9 @@ fn ac_m6_33_1_gui_reaches_the_daemon_only_off_the_qt_thread() {
         }
     }
     found.sort();
-    let expected: Vec<(String, usize)> = NOT_YET_OFF_THE_QT_THREAD
-        .iter()
-        .map(|(file, count)| ((*file).to_string(), *count))
-        .collect();
     assert_eq!(
-        found, expected,
+        found,
+        Vec::<(String, usize)>::new(),
         "(a) GUI code outside the daemon modules that reaches the daemon synchronously"
     );
 }

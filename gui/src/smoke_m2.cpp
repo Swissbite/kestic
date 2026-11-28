@@ -137,7 +137,11 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
         enter_text_field(window, excl_area, QStringLiteral("\u00fc \U0001F600\tx"), "excludes text"),
         "text with umlaut, emoji and tab not entered unchanged");
     excl_area->setProperty("text", QStringLiteral("*.tmp\ndir\n!dir/inner"));
-    wait_ms(150);
+    // The warnings arrive from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("excludeLintWarningMessage"));
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* lint_msg = find_visual_item(window, QStringLiteral("excludeLintWarningMessage"));
     QObject* apply_fix = child_object(window, "applyLintSuggestionAction");
     SMOKE_CHECK3("M2", 213, lint_msg, lint_msg->isVisible(), apply_fix,
@@ -148,7 +152,8 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     wait_ms(150);
     SMOKE_CHECK("M2", 215, excl_area->property("text").toString().contains(QStringLiteral("dir/*")),
         "applying quick-fix did not rewrite dir to dir/*");
-    SMOKE_CHECK("M2", 216, !lint_msg->isVisible(), "lint warning remained visible after applying quick-fix");
+    SMOKE_CHECK("M2", 216, wait_until([&] { return !lint_msg->isVisible(); }, 10000),
+        "lint warning remained visible after applying quick-fix");
 
     // Test Path evaluator
     QQuickItem* test_field = child_item(window, "testExcludePathField");
@@ -159,6 +164,11 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     test_btn->forceActiveFocus(Qt::TabFocusReason);
     QCoreApplication::processEvents();
     press_and_wait(window, Qt::Key_Return, 120);
+    // The result arrives from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = child_item(window, "testPathResultBanner");
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* test_banner = child_item(window, "testPathResultBanner");
     SMOKE_CHECK_VISIBLE("M2", 219, test_banner, "testPathResultBanner not visible after Test Path");
 
@@ -428,7 +438,11 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     const QString rid = rm->data(rm->index(0, 0), 0).toString();
     QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 3));
     QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
-    wait_ms(200);
+    // The run's detail arrives from the daemon after the page opened.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("runDetailErrorMessage"));
+        return shown && shown->isVisible();
+    }, 10000);
 
     // A run that ended with a warning (exit 3) shows its cause as a warning, not as an error
     // (Kirigami.MessageType.Warning is 2).
@@ -439,13 +453,15 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     QQuickItem* add_btn = find_visual_item(window, QStringLiteral("addUnreadableExcludeButton"));
     SMOKE_CHECK_VISIBLE("M2", 271, add_btn, "addUnreadableExcludeButton missing or not visible on Exit 3 RunDetailPage");
     SMOKE_CHECK("M2", 272, click_ui_item(window, add_btn, "Add to Exclude Rules"), "failed to click addUnreadableExcludeButton");
-    wait_ms(150);
     QObject* dlg = child_object(window, "addExcludePromptDialog");
+    // The dialog opens once the daemon has said how the rule reads.
+    wait_until([&] { return dlg && dlg->property("visible").toBool(); }, 10000);
     QObject* confirm_act = child_object(window, "confirmAddExcludeAction");
     SMOKE_CHECK3("M2", 273, dlg, dlg->property("visible").toBool(), confirm_act, "addExcludePromptDialog did not open");
     SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
     trigger(confirm_act);
-    wait_until([&] { return is_closed(dlg); }, 600);
+    // The dialog closes once the daemon has saved the rule.
+    wait_until([&] { return is_closed(dlg); }, 10000);
     SMOKE_CHECK_CLOSED("M2", 274, dlg, "addExcludePromptDialog did not close after confirmAddExcludeAction");
 
     // AC-M4-01-7 (d): the unreadable files are one list and one Tab stop; neither a row nor its
@@ -463,7 +479,7 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     SMOKE_CHECK2("M2", 279, row, row && row->property("focusPolicy").toInt() == Qt::ClickFocus,
         "a row of the list takes the focus by click only");
     send_key(window, Qt::Key_Return);
-    SMOKE_CHECK("M2", 269, wait_until([&] { return dlg->property("visible").toBool(); }, 1000),
+    SMOKE_CHECK("M2", 269, wait_until([&] { return dlg->property("visible").toBool(); }, 10000),
         "Enter on an unreadable file asks to add it to the exclude rules");
     QMetaObject::invokeMethod(dlg, "reject");
     wait_until([&] { return is_closed(dlg); }, 600);
@@ -525,7 +541,11 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     QQuickItem* nested_banner = find_visual_item(window, QStringLiteral("nestedSourceWarningBanner"));
     SMOKE_CHECK_VISIBLE("M2", 284, nested_banner, "nestedSourceWarningBanner not visible on BackupDetailPage");
     QMetaObject::invokeMethod(window, "openBackupSourcePage", Q_ARG(QVariant, nested_bid));
-    wait_ms(200);
+    // The nested-source check arrives from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("sourceNestedWarningBanner"));
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* src_nested_banner = find_visual_item(window, QStringLiteral("sourceNestedWarningBanner"));
     SMOKE_CHECK_VISIBLE("M2", 285, src_nested_banner, "sourceNestedWarningBanner not visible on BackupSourceEditPage");
 

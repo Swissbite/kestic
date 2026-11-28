@@ -48,6 +48,8 @@ pub struct SnapshotDiffModelRust {
     destination_id: String,
     from_snapshot_id: String,
     to_snapshot_id: String,
+    /// The first page of a comparison that just ended waits for the kinds of change present.
+    kind_counts_pending: bool,
 }
 
 /// Text of a kind of change, as the «Change» column and the filter chips show it.
@@ -123,32 +125,20 @@ impl QueryListModel for qobject::SnapshotDiffModel {
         diff.changes.items.iter().map(row_for).collect()
     }
 
-    /// Shows the first page; when the comparison just ended, also the kinds of change present.
+    /// Shows the first page; when the comparison just ended, together with the kinds of change
+    /// present, so the list and its filter chips appear at once.
     fn show_first_page(mut self: Pin<&mut Self>, diff: DiffResultDto) {
         let first_load = self.query_state() != Some(QueryState::Done);
-        let changes = &diff.changes;
-        if first_load && !changes.too_large && changes.total > 0 {
-            match self.as_mut().kind_counts() {
-                Fetched::Page(counts) => self.as_mut().apply_kind_counts(&counts),
-                Fetched::Running => {}
-                Fetched::Gone => return self.restart(),
-                Fetched::Failed(failure) => return self.fail_query(&failure),
-            }
+        if first_load && !diff.changes.too_large && diff.changes.total > 0 {
+            self.as_mut().rust_mut().kind_counts_pending = true;
+            self.load_kind_counts_then_show(diff);
+            return;
         }
-        let rows = self.page_rows(&diff);
-        self.as_mut().reset_rows(rows);
-        self.as_mut().set_identical(diff.identical);
-        self.as_mut().set_too_large(changes.too_large);
-        self.as_mut().set_total(to_i32(changes.total));
-        self.as_mut().set_matched(to_i32(changes.matched));
-        // A list too large to hold cannot be filtered: its count is the total.
-        let filtered = !self.list.filter.is_empty() && !changes.too_large;
-        let count = changes_count_text(changes.total, changes.matched, filtered);
-        self.as_mut().set_count_text(QString::from(&count));
-        self.as_mut()
-            .set_too_large_text(QString::from(&too_large_text(changes.total)));
-        self.as_mut().set_error_text(QString::from(""));
-        self.set_query_state(Some(QueryState::Done));
+        self.show_page(diff);
+    }
+
+    fn completing_first_page(&self) -> bool {
+        self.kind_counts_pending
     }
 
     /// Compares again; the filter stays.
@@ -185,6 +175,7 @@ impl qobject::SnapshotDiffModel {
         self.as_mut().set_count_text(QString::from(""));
         self.as_mut().set_error_text(QString::from(""));
         self.as_mut().set_kind_codes(QStringList::default());
+        self.as_mut().rust_mut().kind_counts_pending = false;
         self.as_mut().set_kind_texts(QStringList::default());
         let request = SnapshotQueryRequest::diff(
             &destination_id.to_string(),
@@ -204,29 +195,58 @@ impl qobject::SnapshotDiffModel {
         self.set_filter_kinds(kinds);
     }
 
-    /// The kinds of change present in the comparison with their number, in the order of
-    /// [`SnapshotChange::ALL`].
-    fn kind_counts(mut self: Pin<&mut Self>) -> Fetched<Vec<(SnapshotChange, u64)>> {
-        let mut out = Vec::new();
-        for change in SnapshotChange::ALL {
-            let page = SnapshotQueryPage {
+    /// Shows `diff` as the first page of the list.
+    fn show_page(mut self: Pin<&mut Self>, diff: DiffResultDto) {
+        let changes = &diff.changes;
+        let rows = self.page_rows(&diff);
+        self.as_mut().reset_rows(rows);
+        self.as_mut().set_identical(diff.identical);
+        self.as_mut().set_too_large(changes.too_large);
+        self.as_mut().set_total(to_i32(changes.total));
+        self.as_mut().set_matched(to_i32(changes.matched));
+        // A list too large to hold cannot be filtered: its count is the total.
+        let filtered = !self.list.filter.is_empty() && !changes.too_large;
+        let count = changes_count_text(changes.total, changes.matched, filtered);
+        self.as_mut().set_count_text(QString::from(&count));
+        self.as_mut()
+            .set_too_large_text(QString::from(&too_large_text(changes.total)));
+        self.as_mut().set_error_text(QString::from(""));
+        self.set_query_state(Some(QueryState::Done));
+    }
+
+    /// Asks for the kinds of change present in the comparison with their number, in the order of
+    /// [`SnapshotChange::ALL`]; once they arrived, shows them with the first page `diff`.
+    fn load_kind_counts_then_show(self: Pin<&mut Self>, diff: DiffResultDto) {
+        let pages = SnapshotChange::ALL
+            .iter()
+            .map(|change| SnapshotQueryPage {
                 offset: 0,
                 limit: 1,
                 filter: PageFilter {
                     text: String::new(),
                     kinds: vec![change.as_str().to_string()],
                 },
-            };
-            match self.as_mut().fetch(&page) {
-                Fetched::Page(diff) if diff.changes.matched > 0 => {
-                    out.push((change, diff.changes.matched));
+            })
+            .collect();
+        self.fetch_pages(pages, move |mut model, fetched| {
+            model.as_mut().rust_mut().kind_counts_pending = false;
+            match fetched {
+                Fetched::Page(per_kind) => {
+                    let counts: Vec<(SnapshotChange, u64)> = SnapshotChange::ALL
+                        .into_iter()
+                        .zip(per_kind)
+                        .filter(|(_, page)| page.changes.matched > 0)
+                        .map(|(change, page)| (change, page.changes.matched))
+                        .collect();
+                    model.as_mut().apply_kind_counts(&counts);
+                    model.show_page(diff);
                 }
-                Fetched::Page(_) | Fetched::Running => {}
-                Fetched::Gone => return Fetched::Gone,
-                Fetched::Failed(failure) => return Fetched::Failed(failure),
+                // The comparison ended before the counts were asked for, so it cannot run.
+                Fetched::Running => model.show_page(diff),
+                Fetched::Gone => model.restart(),
+                Fetched::Failed(failure) => model.fail_query(&failure),
             }
-        }
-        Fetched::Page(out)
+        });
     }
 
     fn apply_kind_counts(mut self: Pin<&mut Self>, counts: &[(SnapshotChange, u64)]) {

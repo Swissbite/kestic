@@ -343,9 +343,40 @@ QtObject {
         hostKey = null;
         if (!detailsValid) {
             showError(Texts.label("fill_required_fields"));
-            return false;
+            return;
         }
-        var ok = appBackend.testDestination(fieldsJson(), setupMode, repoPassword, backendSecretsJson());
+        connectionVerified = false;
+        testFeedbackOk = false;
+        testFeedback = "";
+        testedInput = testInput();
+        testAnswer.track(appBackend.testDestination(fieldsJson(), setupMode, repoPassword, backendSecretsJson()));
+    }
+
+    // What the connection test checks; an answer for other input than the form holds now is
+    // not shown.
+    property string testedInput: ""
+
+    function testInput() {
+        return JSON.stringify([connectionKey(), setupMode, repoPassword, backendSecretsJson()]);
+    }
+
+    // The connection test of the input the form holds is on its way; after an edit the form
+    // can be tested again at once (the older answer is not shown).
+    readonly property bool testing: testAnswer.waiting && testInput() === testedInput
+
+    property DaemonAnswer testAnswer: DaemonAnswer {
+        backend: draft.appBackend
+        onAnswered: function(ok, result) {
+            draft.showTestResult(ok);
+        }
+    }
+
+    // Shows the result of the connection test the backend published, unless the form changed
+    // since the test was asked for.
+    function showTestResult(ok) {
+        if (testInput() !== testedInput) {
+            return;
+        }
         testNote = ok ? appBackend.connection_test_note : "";
         connectionVerified = ok;
         testFeedbackOk = ok;
@@ -354,6 +385,5 @@ QtObject {
             hostKey = JSON.parse(appBackend.connection_test_host_key);
             hostKeyOffered();
         }
-        return ok;
     }
 }

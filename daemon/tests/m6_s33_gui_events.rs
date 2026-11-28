@@ -291,6 +291,137 @@ fn ac_m6_33_1_edits_and_lists_do_not_wait_for_a_slow_daemon() {
     );
 }
 
+/// AC-M6-33-1: every reply comes 5 s late. (a) The previews, exclude helpers, source checks,
+/// connection test, restic source and the snapshot query of a folder list return at once and the
+/// main thread never pauses longer than 100 ms; (b) their answers arrive (the dry run's id, the
+/// source check, the folder list of the snapshot, a comparison with its kinds of change).
+#[test]
+fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
+    run_isolated_test(
+        "ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon",
+        "KESTIC_M6_S33_SLOW_QUERIES_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowQueriesFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "SlowQueries",
+                "net.daester.KesticSlowQueriesBack",
+                front,
+                |_, _| SLOW_REPLY,
+            );
+            let client = rig.daemon.client.clone();
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            let first_run = next_finished_run(&client, &BTreeSet::new());
+            // A second snapshot with a new file, for a comparison with changes.
+            fs::write(backup.source.path.join("added-later"), b"x").expect("new source file");
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the second backup");
+            next_finished_run(&client, &BTreeSet::from([first_run]));
+            let snapshots = client
+                .list_backup_snapshots(backup.id.as_str())
+                .expect("list the snapshots")
+                .current_snapshots;
+            assert_eq!(snapshots.len(), 2, "precondition: two snapshots");
+            let (snapshot, later) = (snapshots[0].id.clone(), snapshots[1].id.clone());
+            let probe = root.join("probe-repo");
+            let source = backup.source.path.to_string_lossy().to_string();
+            run_slow_scene(
+                root,
+                "m6-slow-queries",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_BACKUP", backup.id.as_str()),
+                    ("KESTIC_TEST_DEST", backup.destination_id.as_str()),
+                    ("KESTIC_TEST_SNAPSHOT", &snapshot),
+                    ("KESTIC_TEST_SNAPSHOT_B", &later),
+                    ("KESTIC_TEST_SOURCE", &source),
+                    ("KESTIC_TEST_PROBE", probe.to_str().expect("utf-8 path")),
+                ],
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
+/// AC-M6-33-1 (b): every reply comes 5 s late; answers that arrive after the window moved on do
+/// not count. (a) A connection test answered after the location changed leaves the form untested;
+/// (b) a dry run whose page closed before it started is cancelled; (c) a further page answered
+/// after the filter changed does not stop the folder list from loading more; (d) a search hit
+/// beyond the first page of its folder becomes the current row; (e) a hit the user left for a
+/// filter before its page arrived is no longer looked for; (f) a hit above the snapshot's top
+/// folder is still found after the page checked that folder.
+#[test]
+fn ac_m6_33_1_late_answers_do_not_count_after_the_window_moved_on() {
+    run_isolated_test(
+        "ac_m6_33_1_late_answers_do_not_count_after_the_window_moved_on",
+        "KESTIC_M6_S33_SLOW_STALE_INNER",
+        |root| {
+            let _fakes = StdFakes::start();
+            let front = "net.daester.KesticSlowStaleFront";
+            let (rig, backup) = slow_rig(
+                root,
+                "SlowStale",
+                "net.daester.KesticSlowStaleBack",
+                front,
+                |_, _| SLOW_REPLY,
+            );
+            for n in 0..250 {
+                fs::write(backup.source.path.join(format!("file-{n}")), b"x").expect("source file");
+            }
+            let deeper = backup.source.path.join("sub/deeper");
+            fs::create_dir_all(&deeper).expect("subfolder");
+            fs::write(deeper.join("note"), b"x").expect("file in the subfolder");
+            let client = rig.daemon.client.clone();
+            client
+                .start_backup(backup.id.as_str())
+                .expect("start the backup");
+            next_finished_run(&client, &BTreeSet::new());
+            let snapshot = client
+                .list_backup_snapshots(backup.id.as_str())
+                .expect("list the snapshots")
+                .current_snapshots
+                .first()
+                .map(|s| s.id.clone())
+                .expect("precondition: one snapshot");
+            let me = client
+                .connection()
+                .unique_name()
+                .expect("test client name")
+                .to_string();
+            let seen = monitor_kestic_calls(&session_address());
+            let probe = root.join("probe-repo");
+            // Two empty folders a new repository can go into: a test of either succeeds.
+            fs::create_dir_all(probe.join("a")).expect("probe folder a");
+            fs::create_dir_all(probe.join("b")).expect("probe folder b");
+            let source = backup.source.path.to_string_lossy().to_string();
+            run_slow_scene(
+                root,
+                "m6-slow-stale",
+                front,
+                &[],
+                &[
+                    ("KESTIC_TEST_BACKUP", backup.id.as_str()),
+                    ("KESTIC_TEST_DEST", backup.destination_id.as_str()),
+                    ("KESTIC_TEST_SNAPSHOT", &snapshot),
+                    ("KESTIC_TEST_SOURCE", &source),
+                    ("KESTIC_TEST_PROBE", probe.to_str().expect("utf-8 path")),
+                ],
+            );
+            wait_until_within(
+                Duration::from_secs(15),
+                "(b) the dry run nobody follows was cancelled",
+                || !calls_of(&seen, "CancelBackupDryRun", &me).is_empty(),
+            );
+            rig.daemon.stop();
+        },
+    );
+}
+
 /// The id of a run that has finished and is not in `known`, once there is one.
 fn next_finished_run(client: &KesticClient, known: &BTreeSet<String>) -> String {
     let mut found = String::new();

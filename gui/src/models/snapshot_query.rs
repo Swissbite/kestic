@@ -2,44 +2,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! One snapshot query of a list model (folder list, search hits, comparison, restore preview):
-//! started on a worker thread so the window never waits for restic, polled by a timer, fetched
-//! page by page, and cancelled when the view leaves it. Also the state machine and the texts
+//! started and fetched off the Qt thread so the window never waits for restic, polled by a
+//! timer, fetched page by page, and cancelled when the view leaves it. Also the state machine and the texts
 //! every query list shares.
 
 use super::rows::row_count;
-use crate::state_cache::{
-    daemon_unavailable_text, dbus_error_text, i18n, i18np, make_client, tr_text,
-};
+use crate::backend::{Lane, call_daemon_on, send_to_daemon};
+use crate::state_cache::{daemon_unavailable_text, dbus_error_text, i18n, i18np, tr_text};
+use cxx_qt::Threading;
 use cxx_qt_lib::{QModelIndex, QString};
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter, QueryState};
-use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{
-    KesticClient, KesticDbusError, SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
+    KesticDbusError, SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
     SnapshotQueryStatusDto,
 };
 use kestic_i18n::codes::ErrorKind;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-
-/// The start of a query, as far as it has got.
-enum QueryStart {
-    /// `StartSnapshotQuery` is still on its way.
-    Pending,
-    Started(String),
-    Failed(String),
-    /// The query was left before it started; the start cancels it right away.
-    Abandoned,
-}
-
-/// What [`QueryRun::poll_start`] found.
-pub(crate) enum StartPoll {
-    /// The query is not started yet.
-    Waiting,
-    /// The query runs (or has ended) in the daemon.
-    Started,
-    /// The query could not be started; the error text.
-    Failed(String),
-}
 
 /// What fetching a page of a query found.
 pub(crate) enum Fetched<T> {
@@ -103,111 +81,45 @@ pub(super) fn status_outcome(status: SnapshotQueryStatusDto) -> Fetched<Snapshot
     }
 }
 
-/// The query of a list model. Each [`QueryRun::start`] gets its own slot, so a late answer for
-/// an earlier query is ignored.
+/// The query of a list model as far as it has got. The daemon's answers arrive on the Qt thread;
+/// an answer for an earlier query, or for a page asked for before the filter changed, is
+/// ignored.
 #[derive(Default)]
 pub(crate) struct QueryRun {
-    start: Option<Arc<Mutex<QueryStart>>>,
+    /// The daemon's ID of the started query.
     query_id: Option<String>,
-    client: Option<KesticClient>,
+    /// Counts the starts and abandons: an answer to an earlier start is ignored.
+    generation: u64,
+    /// Counts the first pages asked for: an answer to an earlier one is ignored.
+    page_generation: u64,
+    /// The first page is asked for and has not arrived yet (the timer asks no second time).
+    first_page_pending: bool,
+    /// A further page is asked for and has not arrived yet.
+    next_page_pending: bool,
 }
 
 impl QueryRun {
-    /// Starts `request` on a worker thread (starting a query checks restic first).
-    pub(crate) fn start(&mut self, request: SnapshotQueryRequest) {
-        self.query_id = None;
-        let slot = Arc::new(Mutex::new(QueryStart::Pending));
-        self.start = Some(Arc::clone(&slot));
-        std::thread::spawn(move || {
-            let Ok(client) = make_client() else {
-                *slot.lock_unpoisoned() = QueryStart::Failed(daemon_unavailable_text());
-                return;
-            };
-            let started = match client.start_snapshot_query(&request) {
-                Ok(id) => QueryStart::Started(id),
-                Err(err) => QueryStart::Failed(dbus_error_text(&err)),
-            };
-            let mut guard = slot.lock_unpoisoned();
-            match (&*guard, started) {
-                (QueryStart::Abandoned, QueryStart::Started(id)) => {
-                    drop(guard);
-                    // Nobody waits for the answer; a query that already ended needs nothing.
-                    let _ = client.cancel_snapshot_query(&id);
-                }
-                (QueryStart::Abandoned, _) => {}
-                (_, started) => *guard = started,
-            }
-        });
-    }
-
     /// The daemon's ID of the started query.
     pub(crate) fn id(&self) -> Option<&str> {
         self.query_id.as_deref()
     }
 
-    /// Picks up the start of the query once it arrived.
-    pub(crate) fn poll_start(&mut self) -> StartPoll {
-        if self.query_id.is_some() {
-            return StartPoll::Started;
-        }
-        let started = self
-            .start
-            .as_ref()
-            .map(|slot| std::mem::replace(&mut *slot.lock_unpoisoned(), QueryStart::Pending));
-        match started {
-            Some(QueryStart::Started(id)) => {
-                self.query_id = Some(id);
-                StartPoll::Started
-            }
-            Some(QueryStart::Failed(text)) => StartPoll::Failed(text),
-            Some(QueryStart::Pending | QueryStart::Abandoned) | None => StartPoll::Waiting,
-        }
+    /// Whether the first page (after the query ended or the filter changed) is on its way.
+    pub(crate) fn loading_first_page(&self) -> bool {
+        self.first_page_pending
     }
 
-    fn client(&mut self) -> Result<&KesticClient, String> {
-        let client = match self.client.take() {
-            Some(client) => client,
-            None => make_client()?,
-        };
-        Ok(self.client.insert(client))
-    }
-
-    /// Fetches `page` (offset, limit, text and kinds filter).
-    pub(crate) fn fetch_page(
-        &mut self,
-        page: &SnapshotQueryPage,
-    ) -> Fetched<SnapshotQueryResultDto> {
-        let Some(query_id) = self.query_id.clone() else {
-            return Fetched::Running;
-        };
-        let client = match self.client() {
-            Ok(client) => client,
-            Err(text) => return Fetched::Failed(QueryFailure::from_text(text)),
-        };
-        match client.get_snapshot_query_status(&query_id, page) {
-            Ok(status) => status_outcome(status),
-            Err(KesticDbusError::NotFound(_)) => Fetched::Gone,
-            Err(err) => Fetched::Failed(QueryFailure::from_text(dbus_error_text(&err))),
-        }
-    }
-
-    /// Cancels the query while it still runs, so restic stops; also one whose start has not
-    /// arrived yet.
+    /// Cancels the query while it still runs, so restic stops; one whose start has not arrived
+    /// yet is cancelled once it does.
     pub(crate) fn abandon(&mut self) {
-        let mut started = None;
-        if let Some(slot) = self.start.take() {
-            let mut guard = slot.lock_unpoisoned();
-            match std::mem::replace(&mut *guard, QueryStart::Abandoned) {
-                QueryStart::Started(id) => started = Some(id),
-                QueryStart::Pending | QueryStart::Failed(_) | QueryStart::Abandoned => {}
-            }
-        }
-        let query_id = self.query_id.take().or(started);
-        if let Some(id) = query_id
-            && let Ok(client) = self.client()
-        {
+        self.generation += 1;
+        self.first_page_pending = false;
+        self.next_page_pending = false;
+        if let Some(id) = self.query_id.take() {
             // A query that ended meanwhile needs no cancel; the answer is not needed.
-            let _ = client.cancel_snapshot_query(&id);
+            send_to_daemon(Lane::Alone, move |client| {
+                let _ = client.cancel_snapshot_query(&id);
+            });
         }
     }
 }
@@ -251,7 +163,7 @@ pub(super) trait QueryListView {
 /// A list model that shows one snapshot query page by page: the query runs in the daemon, a
 /// timer polls it, the first page arrives when it ends, further pages while the view scrolls,
 /// and the daemon filters. A result the daemon freed starts the query again.
-pub(super) trait QueryListModel: QueryListView {
+pub(super) trait QueryListModel: QueryListView + Threading + Sized + 'static {
     /// The result of this model's kind of query.
     type Page;
 
@@ -282,19 +194,58 @@ pub(super) trait QueryListModel: QueryListView {
         self.reset_rows(Vec::new());
     }
 
-    /// Starts `request` on a worker thread; `state` is `running` until the first page arrives.
+    /// Starts `request` off the Qt thread; `state` is `running` until the first page arrives.
     fn start_query(mut self: Pin<&mut Self>, request: SnapshotQueryRequest) {
-        self.as_mut().list_mut().run.start(request);
-        self.set_query_state(Some(QueryState::Running));
+        let generation = {
+            let run = &mut self.as_mut().list_mut().run;
+            run.abandon();
+            run.generation
+        };
+        self.as_mut().set_query_state(Some(QueryState::Running));
+        call_daemon_on(
+            &self.qt_thread(),
+            Lane::Alone,
+            move |client| client.start_snapshot_query(&request),
+            |_| false,
+            move |mut model: Pin<&mut Self>, started| {
+                let current = model.list().run.generation == generation;
+                match (current, started) {
+                    (false, Ok(Ok(id))) => send_to_daemon(Lane::Alone, move |client| {
+                        // Nobody waits for the answer; a query that already ended needs nothing.
+                        let _ = client.cancel_snapshot_query(&id);
+                    }),
+                    (false, _) => {}
+                    (true, started) => match started {
+                        Ok(Ok(id)) => {
+                            model.as_mut().list_mut().run.query_id = Some(id);
+                            model.load_first_page();
+                        }
+                        Ok(Err(err)) => {
+                            model.fail_query(&QueryFailure::from_text(dbus_error_text(&err)));
+                        }
+                        Err(_) => {
+                            model.fail_query(&QueryFailure::from_text(daemon_unavailable_text()));
+                        }
+                    },
+                }
+            },
+        );
     }
 
-    /// Checks the running query (called by a timer while `state` is `running`).
-    fn poll_query(mut self: Pin<&mut Self>) {
-        match self.as_mut().list_mut().run.poll_start() {
-            StartPoll::Waiting => {}
-            StartPoll::Failed(text) => self.fail_query(&QueryFailure::from_text(text)),
-            StartPoll::Started => self.load_first_page(),
+    /// Checks the running query (called by a timer while `state` is `running`): asks for the
+    /// first page once the query started, unless that answer is still on its way or the model
+    /// waits for more before it shows the page.
+    fn poll_query(self: Pin<&mut Self>) {
+        let run = &self.list().run;
+        if run.query_id.is_some() && !run.first_page_pending && !self.completing_first_page() {
+            self.load_first_page();
         }
+    }
+
+    /// Whether the first page has arrived and the model fetches more before it shows it; the
+    /// timer asks for no further first page meanwhile.
+    fn completing_first_page(&self) -> bool {
+        false
     }
 
     /// Cancels the query while it still runs, so restic stops.
@@ -316,36 +267,148 @@ pub(super) trait QueryListModel: QueryListView {
     /// Called with the error code of each failure; a model that tells failures apart keeps it.
     fn note_failure(self: Pin<&mut Self>, _kind: Option<ErrorKind>) {}
 
-    /// Fetches `page` of the query.
-    fn fetch(self: Pin<&mut Self>, page: &SnapshotQueryPage) -> Fetched<Self::Page> {
-        match self.list_mut().run.fetch_page(page) {
-            Fetched::Page(result) => Self::page_of(result).map_or_else(
-                || Fetched::Failed(QueryFailure::from_text("unexpected snapshot query result")),
-                Fetched::Page,
-            ),
-            Fetched::Running => Fetched::Running,
-            Fetched::Gone => Fetched::Gone,
-            Fetched::Failed(failure) => Fetched::Failed(failure),
-        }
-    }
-
-    /// Fetches the page at `offset` with the current filter.
-    fn fetch_at(self: Pin<&mut Self>, offset: u64) -> Fetched<Self::Page> {
+    /// Asks for the page at `offset` with the current filter; `then` gets what arrived, on the
+    /// Qt thread, unless the query or the filter changed meanwhile (`first`: the first page, which
+    /// a newer first page replaces).
+    fn fetch_at(
+        mut self: Pin<&mut Self>,
+        offset: u64,
+        first: bool,
+        then: fn(Pin<&mut Self>, Fetched<Self::Page>),
+    ) {
+        let Some(query_id) = self.list().run.query_id.clone() else {
+            return;
+        };
         let page = SnapshotQueryPage {
             offset,
             limit: DEFAULT_PAGE_LIMIT,
             filter: self.list().filter.clone(),
         };
-        self.fetch(&page)
+        let (generation, page_generation) = {
+            let run = &mut self.as_mut().list_mut().run;
+            if first {
+                run.page_generation += 1;
+                run.first_page_pending = true;
+            } else {
+                run.next_page_pending = true;
+            }
+            (run.generation, run.page_generation)
+        };
+        call_daemon_on(
+            &self.qt_thread(),
+            Lane::Alone,
+            move |client| client.get_snapshot_query_status(&query_id, &page),
+            |_| false,
+            move |mut model: Pin<&mut Self>, status| {
+                if model.list().run.generation != generation {
+                    return;
+                }
+                {
+                    let run = &mut model.as_mut().list_mut().run;
+                    // A newer first page (the filter changed) replaces this answer; a next page
+                    // has arrived either way, so further pages can be asked for.
+                    if !first {
+                        run.next_page_pending = false;
+                    }
+                    if run.page_generation != page_generation {
+                        return;
+                    }
+                    if first {
+                        run.first_page_pending = false;
+                    }
+                }
+                let fetched = match status {
+                    Ok(Ok(status)) => match status_outcome(status) {
+                        Fetched::Page(result) => Self::page_of(result).map_or_else(
+                            || {
+                                Fetched::Failed(QueryFailure::from_text(
+                                    "unexpected snapshot query result",
+                                ))
+                            },
+                            Fetched::Page,
+                        ),
+                        Fetched::Running => Fetched::Running,
+                        Fetched::Gone => Fetched::Gone,
+                        Fetched::Failed(failure) => Fetched::Failed(failure),
+                    },
+                    Ok(Err(KesticDbusError::NotFound(_))) => Fetched::Gone,
+                    Ok(Err(err)) => Fetched::Failed(QueryFailure::from_text(dbus_error_text(&err))),
+                    Err(_) => Fetched::Failed(QueryFailure::from_text(daemon_unavailable_text())),
+                };
+                then(model, fetched);
+            },
+        );
     }
 
-    fn load_first_page(mut self: Pin<&mut Self>) {
-        match self.as_mut().fetch_at(0) {
+    /// Fetches `pages` of the finished query off the Qt thread, one after the other; `then` gets
+    /// them on the Qt thread (`Running` when the query has not finished), unless the query
+    /// changed meanwhile.
+    fn fetch_pages(
+        self: Pin<&mut Self>,
+        pages: Vec<SnapshotQueryPage>,
+        then: impl FnOnce(Pin<&mut Self>, Fetched<Vec<Self::Page>>) + Send + 'static,
+    ) {
+        let Some(query_id) = self.list().run.query_id.clone() else {
+            return;
+        };
+        let generation = self.list().run.generation;
+        call_daemon_on(
+            &self.qt_thread(),
+            Lane::Alone,
+            move |client| {
+                let mut results = Vec::with_capacity(pages.len());
+                for page in &pages {
+                    match client.get_snapshot_query_status(&query_id, page) {
+                        Ok(status) => match status_outcome(status) {
+                            Fetched::Page(result) => results.push(result),
+                            Fetched::Running => return Fetched::Running,
+                            Fetched::Gone => return Fetched::Gone,
+                            Fetched::Failed(failure) => return Fetched::Failed(failure),
+                        },
+                        Err(KesticDbusError::NotFound(_)) => return Fetched::Gone,
+                        Err(err) => {
+                            return Fetched::Failed(QueryFailure::from_text(dbus_error_text(&err)));
+                        }
+                    }
+                }
+                Fetched::Page(results)
+            },
+            |_| false,
+            move |model: Pin<&mut Self>, fetched| {
+                if model.list().run.generation != generation {
+                    return;
+                }
+                let fetched = match fetched {
+                    Ok(Fetched::Page(results)) => results
+                        .into_iter()
+                        .map(Self::page_of)
+                        .collect::<Option<Vec<_>>>()
+                        .map_or_else(
+                            || {
+                                Fetched::Failed(QueryFailure::from_text(
+                                    "unexpected snapshot query result",
+                                ))
+                            },
+                            Fetched::Page,
+                        ),
+                    Ok(Fetched::Running) => Fetched::Running,
+                    Ok(Fetched::Gone) => Fetched::Gone,
+                    Ok(Fetched::Failed(failure)) => Fetched::Failed(failure),
+                    Err(_) => Fetched::Failed(QueryFailure::from_text(daemon_unavailable_text())),
+                };
+                then(model, fetched);
+            },
+        );
+    }
+
+    /// Asks for the first page; a query that still runs is asked again by the timer.
+    fn load_first_page(self: Pin<&mut Self>) {
+        self.fetch_at(0, true, |model, fetched| match fetched {
             Fetched::Running => {}
-            Fetched::Page(page) => self.show_first_page(page),
-            Fetched::Gone => self.restart(),
-            Fetched::Failed(failure) => self.fail_query(&failure),
-        }
+            Fetched::Page(page) => model.show_first_page(page),
+            Fetched::Gone => model.restart(),
+            Fetched::Failed(failure) => model.fail_query(&failure),
+        });
     }
 
     fn reload_if_done(self: Pin<&mut Self>) {
@@ -372,32 +435,37 @@ pub(super) trait QueryListModel: QueryListView {
         self.reload_if_done();
     }
 
-    /// Whether the daemon holds further pages of a finished query.
+    /// Whether the daemon holds further pages of a finished query (also while one is on its way,
+    /// so a view that asks again keeps waiting for it; none while the first page of a new filter
+    /// is on its way).
     fn can_fetch_page(&self, parent: &QModelIndex) -> bool {
         let (too_large, matched) = self.too_large_and_matched();
         !parent.is_valid()
             && self.query_state() == Some(QueryState::Done)
+            && !self.list().run.first_page_pending
             && !too_large
             && row_count(&self.list().rows) < matched
     }
 
-    /// Appends the next page (at most [`DEFAULT_PAGE_LIMIT`] entries) at the end of the list.
-    fn fetch_next_page(mut self: Pin<&mut Self>, parent: &QModelIndex) {
-        if !self.can_fetch_page(parent) {
+    /// Appends the next page (at most [`DEFAULT_PAGE_LIMIT`] entries) at the end of the list
+    /// once it arrived.
+    fn fetch_next_page(self: Pin<&mut Self>, parent: &QModelIndex) {
+        // One further page at a time; asking again while it is on its way changes nothing.
+        if !self.can_fetch_page(parent) || self.list().run.next_page_pending {
             return;
         }
         let offset = self.list().rows.len() as u64;
-        match self.as_mut().fetch_at(offset) {
+        self.fetch_at(offset, false, |mut model, fetched| match fetched {
             Fetched::Page(page) => {
-                let rows = self.page_rows(&page);
+                let rows = model.page_rows(&page);
                 if !rows.is_empty() {
-                    self.append_rows(parent, rows);
+                    model.as_mut().append_rows(&QModelIndex::default(), rows);
                 }
             }
             Fetched::Running => {}
-            Fetched::Gone => self.restart(),
-            Fetched::Failed(failure) => self.fail_query(&failure),
-        }
+            Fetched::Gone => model.restart(),
+            Fetched::Failed(failure) => model.fail_query(&failure),
+        });
     }
 }
 
