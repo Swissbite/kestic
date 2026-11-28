@@ -44,7 +44,7 @@ fn ac_m6_19_2_gui_parent_segment_in_sftp_path() {
                 "",
                 KESTIC_BUS_NAME,
                 datetime!(2026-12-01 10:00:00 UTC),
-                |_| {},
+                |opts| opts.enable_monitors = false,
             );
             let config_before = fs::read(&rig.daemon.config_path).expect("config");
 

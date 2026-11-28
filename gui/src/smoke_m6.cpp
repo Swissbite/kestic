@@ -634,6 +634,8 @@ int sftp_parent_checks(QQuickWindow* w, const QString& lang, const QString& out_
     if (const int rc = check_sftp_parent_form(w, "destEdit", "destinationEditPage", save, dotted_path, parent_path, message, 1930)) {
         return rc;
     }
+    wait_ms(300);
+    show_on_page(w, "destinationEditPage", item_named(w, "destEditSftpPathError"));
     M3_CHECK(1940, save_screenshot(w, other_shot(out_path, "-wizard-", "-edit-")), "screenshot failed");
     return 0;
 }
