@@ -160,6 +160,7 @@ mod tests {
             matches!(&result, Err(err) if err.kind() == std::io::ErrorKind::TimedOut),
             "{result:?}"
         );
+        // quiet window: the background process would touch the marker after 1 s
         std::thread::sleep(Duration::from_millis(1500));
         assert!(
             !marker.exists(),

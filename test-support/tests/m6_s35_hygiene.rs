@@ -9,7 +9,7 @@ use kestic_test_support::wait::{poll_within, try_poll_within, wait_until_within}
 use kestic_test_support::workspace::{files_with_ext, workspace_root};
 use std::fs;
 use std::panic::{self, AssertUnwindSafe};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -30,30 +30,42 @@ struct Source {
 }
 
 /// Every Rust file with test code: the `tests/` directories, the `*_tests.rs` / `tests.rs`
-/// modules below `src/` and the whole `test-support/src`.
+/// modules below `src/`, the whole `test-support/src`, and the inline test modules of the other
+/// source files (from their first `#[cfg(test)]` on; the lines before it are blanked, so line
+/// numbers stay right).
 fn test_sources() -> Vec<Source> {
     let root = workspace_root();
-    let mut paths: Vec<PathBuf> = Vec::new();
+    let mut out = Vec::new();
     for krate in CRATES {
         let tests = root.join(krate).join("tests");
         if tests.is_dir() {
-            paths.extend(files_with_ext(&tests, "rs"));
-        }
-        let src = root.join(krate).join("src");
-        paths.extend(files_with_ext(&src, "rs").into_iter().filter(|p| {
-            krate == "test-support" || {
-                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-                name.ends_with("_tests.rs") || name == "tests.rs"
+            for p in files_with_ext(&tests, "rs") {
+                let text = fs::read_to_string(&p).expect("read test source");
+                out.push(Source {
+                    rel: rel(&root, &p),
+                    text,
+                });
             }
-        }));
+        }
+        for p in files_with_ext(&root.join(krate).join("src"), "rs") {
+            let text = fs::read_to_string(&p).expect("read source");
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            let whole =
+                krate == "test-support" || name.ends_with("_tests.rs") || name == "tests.rs";
+            let text = if whole {
+                text
+            } else if let Some(at) = text.find("#[cfg(test)]") {
+                "\n".repeat(text[..at].lines().count()) + &text[at..]
+            } else {
+                continue;
+            };
+            out.push(Source {
+                rel: rel(&root, &p),
+                text,
+            });
+        }
     }
-    paths
-        .into_iter()
-        .map(|p| Source {
-            rel: rel(&root, &p),
-            text: fs::read_to_string(&p).expect("read test source"),
-        })
-        .collect()
+    out
 }
 
 fn rel(root: &Path, path: &Path) -> String {
@@ -64,10 +76,43 @@ fn rel(root: &Path, path: &Path) -> String {
 }
 
 /// `Instant::now()` directly followed (spaces allowed) by `+`: a hand-written deadline.
-fn has_hand_rolled_deadline(line: &str) -> bool {
+/// The `+` may also start the next line (rustfmt breaks long expressions before it).
+fn has_hand_rolled_deadline(line: &str, next: &str) -> bool {
     let needle = concat!("Instant::", "now()");
-    line.match_indices(needle)
-        .any(|(at, _)| line[at + needle.len()..].trim_start().starts_with('+'))
+    line.match_indices(needle).any(|(at, _)| {
+        let rest = line[at + needle.len()..].trim_start();
+        rest.starts_with('+') || (rest.is_empty() && next.trim_start().starts_with('+'))
+    })
+}
+
+/// Lines of hand-written wait loops built on `elapsed()`: an assertion on `….elapsed() <` with
+/// a `sleep(` in the next lines (the poll of a loop), and a `while ….elapsed() <` loop without a
+/// `// quiet window` comment in its first lines (a window measured on purpose is fine).
+fn elapsed_wait_loops(text: &str) -> Vec<usize> {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let window = &lines[i..lines.len().min(i + 10)];
+        let compares_elapsed = line.contains(".elapsed() <")
+            || (line.trim_end().ends_with('(') && {
+                let next = lines.get(i + 1).copied().unwrap_or_default();
+                next.contains(".elapsed() <")
+            });
+        if !compares_elapsed {
+            continue;
+        }
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("while ") {
+            if !window.iter().any(|l| l.contains("// quiet window")) {
+                out.push(i + 1);
+            }
+        } else if trimmed.starts_with("assert!(")
+            && window.iter().skip(1).any(|l| l.contains("sleep("))
+        {
+            out.push(i + 1);
+        }
+    }
+    out
 }
 
 /// The bodies of all `impl Drop for …` blocks of `text`.
@@ -142,16 +187,20 @@ fn ac_m6_35_1_no_test_has_a_hand_rolled_deadline_loop() {
         "{wait_module} defines `wait_until_within`"
     );
 
-    // (b) no other test source builds its own deadline from the current instant
+    // (b) no other test source builds its own deadline from the current instant, or polls
+    // against the time elapsed
     let offenders: Vec<String> = test_sources()
         .iter()
         .filter(|s| s.rel != wait_module)
         .flat_map(|s| {
-            s.text
-                .lines()
-                .enumerate()
-                .filter(|(_, l)| has_hand_rolled_deadline(l))
-                .map(|(i, l)| format!("{}:{}: {}", s.rel, i + 1, l.trim()))
+            let lines: Vec<&str> = s.text.lines().collect();
+            let deadlines = lines.iter().enumerate().filter_map(|(i, l)| {
+                let next = lines.get(i + 1).copied().unwrap_or_default();
+                has_hand_rolled_deadline(l, next).then_some(i + 1)
+            });
+            deadlines
+                .chain(elapsed_wait_loops(&s.text))
+                .map(|n| format!("{}:{n}: {}", s.rel, lines[n - 1].trim()))
                 .collect::<Vec<_>>()
         })
         .collect();
@@ -266,24 +315,41 @@ fn ac_m6_35_3_shared_helpers_are_defined_once_in_test_support() {
 }
 
 /// Fixed sleeps of at least 200 ms in `text` as `(line number, milliseconds, marked)`: `marked`
-/// when a `// quiet window` comment stands on the line or one of the three lines above.
+/// when a `// quiet window` comment stands on the line or one of the three lines above. The
+/// duration may follow on the next line; `_` in the number is allowed.
 fn long_sleeps(text: &str) -> Vec<(usize, u64, bool)> {
     let lines: Vec<&str> = text.lines().collect();
     let mut out = Vec::new();
     for (i, line) in lines.iter().enumerate() {
         for (at, _) in line.match_indices("sleep(") {
-            let rest = &line[at + "sleep(".len()..];
+            let mut rest = line[at + "sleep(".len()..].trim_start().to_string();
+            if rest.is_empty() {
+                rest = lines
+                    .get(i + 1)
+                    .copied()
+                    .unwrap_or_default()
+                    .trim_start()
+                    .to_string();
+            }
             let rest = rest
                 .trim_start_matches("std::time::")
                 .trim_start_matches("Duration::");
-            let (unit, digits) = if let Some(r) = rest.strip_prefix("from_secs(") {
-                (1000, r)
-            } else if let Some(r) = rest.strip_prefix("from_millis(") {
-                (1, r)
-            } else {
+            let units: [(&str, u64); 3] = [
+                ("from_mins(", 60_000),
+                ("from_secs(", 1000),
+                ("from_millis(", 1),
+            ];
+            let Some((unit, digits)) = units
+                .iter()
+                .find_map(|(prefix, unit)| rest.strip_prefix(prefix).map(|r| (*unit, r)))
+            else {
                 continue;
             };
-            let digits: String = digits.chars().take_while(char::is_ascii_digit).collect();
+            let digits: String = digits
+                .chars()
+                .take_while(|c| c.is_ascii_digit() || *c == '_')
+                .filter(char::is_ascii_digit)
+                .collect();
             let Ok(n) = digits.parse::<u64>() else {
                 continue;
             };

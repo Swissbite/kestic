@@ -53,7 +53,7 @@ Alle Build-, Lint- und Smoke-Stufen laufen warnungsfrei (`cargo clippy --workspa
 - **Ursache beheben statt abschalten:** Warnungen durch sauberes Refactoring lösen (z. B. Kontext-/Optionen-Structs bei vielen Parametern, ungenutzten Code entfernen, Drittanbieter-/Systemheader wie KF6 in `gui/build.rs` über `-isystem` statt `-I` einbinden, damit Warnungen im eigenen Code aktiv bleiben).
 - **Keine Unterdrückungen:** Keine `#[allow(...)]`, `#![allow(...)]`, `#pragma`, QML-Filter oder `#[ignore]`, um reale Warnungen oder Tests zu verstecken.
 - **Enge Ausnahmen:** Nur dort zulässig, wo eine externe Schnittstelle die Signatur erzwingt (z. B. `org.freedesktop.Notifications.Notify` mit 8 D-Bus-Parametern in Test-Fakes) oder Cargo jedes Test-Binary separat kompiliert (`#![allow(dead_code)]` in `tests/common/mod.rs`); nie modul-/crateweit im Produktionscode.
-- **Grössengrenzen ohne Ausnahme:** Funktionslänge über Clippy-Lint `too_many_lines` (Schwelle 150 Zeilen in `clippy.toml`) und maximale Dateigrösse von 1500 Zeilen pro `.rs`- und `.qml`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify` gemäss [architecture.md](architecture.md) §Code-Struktur.
+- **Grössengrenzen ohne Ausnahme:** Funktionslänge über Clippy-Lint `too_many_lines` (Schwelle 150 Zeilen in `clippy.toml`) und maximale Dateigrösse von 1500 Zeilen pro `.rs`-, `.qml`- und `.cpp`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify` gemäss [architecture.md](architecture.md) §Code-Struktur.
 
 ## Reproduzierbarkeit
 

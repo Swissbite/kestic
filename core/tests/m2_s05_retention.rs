@@ -838,23 +838,24 @@ fn spawn_non_exclusive_lock_holder(
     pw: &str,
     cache_dir: &Path,
 ) -> LockHolderGuard {
-    let mut child = Command::new(restic_bin)
-        .args([
-            "-r",
-            &repo_dir.to_string_lossy(),
-            "backup",
-            "--stdin",
-            "--stdin-filename",
-            "slow-input.txt",
-        ])
-        .env("RESTIC_PASSWORD", pw)
-        .env("RESTIC_CACHE_DIR", cache_dir)
-        .env("RESTIC_HOST", "other-active-backup")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn restic backup --stdin");
+    let mut child = KillOnDrop::spawn(
+        Command::new(restic_bin)
+            .args([
+                "-r",
+                &repo_dir.to_string_lossy(),
+                "backup",
+                "--stdin",
+                "--stdin-filename",
+                "slow-input.txt",
+            ])
+            .env("RESTIC_PASSWORD", pw)
+            .env("RESTIC_CACHE_DIR", cache_dir)
+            .env("RESTIC_HOST", "other-active-backup")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+        "restic backup --stdin",
+    );
 
     let mut stdin = child.stdin.take().expect("piped stdin");
     stdin
@@ -864,7 +865,7 @@ fn spawn_non_exclusive_lock_holder(
 
     let mut guard = LockHolderGuard {
         _stdin: stdin,
-        child: KillOnDrop::new(child),
+        child,
     };
 
     let locks_dir = repo_dir.join("locks");

@@ -214,7 +214,7 @@ Verbindliche Ablage neuer und aufgeteilter Module über alle Meilensteine:
 **Grössengrenzen ohne Ausnahmen (NFR-12, durch `just verify` erzwungen):**
 
 - **Funktionslänge:** Clippy-Lint `too_many_lines` mit Schwelle 150 Zeilen in `clippy.toml`.
-- **Dateigrösse:** Maximal 1500 Zeilen pro `.rs`- und `.qml`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify`.
+- **Dateigrösse:** Maximal 1500 Zeilen pro `.rs`-, `.qml`- und `.cpp`-Datei unter `src/` (ohne Tests und generierten Code), geprüft durch `just verify`.
 
 ## Schlüsselbehandlung
 

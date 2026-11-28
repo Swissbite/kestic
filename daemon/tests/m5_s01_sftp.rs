@@ -26,6 +26,7 @@ use kestic_test_support::password::strong_password;
 use kestic_test_support::repo_template::copy_template_repo;
 use kestic_test_support::sftp_server::SftpServerGuard;
 use kestic_test_support::tools::write_executable;
+use kestic_test_support::wait::wait_for_value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1159,21 +1160,12 @@ fn m5_01_scheduled_maintenance_with_a_changed_key_is_a_permanent_error() {
                     variant.label,
                     rig.wrapper.entries()
                 );
-                let alerted = Instant::now();
-                while !fakes
-                    .notif
-                    .snapshot()
-                    .iter()
-                    .any(|n| n.summary.contains("Maintenance failed"))
-                {
-                    assert!(
-                        alerted.elapsed() < Duration::from_secs(10),
-                        "{}: no alert: {:?}",
-                        variant.label,
-                        fakes.notif.snapshot()
-                    );
-                    std::thread::sleep(Duration::from_millis(50));
-                }
+                wait_for_value(
+                    Duration::from_secs(10),
+                    &format!("{}: the alert «Maintenance failed»", variant.label),
+                    || fakes.notif.snapshot(),
+                    |all| all.iter().any(|n| n.summary.contains("Maintenance failed")),
+                );
 
                 // The longest backoff is 60 minutes: two hours later it would have retried.
                 rig.clock.set(SUNDAY_1200 + time::Duration::hours(2));

@@ -940,6 +940,7 @@ mod tests {
     #[test]
     fn m5_01_name_resolution_stays_within_the_time_limit() {
         fn hanging(_: &str, _: u16) -> Vec<std::net::IpAddr> {
+            // quiet window: a resolver that does not answer within the limit
             std::thread::sleep(Duration::from_secs(30));
             Vec::new()
         }
@@ -1014,15 +1015,20 @@ mod tests {
             "{checked:?}"
         );
         assert!(elapsed < Duration::from_secs(3), "waited {elapsed:?}");
-        // The command of the configuration ended with ssh.
-        std::thread::sleep(Duration::from_millis(300));
-        let left: Vec<String> = fs::read_dir("/proc")
-            .expect("/proc")
-            .filter_map(|entry| fs::read(entry.ok()?.path().join("cmdline")).ok())
-            .map(|cmdline| String::from_utf8_lossy(&cmdline).replace('\0', " "))
-            .filter(|cmdline| cmdline.contains(&marker))
-            .collect();
-        assert!(left.is_empty(), "left running: {left:?}");
+        // The command of the configuration ends with ssh.
+        kestic_test_support::wait::wait_for_value(
+            Duration::from_secs(5),
+            "no command of the configuration left running",
+            || {
+                fs::read_dir("/proc")
+                    .expect("/proc")
+                    .filter_map(|entry| fs::read(entry.ok()?.path().join("cmdline")).ok())
+                    .map(|cmdline| String::from_utf8_lossy(&cmdline).replace('\0', " "))
+                    .filter(|cmdline| cmdline.contains(&marker))
+                    .collect::<Vec<String>>()
+            },
+            Vec::is_empty,
+        );
     }
 
     #[test]
