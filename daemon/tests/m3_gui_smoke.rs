@@ -523,7 +523,8 @@ fn m3_14_1_schedule_editor_preselects_daily_1200_and_offers_the_frequencies() {
     );
 }
 
-/// AC-M3-14-2 (no weekday / every 0 days) and AC-M3-14-6 (schedule editor).
+/// AC-M3-14-2 (no weekday / every 0 days) and AC-M3-14-6 (schedule editor). Also AC-M6-34-3 (a):
+/// «every n days» starts with core's default 3, and the field and its message use core's range.
 #[test]
 fn m3_14_2_14_6_schedule_editor_blocks_invalid_input_and_is_keyboard_operable() {
     run_isolated_test(
