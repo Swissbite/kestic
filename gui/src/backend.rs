@@ -263,6 +263,17 @@ pub mod qobject {
             verify_connection: bool,
         ) -> i32;
 
+        /// The revision of the backup in the window's state; an editor page keeps it from its
+        /// opening and sends it when it saves.
+        #[qinvokable]
+        #[cxx_name = "backupRevision"]
+        fn backup_revision(self: &KesticApp, backup_id: &QString) -> QString;
+
+        /// The revision of the destination in the window's state.
+        #[qinvokable]
+        #[cxx_name = "destinationRevision"]
+        fn destination_revision(self: &KesticApp, dest_id: &QString) -> QString;
+
         #[qinvokable]
         #[cxx_name = "updateDestinationPassword"]
         fn update_destination_password(
@@ -295,6 +306,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             excludes_json: &QString,
+            revision: &QString,
         ) -> i32;
 
         #[qinvokable]
@@ -303,6 +315,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             retention_json: &QString,
+            revision: &QString,
         ) -> i32;
 
         #[qinvokable]
@@ -311,6 +324,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             source_path: &QString,
+            revision: &QString,
         ) -> i32;
 
         #[qinvokable]
@@ -543,6 +557,7 @@ pub mod qobject {
             backup_id: &QString,
             schedule_json: &QString,
             overdue_threshold: i32,
+            revision: &QString,
         ) -> i32;
 
         #[qinvokable]
@@ -551,6 +566,7 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             conditions_json: &QString,
+            revision: &QString,
         ) -> i32;
 
         #[qinvokable]
@@ -667,6 +683,7 @@ mod forms;
 mod previews;
 mod restic_install;
 pub(crate) mod restore;
+mod revisions;
 mod schedules;
 mod state;
 

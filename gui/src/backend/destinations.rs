@@ -5,10 +5,13 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::daemon_call::Lane;
+use super::revisions::{
+    CONFLICT_ANSWER, cached_destination_revision, is_conflict_reply, record_own, sent_revision,
+};
 use super::{Finish, dbus_error_text, qobject};
 use crate::destination_input::{
     build_destination, connection_test_input, connection_test_outcome, generic_credentials_error,
-    generic_env_error, generic_url_error,
+    generic_env_error, generic_url_error, revision_of_fields,
 };
 use crate::i18n::{daemon_unavailable_text, i18n, i18np, tr, tr_text};
 use crate::state_cache::shared_state;
@@ -241,6 +244,8 @@ impl qobject::KesticApp {
         backend_secrets_json: &QString,
         verify_connection: bool,
     ) -> i32 {
+        // The page adds the revision of its opening to the fields.
+        let revision = revision_of_fields(&fields_json.to_string());
         let Some(dest) = self.as_mut().ok_or_show(build_destination(
             Some(&id.to_string()),
             &fields_json.to_string(),
@@ -257,14 +262,41 @@ impl qobject::KesticApp {
         self.request_daemon(
             Lane::slow(&format!("update-destination:{}", dest.id)),
             move |client| {
-                client.update_destination(&dest, &mode, &repo_pw, &backend, verify_connection)
+                let current = client
+                    .get_state()
+                    .ok()
+                    .and_then(|s| {
+                        s.destinations
+                            .into_iter()
+                            .find(|d| d.destination.id == dest.id)
+                            .map(|d| d.revision)
+                    })
+                    .unwrap_or_default();
+                let sent = sent_revision(&revision, &current);
+                let saved = client.update_destination(
+                    &dest,
+                    &mode,
+                    &repo_pw,
+                    &backend,
+                    verify_connection,
+                    &sent,
+                );
+                if let Ok(result) = &saved
+                    && update_refusal(result.outcome).is_none()
+                {
+                    record_own(&sent, &result.revision);
+                }
+                saved
             },
             |mut app, result| {
+                if is_conflict_reply(&result) {
+                    return (false, CONFLICT_ANSWER.to_string());
+                }
                 let Some(result) = app.as_mut().finish_daemon_action(result, Finish::Plain) else {
                     return (false, String::new());
                 };
                 match update_refusal(result.outcome) {
-                    None => (true, String::new()),
+                    None => (true, result.revision),
                     Some(code) => {
                         // The edit page shows it like the connection test, with its action.
                         app.as_mut().show_action_error(&tr_text(&code.text("")));
@@ -275,6 +307,10 @@ impl qobject::KesticApp {
                 }
             },
         )
+    }
+
+    pub fn destination_revision(&self, dest_id: &QString) -> QString {
+        QString::from(&cached_destination_revision(&dest_id.to_string()))
     }
 
     pub fn update_destination_password(

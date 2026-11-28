@@ -65,6 +65,8 @@ pub enum KesticServiceErr {
     PreviewRequired(String),
     /// A destination changed or removed while a restore from it starts, waits or runs.
     RestoreRunning(String),
+    /// The backup or destination was changed since the caller read its revision.
+    Conflict(String),
     Internal(String),
 }
 
@@ -86,6 +88,7 @@ impl std::fmt::Display for KesticServiceErr {
             | Self::HostKeyChanged(m)
             | Self::PreviewRequired(m)
             | Self::RestoreRunning(m)
+            | Self::Conflict(m)
             | Self::Internal(m) => f.write_str(m),
             Self::ManualRunBlocked(reason) => f.write_str(reason.as_str()),
             Self::SleepInProgress => f.write_str("sleep_in_progress"),
@@ -122,6 +125,7 @@ impl From<KesticServiceErr> for KesticDbusError {
             KesticServiceErr::HostKeyChanged(m) => KesticDbusError::HostKeyChanged(m),
             KesticServiceErr::PreviewRequired(m) => KesticDbusError::PreviewRequired(m),
             KesticServiceErr::RestoreRunning(m) => KesticDbusError::RestoreRunning(m),
+            KesticServiceErr::Conflict(m) => KesticDbusError::Conflict(m),
             KesticServiceErr::Internal(m) => KesticDbusError::Internal(m),
         }
     }

@@ -170,6 +170,7 @@ impl KesticClient {
         repo_password: &str,
         backend: &BackendSecrets,
         verify_connection: bool,
+        revision: &str,
     ) -> zbus::Result<DestinationUpdateResultDto> {
         let json = to_failure_arg("dest", dest)?;
         let secrets = to_failure_arg("backend secrets", backend)?;
@@ -180,6 +181,7 @@ impl KesticClient {
                 repo_password,
                 secrets.as_str(),
                 verify_connection,
+                revision,
             )
             .await
         })?;
@@ -208,9 +210,10 @@ impl KesticClient {
         self.with_proxy(async |p| p.add_backup(json.as_str()).await)
     }
 
-    pub fn update_backup(&self, backup: &Backup) -> zbus::Result<()> {
+    /// Saves `backup` if `revision` is the saved backup's; returns the new revision.
+    pub fn update_backup(&self, backup: &Backup, revision: &str) -> zbus::Result<String> {
         let json = to_failure_arg("backup", backup)?;
-        self.with_proxy(async |p| p.update_backup(json.as_str()).await)
+        self.with_proxy(async |p| p.update_backup(json.as_str(), revision).await)
     }
 
     pub fn rename_backup(&self, backup_id: &str, new_name: &str) -> zbus::Result<()> {

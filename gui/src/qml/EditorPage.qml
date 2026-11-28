@@ -23,6 +23,13 @@ Kirigami.ScrollablePage {
     property string unsavedSubtitle: ""
     // Dialogs of the page that Escape closes before the «Save changes?» prompt.
     property var extraDialogs: []
+    // The revision of the backup or destination from the page's opening (not bound to the
+    // state: a change made elsewhere must not slip into it); the save sends it.
+    property string revision: ""
+    // «backup» or «destination»: what the message after a refused save names.
+    property string revisionOf: "backup"
+    // The last save was refused because the backup or destination changed meanwhile.
+    property bool changedElsewhere: false
 
     signal unsavedSaveRequested()
     signal unsavedDiscardRequested()
@@ -41,6 +48,28 @@ Kirigami.ScrollablePage {
         } else {
             rootWindow.popSubPage();
         }
+    }
+
+    // Takes the answer of a save: the new revision, or after a `Conflict` the current state
+    // through `reload` (which also takes the current revision) with a message.
+    function afterSave(ok, answer, reload) {
+        if (ok) {
+            revision = answer;
+            changedElsewhere = false;
+        } else if (answer === "conflict") {
+            reload();
+            changedElsewhere = true;
+        }
+    }
+
+    header: Kirigami.InlineMessage {
+        objectName: "editorChangedElsewhereMessage"
+        type: Kirigami.MessageType.Warning
+        position: Kirigami.InlineMessage.Position.Header
+        visible: editor.changedElsewhere
+        text: editor.revisionOf === "destination"
+            ? i18n("This destination was changed elsewhere in the meantime. The current version is loaded; your change was not saved.")
+            : i18n("This backup was changed elsewhere in the meantime. The current version is loaded; your change was not saved.")
     }
 
     // Saves for the navigation guard; `done(ok)` runs with true once the page is clean. A page

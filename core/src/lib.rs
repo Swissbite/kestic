@@ -39,6 +39,7 @@ pub mod restore_preview;
 pub mod restore_target;
 pub mod retention;
 pub mod retention_form;
+pub mod revision;
 pub mod s3;
 pub mod schedule_form;
 pub mod scheduler;

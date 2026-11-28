@@ -20,6 +20,7 @@ use kestic_core::model::{
     RunStatus, Schedule, find_nested_source_warnings, lint_exclude_rules,
 };
 use kestic_core::restic::CancelHandle;
+use kestic_core::revision::revision_of;
 use kestic_core::scheduler::{
     BackupScheduleEvalInput, BackupScheduleEvaluation, DestinationMaintenanceEvalInput,
     UnmetPrecondition, collect_pending_preconditions, evaluate_backup_schedule,
@@ -391,6 +392,7 @@ impl DaemonCore {
 
         BackupSummaryDto {
             backup: backup.clone(),
+            revision: revision_of(backup),
             destination_name: dest_name,
             last_run,
             active_run,
@@ -553,6 +555,7 @@ impl DaemonCore {
 
         DestinationSummaryDto {
             destination: dest.clone(),
+            revision: revision_of(dest),
             backup_count,
             availability: avail,
             password_rejected,

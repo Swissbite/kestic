@@ -589,6 +589,10 @@ fn every_service_error_code_maps_to_its_msgid() {
             Some("A restore from this destination is running or waiting."),
         ),
         (
+            S::Conflict,
+            Some("Changed elsewhere in the meantime; nothing was saved."),
+        ),
+        (
             S::Internal,
             Some("Internal error in the background service."),
         ),
