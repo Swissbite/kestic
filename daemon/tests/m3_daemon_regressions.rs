@@ -839,8 +839,8 @@ fn m3_hung_preflight_does_not_delay_prepare_for_sleep() {
             wait_until_within(Duration::from_secs(10), "preflight hits black hole", || {
                 black_hole.accepted() >= 1
             });
-            // One more tick with the preflight hung in its connection.
-            clock.wait_ticks(1);
+            // One whole tick with the preflight hung in its connection.
+            clock.wait_ticks(2);
 
             let sleep_started = Instant::now();
             logind.emit_prepare_for_sleep(true);
