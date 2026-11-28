@@ -15,6 +15,7 @@
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QPointer>
+#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQmlError>
 #include <QQmlIncubationController>
@@ -22,38 +23,25 @@
 #include <QQuickWindow>
 #include <QStringList>
 #include <QTimer>
+#include <QUrl>
 #include <QVariant>
+#include <algorithm>
 #include <cstdio>
 #include <memory>
+#include <qtestkeyboard.h>
+#include <qtestmouse.h>
 
-QT_BEGIN_NAMESPACE
-Q_GUI_EXPORT void qt_handleMouseEvent(
-    QWindow* window,
-    const QPointF& local,
-    const QPointF& global,
-    Qt::MouseButtons state,
-    Qt::MouseButton button,
-    QEvent::Type type,
-    Qt::KeyboardModifiers mods,
-    int timestamp
-);
-Q_GUI_EXPORT void qt_handleKeyEvent(
-    QWindow* window,
-    QEvent::Type type,
-    int key,
-    Qt::KeyboardModifiers mods,
-    const QString& text = QString(),
-    bool autorep = false,
-    ushort count = 1
-);
-QT_END_NAMESPACE
 
 namespace kestic::smoke {
 
-int next_mouse_timestamp(int delta_ms) {
-    static int ts = 100;
-    ts += delta_ms;
-    return ts;
+// The window point of `scene` for QTest, inside `window`: rounding may reach its width or height,
+// where QTest warns. QTest sends an event at (0,0) to the middle of the window instead, so that
+// point moves by one pixel.
+QPoint window_point(const QWindow* window, const QPointF& scene) {
+    const QPoint point(
+        qBound(0, qRound(scene.x()), qMax(0, window->width() - 1)),
+        qBound(0, qRound(scene.y()), qMax(0, window->height() - 1)));
+    return point.isNull() ? QPoint(1, 1) : point;
 }
 
 void collect_visual_descendants(QQuickItem* root, QList<QQuickItem*>& out) {
@@ -302,81 +290,163 @@ bool has_visible_text(QQuickItem* root, const QString& needle) {
     return find_visible_item_by_text(root, QStringList { needle }, false) != nullptr;
 }
 
-bool click_ui_item(QQuickWindow* window, QQuickItem* item, const char* label) {
+// The topmost visible item at window point `at` that takes mouse buttons, for failure messages.
+QQuickItem* mouse_item_at(QQuickItem* root, const QPointF& at) {
+    if (!root || !root->isVisible()) {
+        return nullptr;
+    }
+    QList<QQuickItem*> children = root->childItems();
+    std::stable_sort(children.begin(), children.end(), [](QQuickItem* a, QQuickItem* b) { return a->z() < b->z(); });
+    for (auto it = children.crbegin(); it != children.crend(); ++it) {
+        if (QQuickItem* hit = mouse_item_at(*it, at)) {
+            return hit;
+        }
+    }
+    const QPointF local = root->mapFromScene(at);
+    if (root->acceptedMouseButtons() != Qt::NoButton && root->contains(local)) {
+        return root;
+    }
+    return nullptr;
+}
+
+QString click_failure(QQuickWindow* window, QQuickItem* item) {
     if (!window || !item) {
-        std::fprintf(stderr, "UI click failed (%s): null item or window\n", label);
-        return false;
+        return QStringLiteral("null item or window");
     }
     if (!item->isVisible() || !item->isEnabled() || item->width() <= 0.0 || item->height() <= 0.0) {
-        std::fprintf(
-            stderr,
-            "UI click failed (%s): item not clickable (vis=%d en=%d w=%.1f h=%.1f)\n",
-            label,
-            item->isVisible() ? 1 : 0,
-            item->isEnabled() ? 1 : 0,
-            item->width(),
-            item->height()
-        );
-        return false;
+        return QStringLiteral("item not clickable (vis=%1 en=%2 w=%3 h=%4)")
+            .arg(item->isVisible() ? 1 : 0)
+            .arg(item->isEnabled() ? 1 : 0)
+            .arg(item->width(), 0, 'f', 1)
+            .arg(item->height(), 0, 'f', 1);
     }
     const QPointF center(item->width() / 2.0, item->height() / 2.0);
     const QPointF scene = item->mapToScene(center);
-    if (scene.x() < 0.0 || scene.y() < 0.0 || scene.x() > window->width() || scene.y() > window->height()) {
-        std::fprintf(
-            stderr,
-            "UI click failed (%s): scene center (%.1f,%.1f) outside window (%dx%d)\n",
-            label,
-            scene.x(),
-            scene.y(),
-            window->width(),
-            window->height()
-        );
-        return false;
+    if (scene.x() < 0.0 || scene.y() < 0.0 || scene.x() >= window->width() || scene.y() >= window->height()) {
+        return QStringLiteral("scene center (%1,%2) outside window (%3x%4)")
+            .arg(scene.x(), 0, 'f', 1)
+            .arg(scene.y(), 0, 'f', 1)
+            .arg(window->width())
+            .arg(window->height());
     }
-    const QPointF global = window->mapToGlobal(scene);
-    qt_handleMouseEvent(
-        window,
-        scene,
-        global,
-        Qt::NoButton,
-        Qt::NoButton,
-        QEvent::MouseMove,
-        Qt::NoModifier,
-        next_mouse_timestamp(20)
-    );
-    qt_handleMouseEvent(
-        window,
-        scene,
-        global,
-        Qt::LeftButton,
-        Qt::LeftButton,
-        QEvent::MouseButtonPress,
-        Qt::NoModifier,
-        next_mouse_timestamp(20)
-    );
+    // The pointer moves over the item first, as a real one does; then the press must reach it.
+    // QTest handles pending events after each step, which may move the item (a message above it
+    // appears), so the press goes to where the item is then.
+    QTest::mouseMove(window, window_point(window, scene), 20);
+    const QPoint at = window_point(window, item->mapToScene(center));
+    if (at != window_point(window, scene)) {
+        QTest::mouseMove(window, at, 20);
+    }
+    QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, at, 20);
     QCoreApplication::processEvents();
     const QVariant pressed_prop = item->property("pressed");
     const bool hit_pressed = pressed_prop.isValid() && pressed_prop.toBool();
-    qt_handleMouseEvent(
-        window,
-        scene,
-        global,
-        Qt::NoButton,
-        Qt::LeftButton,
-        QEvent::MouseButtonRelease,
-        Qt::NoModifier,
-        next_mouse_timestamp(20)
-    );
+    // Without a delay QTest waits a double-click interval after the release, so the next click
+    // counts as a click of its own.
+    QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, at);
     QCoreApplication::processEvents();
-    next_mouse_timestamp(500);
     if (pressed_prop.isValid() && !hit_pressed) {
-        std::fprintf(
-            stderr,
-            "UI click failed (%s): window press at (%.1f,%.1f) did not hit target item\n",
-            label,
-            scene.x(),
-            scene.y()
-        );
+        QStringList open_popups;
+        for (QObject* obj : window->findChildren<QObject*>()) {
+            if (obj->inherits("QQuickPopup") && obj->property("opened").toBool()) {
+                open_popups << QStringLiteral("%1[%2]").arg(
+                    QString::fromLatin1(obj->metaObject()->className()), obj->objectName());
+            }
+        }
+        return QStringLiteral("window press at (%1,%2) did not hit target item; topmost there: %3; open popups: %4")
+            .arg(at.x())
+            .arg(at.y())
+            .arg(describe_focus_item(mouse_item_at(window->contentItem(), at)), open_popups.join(QStringLiteral(", ")));
+    }
+    return QString();
+}
+
+namespace {
+
+// Records when the first mouse move and the first press reach a window. Qt sends a move of its
+// own right before a press at a new position, with the press's timestamp, so only a move with
+// an earlier timestamp is one the helper sent.
+class MouseEventLog : public QObject {
+public:
+    qint64 first_move = -1;
+    qint64 first_press = -1;
+
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        const auto* input = dynamic_cast<QInputEvent*>(event);
+        if (input && event->type() == QEvent::MouseMove && first_move < 0) {
+            first_move = static_cast<qint64>(input->timestamp());
+        }
+        if (input && event->type() == QEvent::MouseButtonPress && first_press < 0) {
+            first_press = static_cast<qint64>(input->timestamp());
+        }
+        return QObject::eventFilter(watched, event);
+    }
+};
+
+}  // namespace
+
+QString input_self_check(QQuickWindow* window) {
+    QQmlEngine* engine = qmlEngine(window);
+    if (!engine) {
+        engine = qmlEngine(window->contentItem());
+    }
+    if (!engine) {
+        return QStringLiteral("no QML engine");
+    }
+    // A target centred on (0,0) that counts clicks, double clicks and hovers, and a target under
+    // another mouse area.
+    QQmlComponent component(engine);
+    component.setData(
+        QByteArrayLiteral(
+            "import QtQuick\n"
+            "Item {\n"
+            "  anchors.fill: parent; z: 100000\n"
+            "  property int clicks: 0; property int doubleClicks: 0; property int entered: 0\n"
+            "  MouseArea { objectName: 'selfCheckCorner'; x: -10; y: -10; width: 20; height: 20;"
+            "    hoverEnabled: true; onClicked: parent.clicks += 1;"
+            "    onDoubleClicked: parent.doubleClicks += 1; onEntered: parent.entered += 1 }\n"
+            "  MouseArea { objectName: 'selfCheckCovered'; x: 100; y: 100; width: 40; height: 40 }\n"
+            "  MouseArea { x: 90; y: 90; width: 60; height: 60 }\n"
+            "}\n"
+        ),
+        QUrl()
+    );
+    std::unique_ptr<QObject> root(component.create());
+    auto* overlay = qobject_cast<QQuickItem*>(root.get());
+    if (!overlay) {
+        return QStringLiteral("self-check overlay not created: %1").arg(component.errorString());
+    }
+    overlay->setParentItem(window->contentItem());
+    QCoreApplication::processEvents();
+    auto* corner = overlay->findChild<QQuickItem*>(QStringLiteral("selfCheckCorner"));
+    auto* covered = overlay->findChild<QQuickItem*>(QStringLiteral("selfCheckCovered"));
+    QString result;
+    MouseEventLog log;
+    window->installEventFilter(&log);
+    const QString first = click_failure(window, corner);
+    window->removeEventFilter(&log);
+    const QString second = click_failure(window, corner);
+    if (!first.isEmpty() || !second.isEmpty()) {
+        result = QStringLiteral("a click on the item centred on (0,0) failed: %1 %2").arg(first, second);
+    } else if (log.first_move < 0 || log.first_press < 0 || log.first_move >= log.first_press
+               || overlay->property("entered").toInt() < 1) {
+        result = QStringLiteral("the pointer did not move over the item before the press");
+    } else if (overlay->property("clicks").toInt() != 2 || overlay->property("doubleClicks").toInt() != 0) {
+        result = QStringLiteral("two clicks gave %1 clicks and %2 double clicks")
+                     .arg(overlay->property("clicks").toInt())
+                     .arg(overlay->property("doubleClicks").toInt());
+    } else if (!covered
+               || !click_failure(window, covered).contains(QStringLiteral("did not hit target item"))) {
+        result = QStringLiteral("a click on a covered item did not fail for missing it");
+    }
+    overlay->setParentItem(nullptr);
+    return result;
+}
+
+bool click_ui_item(QQuickWindow* window, QQuickItem* item, const char* label) {
+    const QString failure = click_failure(window, item);
+    if (!failure.isEmpty()) {
+        std::fprintf(stderr, "UI click failed (%s): %s\n", label, qPrintable(failure));
         return false;
     }
     return true;
@@ -390,46 +460,20 @@ bool enter_text_field(QQuickWindow* window, QQuickItem* field, const QString& te
     }
     const QPointF center(field->width() / 2.0, field->height() / 2.0);
     const QPointF scene = field->mapToScene(center);
-    const QPointF global = window->mapToGlobal(scene);
-    qt_handleMouseEvent(
-        window,
-        scene,
-        global,
-        Qt::LeftButton,
-        Qt::LeftButton,
-        QEvent::MouseButtonPress,
-        Qt::NoModifier,
-        next_mouse_timestamp(20)
-    );
-    qt_handleMouseEvent(
-        window,
-        scene,
-        global,
-        Qt::NoButton,
-        Qt::LeftButton,
-        QEvent::MouseButtonRelease,
-        Qt::NoModifier,
-        next_mouse_timestamp(20)
-    );
-    next_mouse_timestamp(500);
+    // A field scrolled out of the window gets the focus without the click.
+    if (scene.x() >= 0.0 && scene.y() >= 0.0 && scene.x() < window->width() && scene.y() < window->height()) {
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, window_point(window, scene));
+    }
     field->forceActiveFocus(Qt::MouseFocusReason);
     QCoreApplication::processEvents();
 
-    QKeyEvent sel_all_press(QEvent::KeyPress, Qt::Key_A, Qt::ControlModifier);
-    QKeyEvent sel_all_rel(QEvent::KeyRelease, Qt::Key_A, Qt::ControlModifier);
-    QKeyEvent del_press(QEvent::KeyPress, Qt::Key_Backspace, Qt::NoModifier);
-    QKeyEvent del_rel(QEvent::KeyRelease, Qt::Key_Backspace, Qt::NoModifier);
-    QCoreApplication::sendEvent(window, &sel_all_press);
-    QCoreApplication::sendEvent(window, &sel_all_rel);
-    QCoreApplication::sendEvent(window, &del_press);
-    QCoreApplication::sendEvent(window, &del_rel);
-
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(window, Qt::Key_Backspace);
+    // Key code 0 with the text: any character arrives, also a tab or one outside ASCII.
     for (const char32_t code_point : text.toUcs4()) {
         const QString s = QString::fromUcs4(&code_point, 1);
-        QKeyEvent kp(QEvent::KeyPress, 0, Qt::NoModifier, s);
-        QKeyEvent kr(QEvent::KeyRelease, 0, Qt::NoModifier, s);
-        QCoreApplication::sendEvent(window, &kp);
-        QCoreApplication::sendEvent(window, &kr);
+        QTest::sendKeyEvent(QTest::Press, window, Qt::Key(0), s, Qt::NoModifier);
+        QTest::sendKeyEvent(QTest::Release, window, Qt::Key(0), s, Qt::NoModifier);
     }
     QCoreApplication::processEvents();
     const QString actual = field->property("text").toString();
@@ -492,16 +536,25 @@ void wait_ms(int ms) {
     loop.exec();
 }
 
-void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButtons state, Qt::MouseButton button,
-    QEvent::Type type, int delta_ms) {
-    qt_handleMouseEvent(window, scene, window->mapToGlobal(scene), state, button, type, Qt::NoModifier,
-        next_mouse_timestamp(delta_ms));
+void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButton button, QEvent::Type type, int delta_ms) {
+    const QPoint at = window_point(window, scene);
+    switch (type) {
+    case QEvent::MouseButtonPress:
+        QTest::mousePress(window, button, Qt::NoModifier, at, delta_ms);
+        break;
+    case QEvent::MouseButtonRelease:
+        QTest::mouseRelease(window, button, Qt::NoModifier, at, delta_ms);
+        break;
+    default:
+        QTest::mouseMove(window, at, delta_ms);
+        break;
+    }
     QCoreApplication::processEvents();
 }
 
 void send_key(QWindow* window, int key, Qt::KeyboardModifiers mods, const QString& text) {
-    qt_handleKeyEvent(window, QEvent::KeyPress, key, mods, text);
-    qt_handleKeyEvent(window, QEvent::KeyRelease, key, mods, text);
+    QTest::sendKeyEvent(QTest::Press, window, Qt::Key(key), text, mods);
+    QTest::sendKeyEvent(QTest::Release, window, Qt::Key(key), text, mods);
     QCoreApplication::processEvents();
     if (key == Qt::Key_Return || key == Qt::Key_Enter) {
         wait_ms(160);
