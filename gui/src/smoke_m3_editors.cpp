@@ -867,10 +867,10 @@ int scenario_revision_conflict(const Ctx& c) {
         }
         // The first change elsewhere also switched «skip on metered networks» on: the page shows it.
         if (step == 1) {
-            M3_CHECK(6119, page->property("skipOnMetered").toBool(), "(c) the page must show the change made elsewhere");
+            M3_CHECK(6129, page->property("skipOnMetered").toBool(), "(c) the page must show the change made elsewhere");
         }
         ++step;
-        base += 10;
+        base += 20;
     }
 
     // The destination form: a new name, while the maintenance schedule was changed elsewhere.
@@ -883,7 +883,7 @@ int scenario_revision_conflict(const Ctx& c) {
     wait_until([&] { return item_named(w, "destinationEditPage") != nullptr; }, 3000);
     wait_ms(200);
     QQuickItem* dest_page = item_named(w, "destinationEditPage");
-    int rc = check_conflict(backend, dest_page, "destination", did, step, 6170);
+    int rc = check_conflict(backend, dest_page, "destination", did, step, 6210);
     if (rc != 0) {
         return rc;
     }
@@ -894,42 +894,42 @@ int scenario_revision_conflict(const Ctx& c) {
             break;
         }
     }
-    M3_CHECK(6178, draft != nullptr, "destination draft missing");
+    M3_CHECK(6232, draft != nullptr, "destination draft missing");
     const QString typed_name = draft->property("name").toString() + QStringLiteral(" typed");
     draft->setProperty("name", typed_name);
     // A typed password makes the save check the connection; the page treats it as tested.
     draft->setProperty("repoPassword", QStringLiteral("typed-password"));
     draft->setProperty("connectionVerified", true);
     wait_ms(100);
-    M3_CHECK(6176, dest_page->property("canSave").toBool(), "precondition: the destination form can save");
+    M3_CHECK(6230, dest_page->property("canSave").toBool(), "precondition: the destination form can save");
     save_page(dest_page, "saveForGuard", {});
-    rc = check_reloaded(backend, dest_page, "destination", did, c.lang, 6160);
+    rc = check_reloaded(backend, dest_page, "destination", did, c.lang, 6220);
     if (rc != 0) {
         return rc;
     }
     const QString daemon_name =
         role_value(model_named(w, "destinationsModel"), model_row(w, "destinationsModel", "destinationId", did), "name")
             .toString();
-    M3_CHECK(6177, draft->property("repoPassword").toString().isEmpty(), "(c) the typed password must be cleared");
-    M3_CHECK(6179, draft->property("name").toString() == daemon_name && daemon_name != typed_name,
+    M3_CHECK(6231, draft->property("repoPassword").toString().isEmpty(), "(c) the typed password must be cleared");
+    M3_CHECK(6233, draft->property("name").toString() == daemon_name && daemon_name != typed_name,
         "(c) the form must show the name the destination got elsewhere");
 
     // AC-M6-36-10 (d): two saves right after another on one page, and (e) a second page opened
     // right after a save: no `Conflict` with the window's own saves.
     QQuickItem* cond = open_backup_editor(w, bid, "openBackupConditionsPage", "backupConditionsEditPage");
-    M3_CHECK(6180, cond != nullptr, "conditions page did not reopen");
+    M3_CHECK(6240, cond != nullptr, "conditions page did not reopen");
     cond->setProperty("requireAcPower", !cond->property("requireAcPower").toBool());
     wait_ms(100);
     QMetaObject::invokeMethod(cond, "saveForGuard", Q_ARG(QVariant, QVariant()));
     QMetaObject::invokeMethod(cond, "saveForGuard", Q_ARG(QVariant, QVariant()));
     wait_until([&] { return !cond->property("saving").toBool(); }, 15000);
     wait_ms(200);
-    M3_CHECK(6181, !cond->property("changedElsewhere").toBool(), "(d) two quick saves must not conflict");
+    M3_CHECK(6241, !cond->property("changedElsewhere").toBool(), "(d) two quick saves must not conflict");
     cond->setProperty("requireAcPower", !cond->property("requireAcPower").toBool());
     wait_ms(100);
     save_page(cond, "saveForGuard", {});
-    M3_CHECK(6182, !cond->property("changedElsewhere").toBool(), "(d) the next save takes the returned revision");
-    M3_CHECK(6183, !cond->property("dirty").toBool(), "(d) the save went through");
+    M3_CHECK(6242, !cond->property("changedElsewhere").toBool(), "(d) the next save takes the returned revision");
+    M3_CHECK(6243, !cond->property("dirty").toBool(), "(d) the save went through");
     // A save of another page queued while the first is on its way, with the revision from before
     // the first: it only missed the window's own save, so it must not conflict.
     const QString before_both = backend_revision(backend, "backup", bid);
@@ -942,9 +942,9 @@ int scenario_revision_conflict(const Ctx& c) {
     int queued = 0;
     QMetaObject::invokeMethod(backend, "updateBackupSchedule", Q_RETURN_ARG(int, queued), Q_ARG(QString, bid),
         Q_ARG(QString, schedule_json), Q_ARG(int, 0), Q_ARG(QString, before_both));
-    M3_CHECK(6190, queued > 0, "the queued save was not sent");
+    M3_CHECK(6250, queued > 0, "the queued save was not sent");
     bool queued_ok = false;
-    M3_CHECK(6191, wait_until([&] {
+    M3_CHECK(6251, wait_until([&] {
         for (const QList<QVariant>& answer : answers) {
             if (answer.at(0).toInt() == queued) {
                 queued_ok = answer.at(1).toBool();
@@ -953,18 +953,18 @@ int scenario_revision_conflict(const Ctx& c) {
         }
         return false;
     }, 15000), "the queued save got no answer");
-    M3_CHECK(6192, queued_ok, "(d) a save queued behind the window's own save must not conflict");
+    M3_CHECK(6252, queued_ok, "(d) a save queued behind the window's own save must not conflict");
     wait_until([&] { return !cond->property("saving").toBool(); }, 15000);
     wait_ms(200);
 
     QQuickItem* sched = open_backup_editor(w, bid, "openBackupSchedulePage", "backupScheduleEditPage");
-    M3_CHECK(6184, sched != nullptr, "schedule page did not open");
+    M3_CHECK(6244, sched != nullptr, "schedule page did not open");
     sched->setProperty("hour", sched->property("hour").toInt() == 14 ? 15 : 14);
     wait_ms(100);
     save_page(sched, "saveForGuard", {});
-    M3_CHECK(6185, !sched->property("changedElsewhere").toBool(), "(e) a page opened after a save must not conflict");
-    M3_CHECK(6186, !sched->property("dirty").toBool(), "(e) the save went through");
-    M3_CHECK(6187, save_screenshot(w, c.out_path), "screenshot failed");
+    M3_CHECK(6245, !sched->property("changedElsewhere").toBool(), "(e) a page opened after a save must not conflict");
+    M3_CHECK(6246, !sched->property("dirty").toBool(), "(e) the save went through");
+    M3_CHECK(6247, save_screenshot(w, c.out_path), "screenshot failed");
     return 0;
 }
 
