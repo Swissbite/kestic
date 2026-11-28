@@ -12,16 +12,16 @@ use super::error::{
     service_error_kind,
 };
 use super::restore_preview::{RestoreContext, RestoreParams, check_params, fingerprint};
+use super::run_progress::publish_run_progress;
 use super::snapshot_queries::QueryResult;
 use super::state::{DaemonCore, Interruption, ResticDeps, STOPPING, probe_for_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::{ActiveRunProgressDto, RestoreRequest};
-use crate::dbus_server::{emit_run_progress, emit_run_updated, emit_status_changed};
+use crate::dbus_server::{emit_run_updated, emit_status_changed};
 use crate::i18n::{i18n, i18np, tr, tr_text};
 use crate::job_view::{JobProgress, JobViewHandle};
 use crate::notifications::{KesticEvent, send_event_notification};
-use crate::tray::TrayHandle;
 use kestic_core::backup::{BackupRunError, SnapshotListAccess};
 use kestic_core::model::{
     BackupId, DestinationId, PendingReason, RestoreStats, Run, RunId, RunKind, RunStatus,
@@ -396,11 +396,7 @@ fn launch(
         guard.release_restore(&run.id);
         return Err(KesticServiceErr::Internal(err.to_string()));
     }
-    let ActivatedRun {
-        cancel,
-        conn_opt,
-        tray_opt,
-    } = guard.activate_run(
+    let ActivatedRun { cancel, conn_opt } = guard.activate_run(
         NewActiveRun {
             run: &run,
             backup_id: None,
@@ -420,7 +416,6 @@ fn launch(
             resolved,
             cancel,
             conn: conn_opt,
-            tray: tray_opt,
             speed: TransferSpeed::new(),
         });
     });
@@ -694,7 +689,6 @@ struct RestoreWorker {
     resolved: ResolvedRestic,
     cancel: CancelHandle,
     conn: Option<Connection>,
-    tray: Option<Arc<TrayHandle>>,
     /// The speed from the growth of the bytes restored between status lines.
     speed: TransferSpeed,
 }
@@ -743,34 +737,23 @@ impl RestoreWorker {
         let speed = self
             .speed
             .update(self.deps.clock.now_utc(), status.bytes_done.unwrap_or(0));
-        let mut guard = self.shared.lock_unpoisoned();
-        let mut progress = None;
-        if let Some(entry) = guard.active_runs.get_mut(&self.run.id) {
+        let progress = publish_run_progress(&self.shared, &self.run.id, self.conn.as_ref(), |p| {
             let total = status.total_bytes.unwrap_or(0);
-            entry.progress.phase = if total > 0 {
+            p.phase = if total > 0 {
                 RunProgressPhase::ScanFinished
             } else {
                 RunProgressPhase::Scanning
             };
             let percent = (status.percent_done * 100.0).clamp(0.0, 100.0);
-            entry.progress.percent_done = entry.progress.percent_done.max(percent);
-            entry.progress.bytes_done = status.bytes_done.unwrap_or(0);
-            entry.progress.total_bytes = total;
-            entry.progress.files_done = status.files_done.unwrap_or(0);
-            entry.progress.seconds_remaining = status.seconds_remaining.unwrap_or(0);
-            entry.progress.speed_bps = speed.unwrap_or(0);
-            progress = Some(entry.progress.clone());
-        }
-        let (_, tray_state) = guard.build_state_and_tray();
-        drop(guard);
+            p.percent_done = p.percent_done.max(percent);
+            p.bytes_done = status.bytes_done.unwrap_or(0);
+            p.total_bytes = total;
+            p.files_done = status.files_done.unwrap_or(0);
+            p.seconds_remaining = status.seconds_remaining.unwrap_or(0);
+            p.speed_bps = speed.unwrap_or(0);
+        });
         if let (Some(jv), Some(p)) = (job_view, &progress) {
             update_job_view(jv, p, status);
-        }
-        if let Some(tray) = &self.tray {
-            tray.set_full_state(tray_state);
-        }
-        if let (Some(conn), Some(progress)) = (&self.conn, progress) {
-            emit_run_progress(conn, &progress);
         }
     }
 
@@ -1033,11 +1016,7 @@ fn finalize(worker: &RestoreWorker, run: &Run, secrets: &[&str]) {
         if let Err(err) = guard.upsert_run_cached(run, secrets) {
             eprintln!("kestic-daemon: failed to record finished restore {run_id}: {err}");
         }
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = &worker.tray {
-            tray.set_full_state(tray_state);
-        }
-        (state_dto, guard.window_active)
+        (guard.push_tray_state(), guard.window_active)
     };
     if let Some(conn) = &worker.conn {
         emit_run_updated(conn, run);

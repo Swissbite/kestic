@@ -22,7 +22,7 @@ use crate::service::{
     update_destination_password_unlocked, update_destination_unlocked,
 };
 use crate::single_instance::{InstanceAcquire, SingleInstanceLock};
-use crate::tray::KesticTrayState;
+
 use kestic_core::destination_types::destination_types;
 use kestic_core::model::{BackupId, Run};
 use kestic_core::secrets::SecretError;
@@ -43,27 +43,6 @@ pub(crate) struct KesticDbusV1Service {
 impl KesticDbusV1Service {
     pub(crate) fn new(core: Arc<Mutex<DaemonCore>>) -> Self {
         Self { core }
-    }
-
-    /// Pushes the new state to the tray and emits `StatusChanged`; without a bus connection
-    /// there is nobody to tell.
-    async fn sync_tray_and_emit(
-        &self,
-        conn: Option<&Connection>,
-        state_dto: &DaemonStateDto,
-        tray_state: KesticTrayState,
-    ) {
-        let Some(conn) = conn else {
-            return;
-        };
-        let tray_opt = {
-            let guard = self.core.lock_unpoisoned();
-            guard.tray.clone()
-        };
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        emit_status_changed_async(conn, state_dto).await;
     }
 
     /// Runs `f` on a worker thread with the shared core, so a slow restic call never blocks the
@@ -89,14 +68,12 @@ impl KesticDbusV1Service {
     where
         KesticDbusError: From<E>,
     {
-        let (out, conn_opt, state_dto, tray_state) = {
+        let (out, publication) = {
             let mut guard = self.core.lock_unpoisoned();
             let out = f(&mut guard)?;
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (out, guard.conn.clone(), state_dto, tray_state)
+            (out, guard.state_publication())
         };
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         Ok(out)
     }
 
@@ -113,13 +90,8 @@ impl KesticDbusV1Service {
 
     /// Publishes the current state after a change made elsewhere.
     async fn publish_current(&self) {
-        let (conn_opt, state_dto, tray_state) = {
-            let guard = self.core.lock_unpoisoned();
-            let (state_dto, tray_state) = guard.build_state_and_tray();
-            (guard.conn.clone(), state_dto, tray_state)
-        };
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        let publication = self.core.lock_unpoisoned().state_publication();
+        publication.publish_async().await;
     }
 }
 
@@ -235,7 +207,7 @@ impl KesticDbusV1Service {
         backend_secrets_json: &str,
     ) -> Result<String, KesticDbusError> {
         let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
-        let (new_id, conn_opt, state_dto, tray_state) = self
+        let (new_id, publication) = self
             .blocking(move |core| {
                 add_destination_unlocked(
                     core,
@@ -246,8 +218,7 @@ impl KesticDbusV1Service {
                 )
             })
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         Ok(new_id)
     }
 
@@ -261,7 +232,7 @@ impl KesticDbusV1Service {
         verify_connection: bool,
     ) -> Result<String, KesticDbusError> {
         let form = DestinationForm::new(dest_json, mode, repo_password, backend_secrets_json);
-        let (result, conn_opt, state_dto, tray_state) = self
+        let (result, publication) = self
             .blocking(move |core| {
                 update_destination_unlocked(
                     core,
@@ -273,8 +244,7 @@ impl KesticDbusV1Service {
                 )
             })
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         serde_json::to_string(&result).map_err(|e| KesticDbusError::Internal(e.to_string()))
     }
 
@@ -286,11 +256,10 @@ impl KesticDbusV1Service {
     ) -> Result<(), KesticDbusError> {
         let id = dest_id.to_string();
         let pw = new_password.to_string();
-        let (conn_opt, state_dto, tray_state) = self
+        let publication = self
             .blocking(move |core| update_destination_password_unlocked(core, &id, &pw))
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         Ok(())
     }
 
@@ -305,11 +274,10 @@ impl KesticDbusV1Service {
     #[zbus(name = "RemoveDestination")]
     async fn remove_destination(&self, dest_id: &str) -> Result<(), KesticDbusError> {
         let id = dest_id.to_string();
-        let (conn_opt, state_dto, tray_state) = self
+        let publication = self
             .blocking(move |core| remove_destination_unlocked(core, &id))
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         Ok(())
     }
 
@@ -348,11 +316,10 @@ impl KesticDbusV1Service {
     #[zbus(name = "SetResticProvider")]
     async fn set_restic_provider(&self, provider_json: &str) -> Result<String, KesticDbusError> {
         let pj = provider_json.to_string();
-        let (res, conn_opt, state_dto, tray_state) = self
+        let (res, publication) = self
             .blocking(move |core| set_restic_provider_unlocked(core, &pj))
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         to_json_arg(&res)
     }
 
@@ -586,11 +553,10 @@ impl KesticDbusV1Service {
     ) -> Result<String, KesticDbusError> {
         let id = backup_id.to_string();
         let item = item_path.to_string();
-        let (preview, conn_opt, state_dto, tray_state) = self
+        let (preview, publication) = self
             .blocking(move |core| add_exclude_rule_for_item_unlocked(core, &id, &item))
             .await??;
-        self.sync_tray_and_emit(conn_opt.as_ref(), &state_dto, tray_state)
-            .await;
+        publication.publish_async().await;
         to_json_arg(&preview)
     }
 
@@ -826,7 +792,7 @@ fn panic_message(payload: &(dyn Any + Send)) -> &str {
         .unwrap_or("unknown panic")
 }
 
-async fn emit_status_changed_async(conn: &Connection, state_dto: &DaemonStateDto) {
+pub(crate) async fn emit_status_changed_async(conn: &Connection, state_dto: &DaemonStateDto) {
     if let Ok(json) = serde_json::to_string(&state_dto.overall)
         && let Ok(emitter) = SignalEmitter::new(conn, KESTIC_OBJECT_PATH)
     {
