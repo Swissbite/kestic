@@ -154,7 +154,9 @@ fn main() {
             .qt_module("Widgets")
             .qt_module("Quick");
     if env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {
+        // Qt Test sends the smoke's input events; the shipped binary does not link it.
         builder = builder
+            .qt_module("Test")
             .file("src/smoke.rs")
             .cpp_file("src/smoke_helper.cpp")
             .cpp_file("src/smoke_m1.cpp")

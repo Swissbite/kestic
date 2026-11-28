@@ -49,6 +49,15 @@ QQuickItem* find_visible_item_by_text(
 
 bool has_visible_text(QQuickItem* root, const QString& needle);
 
+// Clicks the middle of `item` (hover, press, release); returns why the press did not reach the
+// item, or an empty string. Prints nothing.
+QString click_failure(QQuickWindow* window, QQuickItem* item);
+
+// Checks the click helper on a throwaway overlay: a target centred on (0,0) gets the hover and
+// two separate clicks, and a click on a covered target fails. Returns what failed, or an empty
+// string.
+QString input_self_check(QQuickWindow* window);
+
 bool click_ui_item(QQuickWindow* window, QQuickItem* item, const char* label);
 
 bool enter_text_field(
@@ -132,10 +141,9 @@ QQuickItem* tab_until_object(QQuickWindow* window, const QString& obj_name, int 
 
 QQuickItem* tab_until_text(QQuickWindow* window, const QString& text_needle, int max_steps);
 
-// Sends one mouse event at `scene` (window coordinates) whose timestamp is `delta_ms` after the
-// previous one: `state` holds the buttons down after the event, `button` the one that changed.
-void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButtons state, Qt::MouseButton button,
-    QEvent::Type type, int delta_ms);
+// Sends one mouse event of `type` (press, release, else a move) at `scene` (window coordinates)
+// through QTest, `delta_ms` after the previous one; `button` is the button that changes.
+void send_mouse(QWindow* window, const QPointF& scene, Qt::MouseButton button, QEvent::Type type, int delta_ms);
 
 // Ends the smoke run with a failure: prints `<tag> smoke failed (<code>): <msg>` and quits the event
 // loop with `code`.

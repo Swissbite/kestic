@@ -25,6 +25,10 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     QObject* backend = s.backend;
     const auto& warnings = s.warnings;
     const QString& out_path = s.out_path;
+    // QTest input, before anything opens: the click helper hovers first, makes two separate
+    // clicks, reaches an item centred on (0,0) and fails on a covered item.
+    const QString input_check = input_self_check(window);
+    SMOKE_CHECK("M2", 290, input_check.isEmpty(), "click helper: " + input_check);
     const QString bid = backup_id_at(window, 0);
     SMOKE_CHECK("M2", 201, !bid.isEmpty(), "no backup found in backupsModel");
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
@@ -127,6 +131,10 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     // AC-M2-03-1: Lint warning on `dir` + `!dir/inner` and quick-fix to `dir/*`.
     QQuickItem* excl_area = child_item(window, "excludesTextArea");
     SMOKE_CHECK("M2", 212, excl_area, "excludesTextArea missing");
+    // Any text arrives unchanged through QTest: an umlaut, an emoji outside the basic plane, a tab.
+    SMOKE_CHECK("M2", 291,
+        enter_text_field(window, excl_area, QStringLiteral("\u00fc \U0001F600\tx"), "excludes text"),
+        "text with umlaut, emoji and tab not entered unchanged");
     excl_area->setProperty("text", QStringLiteral("*.tmp\ndir\n!dir/inner"));
     wait_ms(150);
     QQuickItem* lint_msg = find_visual_item(window, QStringLiteral("excludeLintWarningMessage"));
