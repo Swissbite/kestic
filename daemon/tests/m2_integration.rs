@@ -3,6 +3,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::load_config;
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticWrapper, assert_dbus_error_name, connect_local_repo,
@@ -81,12 +83,14 @@ fn update_backup_explicit(
     backup: &Backup,
 ) -> Result<(), zbus::Error> {
     let json = backup_to_explicit_json(backup);
+    let revision = common::revision::backup_revision(client, backup);
     let conn = client.connection().clone();
     let bus = bus_name.to_string();
     block_on(async move {
         let proxy =
             zbus::Proxy::new(&conn, bus.as_str(), KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1).await?;
-        proxy.call("UpdateBackup", &(json,)).await
+        let _new_revision: String = proxy.call("UpdateBackup", &(json, revision)).await?;
+        Ok(())
     })
 }
 
@@ -297,7 +301,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
                 exclude_if_present: vec![".nobackup".to_string()],
             };
             client
-                .update_backup(&updated)
+                .update_backup_now(&updated)
                 .expect("UpdateBackup valid excludes");
 
             let persisted = load_config(&cfg_path).expect("reload config.toml");
@@ -356,7 +360,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
             let mut invalid_size = updated.clone();
             invalid_size.excludes.exclude_larger_than = Some("0M".to_string());
             let err1 = client
-                .update_backup(&invalid_size)
+                .update_backup_now(&invalid_size)
                 .expect_err("zero exclude_larger_than must fail");
             assert_dbus_error_name(&err1, "net.daester.Kestic.Error.InvalidInput");
             assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);
@@ -365,7 +369,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
             let mut invalid_marker = updated.clone();
             invalid_marker.excludes.exclude_if_present = vec!["   ".to_string()];
             let err2 = client
-                .update_backup(&invalid_marker)
+                .update_backup_now(&invalid_marker)
                 .expect_err("blank exclude_if_present must fail");
             assert_dbus_error_name(&err2, "net.daester.Kestic.Error.InvalidInput");
             assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);
@@ -374,7 +378,7 @@ fn ac_m2_02_5_and_02_6_update_backup_validates_writes_config_and_regenerates_exc
             let mut invalid_newline_folder = updated;
             invalid_newline_folder.excludes.folders = vec!["bad\nfolder".to_string()];
             let err3 = client
-                .update_backup(&invalid_newline_folder)
+                .update_backup_now(&invalid_newline_folder)
                 .expect_err("newline in folder rule must fail");
             assert_dbus_error_name(&err3, "net.daester.Kestic.Error.InvalidInput");
             assert_eq!(fs::read(&cfg_path).expect("cfg unchanged"), cfg_before);

@@ -10,6 +10,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     LocalBackupFixture, M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, StdFakes,
     add_folder_backup, add_local_backup, daemon_paths, latest_variant, notifications_for,
@@ -433,7 +435,7 @@ fn calls_that_would_start_restic(
         (
             "UpdateDestination",
             client
-                .update_destination(a, "connect", "", &BackendSecrets::default(), true)
+                .update_destination_now(a, "connect", "", &BackendSecrets::default(), true)
                 .is_err(),
         ),
         (

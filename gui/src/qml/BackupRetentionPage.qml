@@ -210,12 +210,17 @@ EditorPage {
 
     dirty: initialData !== null && normalizePolicyString(currentPolicyJson()) !== normalizePolicyString(savedPolicyJson)
 
-    Component.onCompleted: {
+    // Shows the backup as the daemon has it now, with its revision.
+    function reloadFromDaemon() {
+        initialData = rootWindow.findBackupData(backupId);
+        revision = appBackend.backupRevision(backupId);
         if (initialData) {
             savedPolicyJson = initialData.retentionJson;
             loadFromPolicyJson(savedPolicyJson);
         }
     }
+
+    Component.onCompleted: reloadFromDaemon()
 
     Component.onDestruction: {
         savePollTimer.stop();
@@ -229,8 +234,9 @@ EditorPage {
     // Saves; `done(ok)` runs once the daemon has answered.
     function commitSave(jsonStr, done) {
         saving = true;
-        rootWindow.afterDaemonCall(appBackend.updateBackupRetention(backupId, jsonStr), function(ok) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupRetention(backupId, jsonStr, page.revision), function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, page.reloadFromDaemon);
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -239,7 +245,7 @@ EditorPage {
                 }
                 validationError = "";
                 rootWindow.showPassiveNotification(i18n("Retention rules saved"));
-            } else {
+            } else if (answer !== "conflict") {
                 validationError = appBackend.last_action_error;
             }
             if (done) done(ok);

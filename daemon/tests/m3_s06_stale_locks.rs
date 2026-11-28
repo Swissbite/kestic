@@ -7,6 +7,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     LocalBackupFixture, M3Rig, ResticVariant, StdFakes, backup_summary, dest_summary,
     hold_repo_lock, restic_repo_cmd, restic_variants, send_signal, wait_for_state,
@@ -188,7 +190,7 @@ fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
                     ..RetentionPolicy::empty()
                 };
                 client
-                    .update_backup(&backup)
+                    .update_backup_now(&backup)
                     .expect("keep the last snapshot");
                 manual_run_ok(&rig, &fx);
 

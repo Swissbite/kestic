@@ -4244,6 +4244,15 @@ msgstr "Vor dem Wiederherstellen die Vorschau erneut prüfen; sie fehlt oder ist
 msgid "A restore from this destination is running or waiting."
 msgstr "Ein Restore von diesem Ziel läuft oder wartet."
 
+msgid "This backup was changed elsewhere in the meantime. The current version is loaded; your change was not saved."
+msgstr "Dieses Backup wurde inzwischen an anderer Stelle geändert. Der aktuelle Stand ist geladen; Ihre Änderung ist nicht gespeichert."
+
+msgid "This destination was changed elsewhere in the meantime. The current version is loaded; your change was not saved."
+msgstr "Dieses Ziel wurde inzwischen an anderer Stelle geändert. Der aktuelle Stand ist geladen; Ihre Änderung ist nicht gespeichert."
+
+msgid "Changed elsewhere in the meantime; nothing was saved."
+msgstr "Inzwischen an anderer Stelle geändert; nichts wurde gespeichert."
+
 msgid "%1: restoring"
 msgstr "%1: stellt wieder her"
 

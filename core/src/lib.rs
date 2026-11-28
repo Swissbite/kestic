@@ -36,6 +36,7 @@ pub mod restore;
 pub mod restore_preview;
 pub mod restore_target;
 pub mod retention;
+pub mod revision;
 pub mod s3;
 pub mod scheduler;
 pub mod secrets;

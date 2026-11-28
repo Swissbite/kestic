@@ -12,6 +12,8 @@
 
 mod common;
 
+use common::revision::UpdateNow;
+
 use common::m3::{
     M3Daemon, M3DaemonOpts, ResticVariant, ResticWrapper, assert_dbus_error_name, backup_summary,
     dest_summary, latest_variant, restic_variants, spawn_m3_daemon, wait_for_state,
@@ -605,7 +607,7 @@ fn ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus
             let mut renamed = saved.clone();
             renamed.name = "Renamed Azure".to_string();
             let err = client
-                .update_destination(&renamed, "connect", "", &BackendSecrets::default(), false)
+                .update_destination_now(&renamed, "connect", "", &BackendSecrets::default(), false)
                 .expect_err("UpdateDestination without a credential variable");
             // (b)
             assert_dbus_error_name(&err, "net.daester.Kestic.Error.InvalidInput");
@@ -618,7 +620,7 @@ fn ac_m5_03_8_cloud_destination_without_credential_variable_is_refused_over_dbus
             let mut keyed_renamed = keyed.clone();
             keyed_renamed.name = "Renamed Keyed Azure".to_string();
             client
-                .update_destination(
+                .update_destination_now(
                     &keyed_renamed,
                     "connect",
                     "",

@@ -40,12 +40,13 @@ pub trait Kestic1 {
         repo_password: &str,
         backend_secrets_json: &str,
         verify_connection: bool,
+        revision: &str,
     ) -> zbus::Result<String>;
     fn update_destination_password(&self, dest_id: &str, new_password: &str) -> zbus::Result<()>;
     fn trust_host_key(&self, host_key_id: &str) -> zbus::Result<()>;
     fn remove_destination(&self, dest_id: &str) -> zbus::Result<()>;
     fn add_backup(&self, backup_json: &str) -> zbus::Result<String>;
-    fn update_backup(&self, backup_json: &str) -> zbus::Result<()>;
+    fn update_backup(&self, backup_json: &str, revision: &str) -> zbus::Result<String>;
     fn rename_backup(&self, backup_id: &str, new_name: &str) -> zbus::Result<()>;
     fn reassign_backup(&self, backup_id: &str, new_dest_id: &str) -> zbus::Result<()>;
     fn remove_backup(&self, backup_id: &str) -> zbus::Result<()>;

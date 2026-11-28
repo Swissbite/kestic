@@ -116,8 +116,9 @@ EditorPage {
             return;
         }
         saving = true;
-        rootWindow.afterDaemonCall(appBackend.updateBackupConditions(backupId, currentConditionsJson()), function(ok) {
+        rootWindow.afterDaemonCall(appBackend.updateBackupConditions(backupId, currentConditionsJson(), page.revision), function(ok, answer) {
             saving = false;
+            page.afterSave(ok, answer, page.reloadFromDaemon);
             if (ok) {
                 initialData = rootWindow.findBackupData(backupId);
                 if (initialData) {
@@ -137,8 +138,10 @@ EditorPage {
         commitSave(false, done);
     }
 
-    Component.onCompleted: {
+    // Shows the backup as the daemon has it now, with its revision.
+    function reloadFromDaemon() {
         initialData = rootWindow.findBackupData(backupId);
+        revision = appBackend.backupRevision(backupId);
         if (initialData) {
             savedConditionsJson = initialData.conditionsJson;
             loadFromSaved(savedConditionsJson);
@@ -146,6 +149,8 @@ EditorPage {
             loadFromSaved("{}");
         }
     }
+
+    Component.onCompleted: reloadFromDaemon()
 
     actions: [
         Kirigami.Action {

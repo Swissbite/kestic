@@ -5,6 +5,9 @@
 //! for [`super::qobject::KesticApp`].
 
 use super::daemon_call::Lane;
+use super::revisions::{
+    CONFLICT_ANSWER, cached_backup_revision, is_conflict, record_own, sent_revision,
+};
 use super::{Finish, dbus_error_text, qobject};
 use crate::daemon_events::request_refresh;
 use crate::state_cache::{
@@ -225,6 +228,7 @@ impl qobject::KesticApp {
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         excludes_json: &QString,
+        revision: &QString,
     ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return 0;
@@ -235,7 +239,7 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        self.save_backup_edit(existing.id, move |backup, _| {
+        self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
             clone_updated_backup_excludes(backup, excludes).map_err(|err| err.to_string())
         })
     }
@@ -244,6 +248,7 @@ impl qobject::KesticApp {
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         retention_json: &QString,
+        revision: &QString,
     ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return 0;
@@ -254,7 +259,7 @@ impl qobject::KesticApp {
         else {
             return 0;
         };
-        self.save_backup_edit(existing.id, move |backup, _| {
+        self.save_backup_edit(existing.id, revision.to_string(), move |backup, _| {
             clone_updated_backup_retention(backup, retention).map_err(|err| err.to_string())
         })
     }
@@ -263,12 +268,13 @@ impl qobject::KesticApp {
         mut self: Pin<&mut Self>,
         backup_id: &QString,
         source_path: &QString,
+        revision: &QString,
     ) -> i32 {
         let Some(existing) = self.as_mut().existing_backup_or_err(&backup_id.to_string()) else {
             return 0;
         };
         let trimmed = source_path.to_string().trim().to_string();
-        self.save_backup_edit(existing.id, move |backup, client| {
+        self.save_backup_edit(existing.id, revision.to_string(), move |backup, client| {
             let source = client
                 .detect_source(&trimmed)
                 .unwrap_or_else(|_| kestic_core::model::Source::folder(PathBuf::from(&trimmed)));
@@ -279,10 +285,13 @@ impl qobject::KesticApp {
     /// Saves an edit of the backup `backup_id` (an editor page's «Save»); returns the request id.
     /// `edit` makes the edited backup off the Qt thread, from the backup and its destination as
     /// the daemon has them now: after the earlier calls about the same backup, which run first on
-    /// its lane, so an edit never undoes one the user made before it.
+    /// its lane, so an edit never undoes one the user made before it. `revision` is the one the
+    /// page opened with: a change made elsewhere since then ends in `Conflict` (answer
+    /// [`CONFLICT_ANSWER`]); a successful save answers with the new revision.
     pub(super) fn save_backup_edit(
         self: Pin<&mut Self>,
         backup_id: BackupId,
+        revision: String,
         edit: impl FnOnce(&Backup, &KesticClient) -> Result<Backup, String> + Send + 'static,
     ) -> i32 {
         self.request_daemon(
@@ -295,15 +304,34 @@ impl qobject::KesticApp {
                 let Some(backup) = state.config.backup(&backup_id) else {
                     return Err(not_found_text());
                 };
-                edit(backup, client).map(|updated| client.update_backup(&updated))
+                let current = state
+                    .backups
+                    .iter()
+                    .find(|b| b.backup.id == backup_id)
+                    .map_or("", |b| b.revision.as_str());
+                let sent = sent_revision(&revision, current);
+                edit(backup, client).map(|updated| {
+                    let saved = client.update_backup(&updated, &sent);
+                    if let Ok(new_revision) = &saved {
+                        record_own(&sent, new_revision);
+                    }
+                    saved
+                })
             },
             |app, result| {
-                (
-                    app.finish_checked(result, Finish::Saved).is_some(),
-                    String::new(),
-                )
+                if is_conflict(&result) {
+                    return (false, CONFLICT_ANSWER.to_string());
+                }
+                match app.finish_checked(result, Finish::Saved) {
+                    Some(new_revision) => (true, new_revision),
+                    None => (false, String::new()),
+                }
             },
         )
+    }
+
+    pub fn backup_revision(&self, backup_id: &QString) -> QString {
+        QString::from(&cached_backup_revision(&backup_id.to_string()))
     }
 
     pub fn rename_backup(self: Pin<&mut Self>, backup_id: &QString, new_name: &QString) -> i32 {

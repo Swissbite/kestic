@@ -79,6 +79,7 @@ pub enum KesticDbusError {
     HostKeyChanged(String),
     PreviewRequired(String),
     RestoreRunning(String),
+    Conflict(String),
     Internal(String),
 }
 
@@ -103,6 +104,7 @@ impl KesticDbusError {
             Self::HostKeyChanged(_) => ServiceErrorCode::HostKeyChanged,
             Self::PreviewRequired(_) => ServiceErrorCode::PreviewRequired,
             Self::RestoreRunning(_) => ServiceErrorCode::RestoreRunning,
+            Self::Conflict(_) => ServiceErrorCode::Conflict,
             Self::Internal(_) => ServiceErrorCode::Internal,
         }
     }
@@ -272,6 +274,8 @@ pub struct OverallStatusDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BackupSummaryDto {
     pub backup: Backup,
+    /// Check value over the saved backup (`dbus-api.md` §Revision); `UpdateBackup` takes it.
+    pub revision: String,
     pub destination_name: String,
     pub last_run: Option<Run>,
     pub active_run: Option<Run>,
@@ -328,6 +332,8 @@ pub struct BackupSummaryDto {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DestinationSummaryDto {
     pub destination: Destination,
+    /// Check value over the saved destination; `UpdateDestination` takes it.
+    pub revision: String,
     pub backup_count: usize,
     pub availability: DestinationAvailabilityDto,
     pub password_rejected: bool,
@@ -742,10 +748,12 @@ pub struct ConnectionTestResultDto {
     pub host_key: Option<Box<HostKeyDto>>,
 }
 
-/// Result of `UpdateDestination`: saved, or another repository at the edited connection.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Result of `UpdateDestination`: saved, or another repository at the edited connection, with
+/// the destination's revision afterwards (the new one when saved).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DestinationUpdateResultDto {
     pub outcome: DestinationUpdateOutcome,
+    pub revision: String,
 }
 
 /// Host key of an SFTP server that no `known_hosts` file knows yet (`unknown_host_key`);
