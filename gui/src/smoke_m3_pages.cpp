@@ -346,7 +346,11 @@ int scenario_maintenance_run_detail(const Ctx& c) {
     const QString run_id = role_value(runs, row, "runId").toString();
     QMetaObject::invokeMethod(w, "openRunDetailById", Q_ARG(QVariant, run_id));
     M3_CHECK(4704, page_visible(w, "runDetailPage"), "runDetailPage did not open");
-    wait_ms(300);
+    // The run's detail arrives from the daemon after the page opened.
+    wait_until([&] {
+        QObject* shown = object_named(w, "runDetailPage");
+        return shown && shown->property("title").toString().startsWith(loc(c.lang, "Maintenance on ", "Wartung vom "));
+    }, 10000);
     finish_incubation(w);
     QObject* page = object_named(w, "runDetailPage");
     M3_CHECK_STARTS(4705, page->property("title").toString(),

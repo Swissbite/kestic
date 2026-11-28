@@ -59,17 +59,37 @@ WizardPage {
             detectedSourceKind = "folder";
             detectedDriveLabel = "";
             nestedWarnings = [];
+            detectAnswer.pending = 0;
+            nestedAnswer.pending = 0;
             return;
         }
-        var det = rootWindow.detectSource(trimmed);
-        if (det) {
-            detectedSourceKind = det.kind || "folder";
-            detectedDriveLabel = det.drive_label || "";
-        }
+        detectAnswer.track(appBackend.detectSource(trimmed));
         if (!integratedDestFlow && selectedDestId !== "") {
-            nestedWarnings = rootWindow.nestedSourceWarnings("", trimmed, selectedDestId);
+            nestedAnswer.track(appBackend.checkNestedSources("", trimmed, selectedDestId));
         } else {
+            nestedAnswer.pending = 0;
             nestedWarnings = [];
+        }
+    }
+
+    // What the daemon finds at the path asked for last: the kind of source and the backups
+    // whose sources nest with it.
+    DaemonAnswer {
+        id: detectAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            var det = ok ? page.rootWindow.parseJsonOr(result, null) : null;
+            if (!det) return;
+            page.detectedSourceKind = det.kind || "folder";
+            page.detectedDriveLabel = det.drive_label || "";
+        }
+    }
+
+    DaemonAnswer {
+        id: nestedAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            page.nestedWarnings = page.rootWindow.parseJsonOr(result, []);
         }
     }
 

@@ -165,6 +165,12 @@ pub mod qobject {
         type Texts = super::TextsRust;
     }
 
+    // The query lists and the restore dialog get the daemon's answers on the Qt thread.
+    impl cxx_qt::Threading for SnapshotBrowseModel {}
+    impl cxx_qt::Threading for SnapshotSearchModel {}
+    impl cxx_qt::Threading for SnapshotDiffModel {}
+    impl cxx_qt::Threading for RestorePreviewModel {}
+
     unsafe extern "RustQt" {
         #[cxx_name = "beginResetModel"]
         #[inherit]
@@ -686,7 +692,7 @@ pub mod qobject {
         fn segment_paths(self: &SnapshotBrowseModel, dir: &QString) -> QStringList;
         #[qinvokable]
         #[cxx_name = "rowOfPath"]
-        fn row_of_path(self: Pin<&mut SnapshotBrowseModel>, path: &QString) -> i32;
+        fn row_of_path(self: &SnapshotBrowseModel, path: &QString) -> i32;
 
         // SnapshotSearchModel
         #[qinvokable]

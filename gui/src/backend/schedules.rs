@@ -11,8 +11,7 @@ use crate::run_texts::{run_detail_subtitle, run_detail_title, run_result_summary
 use crate::state_cache::{
     build_provider, cached_destination_kind, clone_updated_backup_conditions,
     clone_updated_backup_schedule, daemon_unavailable_text, format_duration_ms,
-    format_maintenance_summary, i18n, json_or, make_client, preview_next_schedule_slots,
-    shared_state,
+    format_maintenance_summary, i18n, json_or, preview_next_schedule_slots, shared_state,
 };
 use crate::time_texts::{cached_daemon_now, cached_today_iso_date};
 use crate::ui_texts::GuiText;
@@ -162,11 +161,12 @@ impl qobject::KesticApp {
         )
     }
 
+    /// Sets the source of restic; the request succeeds once the daemon took it.
     pub fn set_restic_provider(
         mut self: Pin<&mut Self>,
         kind: &QString,
         custom_path: &QString,
-    ) -> bool {
+    ) -> i32 {
         // A source chosen now wins over a switch that waits for a download.
         self.as_mut()
             .rust_mut()
@@ -177,13 +177,18 @@ impl qobject::KesticApp {
             .as_mut()
             .ok_or_show(build_provider(&kind.to_string(), &custom_path.to_string()))
         else {
-            return false;
+            return 0;
         };
-        let Ok(client) = make_client() else {
-            return false;
-        };
-        self.finish_action(client.set_restic_provider(&provider), Finish::Plain)
-            .is_some()
+        self.request_daemon(
+            Lane::slow("restic-source"),
+            move |client| client.set_restic_provider(&provider),
+            |app, result| {
+                (
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
+                    String::new(),
+                )
+            },
+        )
     }
 
     pub fn update_expert_mode(self: Pin<&mut Self>, enabled: bool) {

@@ -136,6 +136,15 @@ ColumnLayout {
             : form.draft.kindIsRest ? i18n("Where is the REST server located?") : i18n("Where should the local repository be stored?")
     }
 
+    // The connection test is on its way; its result replaces this line.
+    Kirigami.InlineMessage {
+        objectName: form.namePrefix + "TestingMessage"
+        Layout.fillWidth: true
+        type: Kirigami.MessageType.Information
+        visible: form.draft.testing
+        text: i18n("Testing the connection…")
+    }
+
     Kirigami.InlineMessage {
         objectName: form.namePrefix + "FeedbackBanner"
         Layout.fillWidth: true
@@ -804,7 +813,7 @@ ColumnLayout {
             objectName: form.namePrefix + "TestButton"
             icon.name: "network-connect"
             text: i18n("Test Connection")
-            enabled: form.draft.detailsValid && form.appBackend.blocking_kind === ""
+            enabled: form.draft.detailsValid && !form.draft.testing && form.appBackend.blocking_kind === ""
             Accessible.name: text
             onClicked: form.draft.runConnectionTest()
         }

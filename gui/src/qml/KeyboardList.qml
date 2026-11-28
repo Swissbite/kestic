@@ -4,7 +4,8 @@
 import QtQuick
 
 // A list that is one Tab stop: Tab enters it on its current row, Up/Down, Home/End and
-// Page Up/Page Down move within it (End and Page Down load the rows of a paged model they need),
+// Page Up/Page Down move within it (Down, End and Page Down load the rows of a paged model they
+// need and move on once they have arrived),
 // and the next Tab or Shift+Tab leaves it. Its rows take
 // the focus only by a click (`focusPolicy: Qt.ClickFocus`), so they are no Tab stops of their
 // own; the list gives the focus to its current row.
@@ -17,8 +18,16 @@ ListView {
     // Without a current row the list holds the focus itself; the first row takes it then, also
     // when the rows arrive while the list has the focus. Runs after the list's own handler,
     // which may choose another row first.
-    onActiveFocusChanged: if (activeFocus) Qt.callLater(list.enterFirstRowIfNone)
-    onCountChanged: if (activeFocus) Qt.callLater(list.enterFirstRowIfNone)
+    // Leaving the list drops a move still waiting for rows.
+    onActiveFocusChanged: {
+        if (activeFocus) Qt.callLater(list.enterFirstRowIfNone);
+        else pendingRow = -1;
+    }
+    // A page asked for by a key arrived: on to the next one, or to the row.
+    onCountChanged: {
+        if (activeFocus) Qt.callLater(list.enterFirstRowIfNone);
+        if (pendingRow >= 0) Qt.callLater(list.continuePendingMove);
+    }
 
     function enterFirstRowIfNone() {
         if (activeFocus && count > 0 && currentIndex < 0) moveCurrentTo(0, 1);
@@ -43,7 +52,9 @@ ListView {
             while (i >= 0 && i < count && !canBeCurrent(i)) i -= dir;
         }
         if (i < 0 || i >= count) return;
+        movingForKey = true;
         currentIndex = i;
+        movingForKey = false;
         positionViewAtIndex(currentIndex, ListView.Contain);
         keepCurrentRowInOuterView();
     }
@@ -72,16 +83,37 @@ ListView {
         flick.contentY = Math.max(minY, Math.min(maxY, y));
     }
 
-    // Loads further rows of a model that holds them in pages, until row `index` is loaded or the
-    // model has none left.
-    function loadRowsUpTo(index) {
+    // The row a key asked for that is not loaded yet (-1: none) and the direction of the move;
+    // the list moves there once the rows have arrived.
+    property real pendingRow: -1
+    property int pendingStep: 1
+    // The current row changes for a key (not a click); another change drops a waiting move.
+    property bool movingForKey: false
+    onCurrentIndexChanged: if (!movingForKey) pendingRow = -1
+
+    // Loads further rows of a model that holds them in pages, one page after the other, until
+    // row `index` is loaded or the model has none left; then the list moves there (`step`: the
+    // direction, as for `moveCurrentTo`). Returns whether the row is loaded already.
+    function loadRowsUpTo(index, step) {
         var m = list.model;
-        if (!m || typeof m.canFetchMore !== "function") return;
-        var root = m.index(-1, 0);
-        while (index >= list.count && m.canFetchMore(root)) {
-            var before = list.count;
-            m.fetchMore(root);
-            if (list.count === before) return;
+        var root = m && typeof m.canFetchMore === "function" ? m.index(-1, 0) : null;
+        if (index < list.count || !root || !m.canFetchMore(root)) {
+            list.pendingRow = -1;
+            return true;
+        }
+        list.pendingRow = index;
+        list.pendingStep = step;
+        m.fetchMore(root);
+        return false;
+    }
+
+    function continuePendingMove() {
+        if (pendingRow < 0) return;
+        var target = pendingRow;
+        if (loadRowsUpTo(target, pendingStep)) {
+            userMove = true;
+            moveCurrentTo(Math.min(target, count - 1), pendingStep);
+            userMove = false;
         }
     }
 
@@ -96,6 +128,20 @@ ListView {
 
     Keys.onPressed: function(event) {
         if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier) return;
+        list.userMove = true;
+        list.moveForKey(event);
+        list.userMove = false;
+    }
+
+    // While true the current row changes because the user pressed a key (also once the rows a
+    // key waited for have arrived); a page can tell such a move from one of its own.
+    property bool userMove: false
+
+    function moveForKey(event) {
+        // Another key than one that waits for rows drops a move still waiting for them.
+        if (event.key !== Qt.Key_Down && event.key !== Qt.Key_End && event.key !== Qt.Key_PageDown) {
+            list.pendingRow = -1;
+        }
         // Up and Down move here rather than by the view's own key navigation, which does not
         // keep the row clear of a header that stays above the rows; at the first or last row
         // the key passes on.
@@ -104,19 +150,21 @@ ListView {
         } else if (event.key === Qt.Key_Down && list.currentIndex < 0 && list.count > 0) {
             list.moveCurrentTo(0, 1);
         } else if (event.key === Qt.Key_Down && list.currentIndex >= 0) {
-            list.loadRowsUpTo(list.currentIndex + 1);
-            if (list.currentIndex + 1 >= list.count) return;
-            list.moveCurrentTo(list.currentIndex + 1, 1);
+            if (list.currentIndex + 1 >= list.count && list.loadRowsUpTo(list.currentIndex + 1, 1)) return;
+            if (list.currentIndex + 1 < list.count) list.moveCurrentTo(list.currentIndex + 1, 1);
         } else if (event.key === Qt.Key_Home) {
+            list.pendingRow = -1;
             list.moveCurrentTo(0, 1);
         } else if (event.key === Qt.Key_End) {
-            list.loadRowsUpTo(Number.MAX_SAFE_INTEGER);
+            // The last loaded row at once; the last row once the rows have arrived.
+            list.loadRowsUpTo(Number.MAX_SAFE_INTEGER, -1);
             list.moveCurrentTo(list.count - 1, -1);
         } else if (event.key === Qt.Key_PageUp) {
+            list.pendingRow = -1;
             list.moveCurrentTo(list.currentIndex - list.rowsPerPage(), -1);
         } else if (event.key === Qt.Key_PageDown) {
             var target = list.currentIndex + list.rowsPerPage();
-            list.loadRowsUpTo(target);
+            list.loadRowsUpTo(target, 1);
             list.moveCurrentTo(target, 1);
         } else {
             return;

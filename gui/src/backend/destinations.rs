@@ -10,8 +10,8 @@ use super::revisions::{
 };
 use super::{Finish, dbus_error_text, qobject};
 use crate::destination_input::{
-    build_destination, generic_credentials_error, generic_env_error, generic_url_error,
-    revision_of_fields, test_destination_connection,
+    build_destination, connection_test_input, connection_test_outcome, generic_credentials_error,
+    generic_env_error, generic_url_error, revision_of_fields,
 };
 use crate::state_cache::{daemon_unavailable_text, i18n, i18np, shared_state, tr, tr_text};
 use cxx_qt_lib::QString;
@@ -19,7 +19,7 @@ use kestic_core::destination_types::cards_ready_first;
 use kestic_core::local_path::{NotALocalPath, local_path_from_dialog_url};
 use kestic_core::model::DestinationKind;
 use kestic_core::sync::LockUnpoisoned;
-use kestic_daemon::dbus_api::BackendSecrets;
+use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto};
 use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode, DestinationUpdateOutcome};
 use kestic_i18n::messages::connection_test_text;
 use std::pin::Pin;
@@ -114,21 +114,46 @@ impl qobject::KesticApp {
         kestic_core::generic::secret_by_default(&name.to_string())
     }
 
+    /// Tests the connection of the form's destination; the request succeeds when the
+    /// destination is reachable, and the `connection_test_*` properties hold the result. Input
+    /// the form already fails answers at once (request 0).
     pub fn test_destination(
         mut self: Pin<&mut Self>,
         fields_json: &QString,
         mode: &QString,
         repo_pw: &QString,
         backend_secrets_json: &QString,
-    ) -> bool {
-        let res = test_destination_connection(
-            &fields_json.to_string(),
-            &mode.to_string(),
-            &repo_pw.to_string(),
-            &backend_secrets_json.to_string(),
-        );
+    ) -> i32 {
+        let fields = fields_json.to_string();
+        let (dest, backend) =
+            match connection_test_input(&fields, &backend_secrets_json.to_string()) {
+                Ok(input) => input,
+                Err(failed) => {
+                    self.as_mut().show_connection_test(&failed, &fields);
+                    return 0;
+                }
+            };
+        let (mode, repo_pw) = (mode.to_string(), repo_pw.to_string());
+        self.request_daemon_with(
+            Lane::slow("connection-test"),
+            move |client| client.test_destination_connection(&dest, &mode, &repo_pw, &backend),
+            |_| false,
+            move |app, answer| {
+                let res = connection_test_outcome(answer);
+                app.show_connection_test(&res, &fields);
+                (res.ok, String::new())
+            },
+        )
+    }
+
+    /// Publishes the result `res` of the connection test of the form's `fields_json`.
+    fn show_connection_test(
+        mut self: Pin<&mut Self>,
+        res: &ConnectionTestResultDto,
+        fields_json: &str,
+    ) {
         self.as_mut().set_connection_test_ok(res.ok);
-        let bucket = match build_destination(None, &fields_json.to_string()).map(|d| d.kind) {
+        let bucket = match build_destination(None, fields_json).map(|d| d.kind) {
             Ok(DestinationKind::S3 { bucket, .. }) => bucket,
             _ => String::new(),
         };
@@ -159,7 +184,6 @@ impl qobject::KesticApp {
             .unwrap_or_default();
         self.as_mut()
             .set_connection_test_host_key(QString::from(&host_key));
-        res.ok
     }
 
     /// Trusts the SFTP host key the last connection test showed (`TrustHostKey`).

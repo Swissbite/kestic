@@ -53,6 +53,12 @@ void name_action_buttons(QQuickWindow* w) {
 }
 
 QQuickItem* open_editor(QQuickWindow* w, const char* row, const char* page) {
+    // The row of a page that just opened is placed by the layout in a later pass.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(w, QString::fromLatin1(row));
+        return shown && shown->isVisible() && shown->width() > 0.0 && shown->height() > 0.0;
+    }, 3000);
+    wait_ms(100);
     QQuickItem* r = find_visual_item(w, QString::fromLatin1(row));
     if (!r || !click_ui_item(w, r, row)) {
         return nullptr;
@@ -352,6 +358,10 @@ int scenario_conditions_defaults(const Ctx& c) {
     M3_CHECK(4105, open_backup_detail(w, bid), "backupDetailPage did not open");
     QQuickItem* page = open_editor(w, "editConditionsRow", "backupConditionsEditPage");
     M3_CHECK(3602, page != nullptr, "backupConditionsEditPage did not open");
+    // The known networks arrive from the daemon after the editor opened; the layout places
+    // their rows in a later pass.
+    wait_until([&] { return item_named(w, "knownNetworkCheck_HomeWifi") != nullptr; }, 10000);
+    wait_ms(100);
     QQuickItem* ac = item_named(w, "requireAcCheck");
     QQuickItem* net = item_named(w, "requireNetworkCheck");
     QQuickItem* metered = item_named(w, "skipMeteredCheck");
@@ -446,6 +456,10 @@ int scenario_conditions_unsaved(const Ctx& c) {
     M3_CHECK(3740, page != nullptr, "conditions editor did not reopen");
     metered = item_named(w, "skipMeteredCheck");
     M3_CHECK(3741, click_ui_item(w, metered, "skipMeteredCheck"), "failed to click metered option");
+    // The known networks arrive from the daemon after the editor opened; the layout places
+    // their rows in a later pass.
+    wait_until([&] { return item_named(w, "knownNetworkCheck_HomeWifi") != nullptr; }, 10000);
+    wait_ms(100);
     QQuickItem* home = item_named(w, "knownNetworkCheck_HomeWifi");
     M3_CHECK(3742, click_ui_item(w, home, "knownNetworkCheck_HomeWifi"), "failed to click HomeWifi");
     wait_ms(150);

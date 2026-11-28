@@ -254,7 +254,7 @@ pub mod qobject {
             mode: &QString,
             repo_pw: &QString,
             backend_secrets_json: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "addDestination"]
@@ -373,20 +373,20 @@ pub mod qobject {
 
         #[qinvokable]
         #[cxx_name = "formatExcludeRuleForItem"]
-        fn format_exclude_rule_for_item(self: &KesticApp, item_path: &QString) -> QString;
+        fn format_exclude_rule_for_item(self: Pin<&mut KesticApp>, item_path: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "lintExcludes"]
-        fn lint_excludes(self: &KesticApp, excludes_json: &QString) -> QString;
+        fn lint_excludes(self: Pin<&mut KesticApp>, excludes_json: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "testExcludePath"]
         fn test_exclude_path(
-            self: &KesticApp,
+            self: Pin<&mut KesticApp>,
             backup_id: &QString,
             excludes_json: &QString,
             test_path: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "normalizeExcludeFolder"]
@@ -398,11 +398,11 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             excludes_json: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "pollBackupDryRun"]
-        fn poll_backup_dry_run(self: Pin<&mut KesticApp>, preview_id: &QString) -> QString;
+        fn poll_backup_dry_run(self: Pin<&mut KesticApp>, preview_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "cancelBackupDryRun"]
@@ -418,28 +418,32 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             backup_id: &QString,
             retention_json: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "pollRetentionPreview"]
-        fn poll_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString) -> QString;
+        fn poll_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "cancelRetentionPreview"]
         fn cancel_retention_preview(self: Pin<&mut KesticApp>, preview_id: &QString);
 
         #[qinvokable]
+        #[cxx_name = "forgetDaemonCall"]
+        fn forget_daemon_call(self: &KesticApp, request: i32);
+
+        #[qinvokable]
         #[cxx_name = "detectSource"]
-        fn detect_source(self: &KesticApp, path: &QString) -> QString;
+        fn detect_source(self: Pin<&mut KesticApp>, path: &QString) -> i32;
 
         #[qinvokable]
         #[cxx_name = "checkNestedSources"]
         fn check_nested_sources(
-            self: &KesticApp,
+            self: Pin<&mut KesticApp>,
             candidate_id: &QString,
             candidate_path: &QString,
             destination_id: &QString,
-        ) -> QString;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "runDestinationMaintenance"]
@@ -475,19 +479,19 @@ pub mod qobject {
             self: Pin<&mut KesticApp>,
             kind: &QString,
             custom_path: &QString,
-        ) -> bool;
+        ) -> i32;
 
         #[qinvokable]
         #[cxx_name = "switchResticToAutomatic"]
-        fn switch_restic_to_automatic(self: Pin<&mut KesticApp>) -> bool;
+        fn switch_restic_to_automatic(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
         #[cxx_name = "removeAppManagedRestic"]
-        fn remove_app_managed_restic(self: Pin<&mut KesticApp>) -> bool;
+        fn remove_app_managed_restic(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
         #[cxx_name = "startResticInstall"]
-        fn start_restic_install(self: Pin<&mut KesticApp>) -> bool;
+        fn start_restic_install(self: Pin<&mut KesticApp>);
 
         #[qinvokable]
         #[cxx_name = "pollResticInstall"]
@@ -621,6 +625,7 @@ pub mod qobject {
 mod backups;
 mod daemon_call;
 pub use daemon_call::finish_pending_calls;
+pub(crate) use daemon_call::{Lane, call_daemon_on, send_to_daemon};
 mod destinations;
 mod previews;
 mod restic_install;
@@ -629,7 +634,7 @@ mod revisions;
 mod schedules;
 mod state;
 
-use crate::state_cache::{lookup_backup_summary, not_found_text, refresh_state_now, shared_state};
+use crate::state_cache::{lookup_backup_summary, not_found_text, shared_state};
 use cxx_qt_lib::QString;
 use kestic_core::model::Backup;
 use kestic_core::sync::LockUnpoisoned;
@@ -680,6 +685,10 @@ pub struct KesticAppRust {
     /// The switch to «Managed by Kestic» that waits for the installation the source dialog
     /// started.
     restic_switch_after_install: crate::restic_section_view::PendingSwitch,
+    /// An installation was asked for and its id has not arrived yet.
+    restic_install_starting: bool,
+    /// A status of the installation was asked for and has not arrived yet.
+    restic_install_polling: bool,
     blocking_kind: QString,
     blocking_message: QString,
     overall_headline: QString,
@@ -793,33 +802,6 @@ impl qobject::KesticApp {
             Ok(value) => Some(value),
             Err(err) => {
                 self.as_mut().show_action_error(&dbus_error_text(&err));
-                None
-            }
-        }
-    }
-
-    /// Ends a daemon call from QML: on success clears the error line and refreshes the state,
-    /// on failure shows the daemon's error text.
-    fn finish_action<T, E>(mut self: Pin<&mut Self>, result: Result<T, E>, how: Finish) -> Option<T>
-    where
-        E: Clone + Into<KesticDbusError>,
-    {
-        match result {
-            Ok(value) => {
-                if how == Finish::Saved {
-                    self.as_mut().set_has_unsaved_changes(false);
-                }
-                self.as_mut().show_action_error("");
-                refresh_state_now();
-                self.as_mut().apply_cached_state();
-                Some(value)
-            }
-            Err(err) => {
-                let msg = dbus_error_text(&err);
-                self.as_mut().show_action_error(&msg);
-                if how == Finish::NotifyOnError {
-                    self.as_mut().passive_notification(QString::from(&msg));
-                }
                 None
             }
         }

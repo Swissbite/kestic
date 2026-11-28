@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! Snapshot lists of the restore area for [`super::qobject::KesticApp`]. The daemon calls run
-//! in a background thread; `poll_restore` hands the results to QML.
+//! off the Qt thread; `poll_restore` hands the results to QML.
 
+use super::daemon_call::Lane;
 use super::qobject;
-use crate::daemon_events::wake_gui;
-use crate::state_cache::{daemon_unavailable_text, dbus_error_text, make_client, shared_state, tr};
+use crate::state_cache::{daemon_unavailable_text, dbus_error_text, shared_state, tr};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_daemon::dbus_api::{BackupSnapshotsDto, DestinationSnapshotsDto};
 use kestic_i18n::codes::ErrorKind;
@@ -47,20 +47,6 @@ fn configured_destination_ids() -> Vec<String> {
     })
 }
 
-fn fetch_destination(dest_id: &str) -> Result<DestinationSnapshotsDto, String> {
-    let client = make_client().map_err(|_| daemon_unavailable_text())?;
-    client
-        .list_destination_snapshots(dest_id)
-        .map_err(|e| dbus_error_text(&e))
-}
-
-fn fetch_backup(backup_id: &str) -> Result<BackupSnapshotsDto, String> {
-    let client = make_client().map_err(|_| daemon_unavailable_text())?;
-    client
-        .list_backup_snapshots(backup_id)
-        .map_err(|e| dbus_error_text(&e))
-}
-
 impl qobject::KesticApp {
     /// Loads the snapshots of every destination for the backup list of the restore area. Each
     /// destination is asked in its own thread, so a slow or unreachable one does not hold back
@@ -80,18 +66,27 @@ impl qobject::KesticApp {
             .set_restore_overview_loading(!dest_ids.is_empty());
         self.as_mut().restore_overview_updated();
         for id in dest_ids {
-            std::thread::spawn(move || {
-                let result = fetch_destination(&id);
-                let mut cache = restore_cache().lock_unpoisoned();
-                if cache.overview_generation == generation {
-                    cache.destinations.insert(id, result);
-                    cache.overview_pending -= 1;
-                    cache.overview_changed = true;
-                    cache.overview_done = cache.overview_pending == 0;
-                }
-                drop(cache);
-                wake_gui();
-            });
+            let asked = id.clone();
+            self.as_mut().call_daemon(
+                Lane::Alone,
+                move |client| {
+                    client
+                        .list_destination_snapshots(&asked)
+                        .map_err(|e| dbus_error_text(&e))
+                },
+                move |app, listed| {
+                    let result = listed.unwrap_or_else(|_| Err(daemon_unavailable_text()));
+                    let mut cache = restore_cache().lock_unpoisoned();
+                    if cache.overview_generation == generation {
+                        cache.destinations.insert(id, result);
+                        cache.overview_pending -= 1;
+                        cache.overview_changed = true;
+                        cache.overview_done = cache.overview_pending == 0;
+                    }
+                    drop(cache);
+                    app.poll_restore();
+                },
+            );
         }
     }
 
@@ -109,16 +104,25 @@ impl qobject::KesticApp {
         self.as_mut()
             .set_restore_snapshots_error(cxx_qt_lib::QString::from(""));
         self.as_mut().restore_snapshots_updated();
-        std::thread::spawn(move || {
-            let result = fetch_backup(&backup_id);
-            let mut cache = restore_cache().lock_unpoisoned();
-            if cache.snapshots_generation == generation {
-                cache.backup_snapshots = Some((backup_id, result));
-                cache.snapshots_done = true;
-            }
-            drop(cache);
-            wake_gui();
-        });
+        let asked = backup_id.clone();
+        self.call_daemon(
+            Lane::Alone,
+            move |client| {
+                client
+                    .list_backup_snapshots(&asked)
+                    .map_err(|e| dbus_error_text(&e))
+            },
+            move |app, listed| {
+                let result = listed.unwrap_or_else(|_| Err(daemon_unavailable_text()));
+                let mut cache = restore_cache().lock_unpoisoned();
+                if cache.snapshots_generation == generation {
+                    cache.backup_snapshots = Some((backup_id, result));
+                    cache.snapshots_done = true;
+                }
+                drop(cache);
+                app.poll_restore();
+            },
+        );
     }
 
     /// Hands finished snapshot lists to QML (called by `poll_events`).

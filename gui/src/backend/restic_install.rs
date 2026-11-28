@@ -5,16 +5,17 @@
 //! changing the source, removing the restic managed by Kestic (`RemoveAppManagedRestic`) and
 //! installing it (`StartResticInstall`, `GetResticInstallStatus`, `CancelResticInstall`).
 
+use super::daemon_call::{Lane, send_to_daemon};
 use super::{dbus_error_text, qobject};
 use crate::restic_install_view::{
     InstallView, OfferInput, failed_poll_view, install_view, restic_offer, start_failure_text,
 };
 use crate::restic_section_view::{ResticSectionView, needs_install_first, remove_failure_text};
-use crate::state_cache::{daemon_unavailable_text, make_client, refresh_state_now};
+use crate::state_cache::daemon_unavailable_text;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;
-use kestic_daemon::dbus_api::KesticDbusError;
+use kestic_daemon::dbus_api::{KesticClient, KesticDbusError};
 use kestic_i18n::codes::ServiceErrorCode;
 use std::pin::Pin;
 
@@ -73,9 +74,10 @@ impl qobject::KesticApp {
         self.as_mut().set_restic_offer_enabled(offer.enabled);
     }
 
-    /// Whether an installation of restic runs (the `state` of its status is `running`).
+    /// Whether an installation of restic runs (the `state` of its status is `running`) or was
+    /// asked for.
     fn installing_restic(&self) -> bool {
-        self.restic_install_state().to_string() == "running"
+        self.restic_install_starting || self.restic_install_state().to_string() == "running"
     }
 
     /// The oldest restic Kestic runs, for the texts of the settings.
@@ -84,12 +86,13 @@ impl qobject::KesticApp {
     }
 
     /// Applies the source `kind` of the source dialog. «Managed by Kestic» that is not installed
-    /// yet is downloaded first; the switch follows when exactly this installation succeeded.
+    /// yet is downloaded first; the switch follows when exactly this installation succeeded. The
+    /// request succeeds when the daemon took the source or the download started.
     pub fn apply_restic_source(
         mut self: Pin<&mut Self>,
         kind: &QString,
         custom_path: &QString,
-    ) -> bool {
+    ) -> i32 {
         let kind = kind.to_string();
         if !needs_install_first(&kind, *self.restic_app_managed_installed()) {
             return self.set_restic_provider(&QString::from(&kind), custom_path);
@@ -97,80 +100,99 @@ impl qobject::KesticApp {
         if self.installing_restic() {
             self.as_mut()
                 .show_action_error(&start_failure_text(ServiceErrorCode::AlreadyRunning));
-            return false;
+            return 0;
         }
-        match request_restic_install() {
-            Ok(install_id) => {
-                self.as_mut()
-                    .rust_mut()
-                    .restic_switch_after_install
-                    .start(&install_id);
-                self.follow_restic_install(install_id);
-                true
-            }
-            Err(text) => {
-                self.as_mut().show_action_error(&text);
-                false
-            }
-        }
+        self.as_mut().rust_mut().restic_install_starting = true;
+        self.request_daemon_with(
+            Lane::slow("restic-install"),
+            request_restic_install,
+            |_| false,
+            |mut app, started| {
+                app.as_mut().rust_mut().restic_install_starting = false;
+                match started.unwrap_or_else(|_| Err(daemon_unavailable_text())) {
+                    Ok(install_id) => {
+                        app.as_mut()
+                            .rust_mut()
+                            .restic_switch_after_install
+                            .start(&install_id);
+                        app.follow_restic_install(install_id);
+                        (true, String::new())
+                    }
+                    Err(text) => {
+                        app.as_mut().show_action_error(&text);
+                        (false, String::new())
+                    }
+                }
+            },
+        )
     }
 
     /// Switches to the source «Automatic» from the hint of the restic section.
-    pub fn switch_restic_to_automatic(mut self: Pin<&mut Self>) -> bool {
+    pub fn switch_restic_to_automatic(mut self: Pin<&mut Self>) {
         self.as_mut()
             .rust_mut()
             .restic_switch_after_install
             .cancel();
-        self.switch_restic_source(&ResticProvider::Automatic)
+        self.switch_restic_source(ResticProvider::Automatic);
     }
 
     /// Switches the source to `provider` outside the source dialog; a failure shows in the
     /// restic section.
-    fn switch_restic_source(mut self: Pin<&mut Self>, provider: &ResticProvider) -> bool {
-        let result = make_client()
-            .map_err(|_| daemon_unavailable_text())
-            .and_then(|client| {
+    fn switch_restic_source(self: Pin<&mut Self>, provider: ResticProvider) {
+        self.call_daemon_with(
+            Lane::slow("restic-source"),
+            move |client| {
                 client
-                    .set_restic_provider(provider)
+                    .set_restic_provider(&provider)
+                    .map(drop)
                     .map_err(|err| dbus_error_text(&err))
-            });
-        let error = result.as_ref().err().cloned().unwrap_or_default();
-        self.as_mut().set_restic_action_error(QString::from(&error));
-        refresh_state_now();
-        self.as_mut().apply_cached_state();
-        result.is_ok()
+            },
+            |_| true,
+            |app, result| app.show_restic_action(result),
+        );
     }
 
     /// Deletes the restic managed by Kestic; a refusal shows why and keeps it.
-    pub fn remove_app_managed_restic(mut self: Pin<&mut Self>) -> bool {
-        let result = make_client()
-            .map_err(|_| daemon_unavailable_text())
-            .and_then(|client| {
+    pub fn remove_app_managed_restic(self: Pin<&mut Self>) {
+        self.call_daemon_with(
+            Lane::slow("restic-source"),
+            |client| {
                 client
                     .remove_app_managed_restic()
                     .map_err(|err| remove_failure_text(KesticDbusError::from(err).code()))
-            });
-        let error = result.as_ref().err().cloned().unwrap_or_default();
-        self.as_mut().set_restic_action_error(QString::from(&error));
-        refresh_state_now();
-        self.as_mut().apply_cached_state();
-        result.is_ok()
+            },
+            |_| true,
+            |app, result| app.show_restic_action(result),
+        );
     }
 
-    pub fn start_restic_install(self: Pin<&mut Self>) -> bool {
+    /// Shows how a change of the restic in use ended, with the state fetched after it.
+    fn show_restic_action(mut self: Pin<&mut Self>, result: Result<Result<(), String>, String>) {
+        let error = match result {
+            Ok(Ok(())) => String::new(),
+            Ok(Err(text)) => text,
+            Err(_) => daemon_unavailable_text(),
+        };
+        self.as_mut().set_restic_action_error(QString::from(&error));
+        self.apply_cached_state();
+    }
+
+    pub fn start_restic_install(mut self: Pin<&mut Self>) {
         if self.installing_restic() {
-            return false;
+            return;
         }
-        match request_restic_install() {
-            Ok(install_id) => {
-                self.follow_restic_install(install_id);
-                true
-            }
-            Err(text) => {
-                self.show_install(&failed_poll_view(&text));
-                false
-            }
-        }
+        self.as_mut().rust_mut().restic_install_starting = true;
+        self.call_daemon(
+            Lane::slow("restic-install"),
+            request_restic_install,
+            |mut app, started| {
+                app.as_mut().rust_mut().restic_install_starting = false;
+                match started.unwrap_or_else(|_| Err(daemon_unavailable_text())) {
+                    Ok(install_id) => app.follow_restic_install(install_id),
+                    Err(text) => app.show_install(&failed_poll_view(&text)),
+                }
+            },
+        );
     }
 
     /// Follows the installation `install_id` that the daemon started.
@@ -179,22 +201,41 @@ impl qobject::KesticApp {
         self.poll_restic_install();
     }
 
+    /// Asks for the status of the installation, unless an answer is still on its way.
     pub fn poll_restic_install(mut self: Pin<&mut Self>) {
         let install_id = self.restic_install_id.clone();
-        if install_id.is_empty() {
+        if install_id.is_empty() || self.restic_install_polling {
             return;
         }
-        let status = make_client()
-            .map_err(|_| daemon_unavailable_text())
-            .and_then(|client| {
+        self.as_mut().rust_mut().restic_install_polling = true;
+        let asked = install_id.clone();
+        self.call_daemon_with(
+            Lane::slow("restic-install"),
+            move |client| {
                 client
-                    .get_restic_install_status(&install_id)
+                    .get_restic_install_status(&asked)
                     .map_err(|err| dbus_error_text(&err))
-            });
-        let view = match status {
-            Ok(status) => install_view(&status),
-            Err(text) => failed_poll_view(&text),
-        };
+            },
+            // The restic in use may have changed once the installation ended.
+            |status| {
+                status
+                    .as_ref()
+                    .map_or(true, |s| install_view(s).state != "running")
+            },
+            move |mut app, status| {
+                app.as_mut().rust_mut().restic_install_polling = false;
+                let view = match status.unwrap_or_else(|_| Err(daemon_unavailable_text())) {
+                    Ok(status) => install_view(&status),
+                    Err(text) => failed_poll_view(&text),
+                };
+                app.show_install_status(&install_id, &view);
+            },
+        );
+    }
+
+    /// Shows the status `view` of the installation `install_id`; an ended one also switches the
+    /// source when the source dialog asked for it.
+    fn show_install_status(mut self: Pin<&mut Self>, install_id: &str, view: &InstallView) {
         let finished = view.state != "running";
         if finished {
             self.as_mut().rust_mut().restic_install_id.clear();
@@ -202,16 +243,14 @@ impl qobject::KesticApp {
                 .as_mut()
                 .rust_mut()
                 .restic_switch_after_install
-                .finish(&install_id, &view.state);
+                .finish(install_id, &view.state);
             if switch {
                 self.as_mut()
-                    .switch_restic_source(&ResticProvider::AppManaged);
+                    .switch_restic_source(ResticProvider::AppManaged);
             }
         }
-        self.as_mut().show_install(&view);
+        self.as_mut().show_install(view);
         if finished {
-            // The restic in use may have changed.
-            refresh_state_now();
             self.as_mut().apply_cached_state();
         }
     }
@@ -222,24 +261,21 @@ impl qobject::KesticApp {
         if install_id.is_empty() {
             return;
         }
-        // A cancel that fails shows in the poll: the installation has ended or is unknown.
-        if let Ok(client) = make_client()
-            && let Err(err) = client.cancel_restic_install(&install_id)
-        {
-            eprintln!("kestic: cancelling the restic installation failed: {err}");
-        }
+        // On the lane of the polls, so the next poll shows the cancel.
+        send_to_daemon(Lane::slow("restic-install"), move |client| {
+            // A cancel that fails shows in the poll: the installation has ended or is unknown.
+            if let Err(err) = client.cancel_restic_install(&install_id) {
+                eprintln!("kestic: cancelling the restic installation failed: {err}");
+            }
+        });
         self.poll_restic_install();
     }
 }
 
 /// Asks the daemon to install the restic managed by Kestic; the id of the installation, or why
 /// it did not start.
-fn request_restic_install() -> Result<String, String> {
-    make_client()
-        .map_err(|_| daemon_unavailable_text())
-        .and_then(|client| {
-            client
-                .start_restic_install()
-                .map_err(|err| start_failure_text(KesticDbusError::from(err).code()))
-        })
+fn request_restic_install(client: &KesticClient) -> Result<String, String> {
+    client
+        .start_restic_install()
+        .map_err(|err| start_failure_text(KesticDbusError::from(err).code()))
 }

@@ -608,12 +608,14 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
                 _mock,
             } = make_busy(root, &rig, &variant);
 
-            let (_, signal_ms) = signal_self();
+            // Every held call has logged its start, so the count of restic calls on a
+            // repository is complete here; a time stamp would not do, since restic runs in the
+            // idle I/O class and its wrapper's log lines can come late under load.
+            let repo_calls_before = wrapper.started_repo_count();
+            signal_self();
             // While the daemon stops (A's `forget` lingers): a backup becomes due, and every
-            // call that would start restic is made. A restic started just before the signal
-            // logs its start up to a moment later on a busy machine; the calls come a second
-            // after that.
-            thread::sleep(Duration::from_millis(1200));
+            // call that would start restic is made.
+            thread::sleep(Duration::from_millis(300));
             // Read first: the fake clock keeps a finished installation for ten minutes only.
             let install = client
                 .get_restic_install_status(&install_id)
@@ -688,14 +690,11 @@ fn ac_m6_36_2_sigterm_stops_every_restic_process() {
                 "AC-M6-36-2 (b): the queued backup stays due"
             );
             // (c) nothing started after the signal.
-            let late: Vec<_> = wrapper
-                .entries()
-                .into_iter()
-                .filter(|e| e.kind == 'S' && e.at_ms > signal_ms + 1000)
-                .collect();
-            assert!(
-                late.is_empty(),
-                "AC-M6-36-2 (c): no restic after SIGTERM: {late:?}"
+            assert_eq!(
+                wrapper.started_repo_count(),
+                repo_calls_before,
+                "AC-M6-36-2 (c): no restic after SIGTERM: {:?}",
+                wrapper.entries()
             );
             for (call, refused) in refused {
                 assert!(
@@ -796,16 +795,20 @@ fn ac_m6_36_3_one_deadline_then_sigkill_of_the_tree() {
             let stuck = wrapper.lingering_pids("forget");
             assert_eq!(stuck.len(), 2, "precondition: call and child: {stuck:?}");
 
-            let (signal_at, signal_ms) = signal_self();
+            let (signal_at, _) = signal_self();
             wait_until_within(Duration::from_secs(13), "the stuck tree is killed", || {
                 stuck.iter().all(|pid| !alive(*pid))
             });
             let killed_after = signal_at.elapsed();
-            let ends_after_signal = |sub: &str| {
+            // A lingering call that ends by itself logs its end with exit code 143; a killed one
+            // logs nothing. The real restic calls before ended with other codes, and their log
+            // lines may come late: restic runs in the idle I/O class, so under load the wrapper's
+            // `E` line of an earlier call can carry a time after the signal.
+            let ended_itself = |sub: &str| {
                 wrapper
                     .of('E', sub)
                     .into_iter()
-                    .filter(|e| e.at_ms > signal_ms)
+                    .filter(|e| e.detail.trim() == "143")
                     .count()
             };
             let outcome = rig.daemon.wait_stopped(Duration::from_secs(15));
@@ -813,7 +816,7 @@ fn ac_m6_36_3_one_deadline_then_sigkill_of_the_tree() {
 
             // (a) the slow one ended by itself and removed its marker.
             assert_eq!(
-                ends_after_signal("backup"),
+                ended_itself("backup"),
                 1,
                 "AC-M6-36-3 (a): no SIGKILL: {:?}",
                 wrapper.entries()
@@ -828,9 +831,10 @@ fn ac_m6_36_3_one_deadline_then_sigkill_of_the_tree() {
                 "AC-M6-36-3 (b): killed {killed_after:?} after the signal"
             );
             assert_eq!(
-                ends_after_signal("forget"),
+                ended_itself("forget"),
                 0,
-                "AC-M6-36-3 (b): killed, not ended"
+                "AC-M6-36-3 (b): killed, not ended: {:?}",
+                wrapper.entries()
             );
             // (c) nothing of both trees is left.
             for pid in stuck.iter().chain(wrapper.lingering_pids("backup").iter()) {

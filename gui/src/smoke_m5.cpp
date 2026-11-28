@@ -888,8 +888,10 @@ int scenario_edit_other_repository(const Ctx& c) {
         "AC-M5-05-7 (c): «Add as New Destination…» missing");
     M3_CHECK_EQ(5707, add_as_new->property("text").toString(),
         loc(c.lang, "Add as New Destination…", "Als neues Ziel hinzufügen…"), "action text");
-    // The action has its own row below the message, which keeps its whole width for the text.
-    M3_CHECK(5719, scene_y(add_as_new) >= scene_y(banner) + banner->height(), "the action is not below the message");
+    // The action has its own row below the message, which keeps its whole width for the text
+    // (once the «Testing the connection…» line has gone and the message has opened).
+    M3_CHECK(5719, wait_until([&] { return scene_y(add_as_new) >= scene_y(banner) + banner->height(); }, 2000),
+        "the action is not below the message");
     scroll_into_view_in(w, "destinationEditPage", banner);
     wait_ms(600);
     M3_CHECK(5708, save_screenshot(w, c.out_path), "screenshot failed");
@@ -1055,7 +1057,7 @@ int scenario_restic_install_result(const Ctx& c) {
     wait_ms(300);
     M3_CHECK_EQ(5874, restic_install_state(c), QString(), "the installation started before the click in the settings");
     M3_CHECK(5875, click_ui_item(sw, download, "Download restic"), "click on «Download restic» failed");
-    M3_CHECK(5864, !restic_install_state(c).isEmpty(), "the installation did not start");
+    M3_CHECK(5864, wait_until([&] { return !restic_install_state(c).isEmpty(); }, 5000), "the installation did not start");
     sw->setVisible(false);
     M3_CHECK(5865, wait_until([&] { return restic_install_state(c) == QLatin1String("done"); }, 60000),
         "the installation did not finish while the settings were closed");
@@ -1263,7 +1265,7 @@ int scenario_restic_source_download(const Ctx& c) {
     QObject* apply = object_named(sw, "applyResticSourceAction");
     M3_CHECK(5977, apply != nullptr && apply->property("enabled").toBool(), "«Apply» not enabled");
     trigger(apply);
-    M3_CHECK(5978, !restic_install_state(c).isEmpty(), "«Apply» did not start the installation");
+    M3_CHECK(5978, wait_until([&] { return !restic_install_state(c).isEmpty(); }, 5000), "«Apply» did not start the installation");
     M3_CHECK(5979, wait_until([&] { return restic_install_state(c) == QLatin1String("done"); }, 60000),
         "the installation did not finish");
     M3_CHECK(5980, wait_until([&] { return c.backend->property("restic_provider_kind").toString() == QLatin1String("app_managed"); }, 5000),

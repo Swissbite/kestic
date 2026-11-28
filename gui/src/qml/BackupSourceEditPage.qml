@@ -29,20 +29,39 @@ EditorPage {
         if (trimmed === "") {
             detectedKindLabel = Texts.label("folder");
             nestedWarnings = [];
+            detectAnswer.pending = 0;
+            nestedAnswer.pending = 0;
             return;
         }
-        var det = rootWindow.detectSource(trimmed);
-        if (det) {
+        detectAnswer.track(appBackend.detectSource(trimmed));
+        if (initialData) {
+            nestedAnswer.track(appBackend.checkNestedSources(backupId, trimmed, initialData.destinationId));
+        }
+    }
+
+    // What the daemon finds at the path asked for last: the kind of source and the backups
+    // whose sources nest with it.
+    DaemonAnswer {
+        id: detectAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            var det = ok ? page.rootWindow.parseJsonOr(result, null) : null;
+            if (!det) return;
             if (det.kind === "drive") {
-                detectedKindLabel = det.drive_label && det.drive_label !== ""
+                page.detectedKindLabel = det.drive_label && det.drive_label !== ""
                     ? Texts.labelArgs("drive_with_label", [det.drive_label])
                     : Texts.label("drive");
             } else {
-                detectedKindLabel = Texts.label("folder");
+                page.detectedKindLabel = Texts.label("folder");
             }
         }
-        if (initialData) {
-            nestedWarnings = rootWindow.nestedSourceWarnings(backupId, trimmed, initialData.destinationId);
+    }
+
+    DaemonAnswer {
+        id: nestedAnswer
+        backend: page.appBackend
+        onAnswered: function(ok, result) {
+            page.nestedWarnings = page.rootWindow.parseJsonOr(result, []);
         }
     }
 

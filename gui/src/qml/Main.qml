@@ -145,16 +145,6 @@ Kirigami.ApplicationWindow {
         }
     }
 
-    // The detected source of `path` (`kind`, `drive_label`), or null if it is unknown.
-    function detectSource(path) {
-        return parseJsonOr(appBackend.detectSource(path), null);
-    }
-
-    // Warnings about backups whose sources nest with `path` for `destinationId`.
-    function nestedSourceWarnings(candidateId, path, destinationId) {
-        return parseJsonOr(appBackend.checkNestedSources(candidateId, path, destinationId), []);
-    }
-
     // Colour of a status icon for a colour kind; `theme` is the `Kirigami.Theme` of the page.
     function iconColorFor(kind, theme) {
         switch (kind) {

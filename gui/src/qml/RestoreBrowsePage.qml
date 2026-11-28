@@ -72,8 +72,36 @@ Kirigami.ScrollablePage {
     // Lists `dir`; the filter starts empty in every folder, the selection stays.
     function openDir(dir) {
         filterField.resetFilter();
+        page.appliedFilter = "";
+        page.settingRow = true;
         browseListView.currentIndex = -1;
+        page.settingRow = false;
         snapshotBrowseModel.open(destinationId, snapshotId, dir);
+    }
+
+    // The filter the list shows; opening a folder clears it.
+    property string appliedFilter: ""
+
+    // The page sets the current row itself; a key that moves it (or a click on a row) means the
+    // user moved on, so the hit is no longer looked for.
+    property bool settingRow: false
+    Connections {
+        target: browseListView
+        function onCurrentIndexChanged() {
+            if (browseListView.userMove && !page.settingRow) page.dropFocusPath();
+        }
+    }
+
+    // Opens the folder `dir` the user chose; the search hit is no longer looked for.
+    function goToDir(dir) {
+        page.dropFocusPath();
+        openDir(dir);
+    }
+
+    // Stops looking for the search hit (the user moved on).
+    function dropFocusPath() {
+        page.focusPath = "";
+        page.focusPages = 0;
     }
 
     // Opens the folder at `row`, or marks the file there.
@@ -81,7 +109,7 @@ Kirigami.ScrollablePage {
         var path = snapshotBrowseModel.data(snapshotBrowseModel.index(row, 0), 0);
         var isDir = snapshotBrowseModel.data(snapshotBrowseModel.index(row, 0), 2);
         if (isDir) {
-            openDir(path);
+            goToDir(path);
         } else {
             snapshotBrowseModel.toggleSelected(row);
         }
@@ -126,14 +154,41 @@ Kirigami.ScrollablePage {
                 if (snapshotBrowseModel.top_dir === page.startDir) snapshotBrowseModel.top_dir = "/";
                 page.openDir("/");
             } else if (page.focusPath !== "") {
-                var row = snapshotBrowseModel.rowOfPath(page.focusPath);
-                page.focusPath = "";
-                if (row >= 0) {
-                    browseListView.currentIndex = row;
-                    browseListView.positionViewAtIndex(row, ListView.Center);
-                }
+                page.focusPages = 0;
+                page.focusOnPath();
             }
         }
+        // A page asked for to find the entry to focus has arrived; the list takes in the new rows
+        // first, so the row it is told to show is the hit.
+        function onRowsInserted() {
+            if (page.focusPath !== "" && page.focusPages > 0) Qt.callLater(page.focusOnPath);
+        }
+    }
+
+    // Further pages the page loads at most to find the entry to focus.
+    readonly property int maxFocusPages: 10
+    property int focusPages: 0
+
+    // Makes the entry at `focusPath` the current row once it is loaded, loading further pages
+    // (at most `maxFocusPages`) until it is; gives up when the folder does not list it.
+    function focusOnPath() {
+        if (page.focusPath === "" || snapshotBrowseModel.dir !== page.startDir) return;
+        var row = snapshotBrowseModel.rowOfPath(page.focusPath);
+        if (row < 0) {
+            var root = snapshotBrowseModel.index(-1, 0);
+            if (page.focusPages < page.maxFocusPages && snapshotBrowseModel.canFetchMore(root)) {
+                page.focusPages += 1;
+                snapshotBrowseModel.fetchMore(root);
+                return;
+            }
+            page.focusPath = "";
+            return;
+        }
+        page.focusPath = "";
+        page.settingRow = true;
+        browseListView.currentIndex = row;
+        page.settingRow = false;
+        browseListView.positionViewAtIndex(row, ListView.Center);
     }
     Component.onDestruction: snapshotBrowseModel.cancel()
     // A page taken off the stack is hidden, not destroyed: stop listing there, too.
@@ -281,7 +336,7 @@ Kirigami.ScrollablePage {
                                     }
                                 }
                                 onClicked: {
-                                    if (!crumb.isCurrent) page.openDir(crumb.modelData);
+                                    if (!crumb.isCurrent) page.goToDir(crumb.modelData);
                                 }
                                 onActiveFocusChanged: if (activeFocus) pathFlick.ensureVisible(crumb)
                                 FocusRing { target: crumbButton }
@@ -299,7 +354,12 @@ Kirigami.ScrollablePage {
                     id: filterField
                     objectName: "browseFilterField"
                     Layout.fillWidth: true
-                    onFilterRequested: function(text) { snapshotBrowseModel.setFilter(text); }
+                    onFilterRequested: function(text) {
+                        // A new filter: the hit is no longer looked for.
+                        if (text !== page.appliedFilter) page.dropFocusPath();
+                        page.appliedFilter = text;
+                        snapshotBrowseModel.setFilter(text);
+                    }
                 }
                 Controls.Label {
                     objectName: "browseCountLabel"
@@ -454,6 +514,7 @@ Kirigami.ScrollablePage {
             Accessible.description: selected ? i18n("Marked for restore") : ""
 
             onClicked: {
+                page.dropFocusPath();
                 ListView.view.currentIndex = index;
                 page.activateRow(index);
             }
@@ -463,7 +524,7 @@ Kirigami.ScrollablePage {
                     snapshotBrowseModel.toggleSelected(entryRow.index);
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    if (entryRow.isDir) page.openDir(entryRow.path);
+                    if (entryRow.isDir) page.goToDir(entryRow.path);
                     event.accepted = true;
                 }
             }
