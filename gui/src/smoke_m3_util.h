@@ -28,58 +28,9 @@ struct Ctx {
     QString lang;
 };
 
-#define M3_CHECK(code, cond, msg)                                                      \
-    do {                                                                               \
-        if (!(cond)) {                                                                 \
-            std::fprintf(stderr, "M3 check failed (%d): %s [%s]\n", (code), (msg), #cond); \
-            return (code);                                                             \
-        }                                                                              \
-    } while (0)
-
-// N independent checks that share one message; each condition is checked (and named) on its own.
-#define M3_CHECK2(code, c1, c2, msg) \
-    M3_CHECK(code, c1, msg);         \
-    M3_CHECK(code, c2, msg)
-#define M3_CHECK3(code, c1, c2, c3, msg) \
-    M3_CHECK2(code, c1, c2, msg);        \
-    M3_CHECK(code, c3, msg)
-#define M3_CHECK4(code, c1, c2, c3, c4, msg) \
-    M3_CHECK3(code, c1, c2, c3, msg);        \
-    M3_CHECK(code, c4, msg)
-
-#define M3_CHECK_EQ(code, actual, expected, what)                                      \
-    do {                                                                               \
-        const QString a_ = (actual);                                                   \
-        const QString e_ = (expected);                                                 \
-        if (a_ != e_) {                                                                \
-            std::fprintf(                                                              \
-                stderr,                                                                \
-                "M3 check failed (%d): %s: expected '%s' got '%s'\n",                  \
-                (code),                                                                \
-                (what),                                                                \
-                qPrintable(e_),                                                        \
-                qPrintable(a_)                                                         \
-            );                                                                         \
-            return (code);                                                             \
-        }                                                                              \
-    } while (0)
-
-#define M3_CHECK_STARTS(code, actual, prefix, what)                                    \
-    do {                                                                               \
-        const QString a_ = (actual);                                                   \
-        const QString e_ = (prefix);                                                   \
-        if (!a_.startsWith(e_)) {                                                      \
-            std::fprintf(                                                              \
-                stderr,                                                                \
-                "M3 check failed (%d): %s: expected prefix '%s' got '%s'\n",           \
-                (code),                                                                \
-                (what),                                                                \
-                qPrintable(e_),                                                        \
-                qPrintable(a_)                                                         \
-            );                                                                         \
-            return (code);                                                             \
-        }                                                                              \
-    } while (0)
+/// A scenario: 0 on success, else the code of its first failed check.
+using ScenarioFn = int (*)(const Ctx&);
+using Scenario = NamedScenario<ScenarioFn>;
 
 /// English or German text depending on the smoke language.
 inline QString loc(const QString& lang, const char* en, const char* de) {
@@ -151,18 +102,30 @@ inline QList<QObject*> objects_named(QQuickWindow* window, const char* name) {
     return out;
 }
 
-inline QObject* object_named(QQuickWindow* window, const char* name) {
-    const QList<QObject*> all = objects_named(window, name);
-    return all.isEmpty() ? nullptr : all.first();
-}
-
-inline QQuickItem* item_named(QQuickWindow* window, const char* name) {
+/// The first object called `name` below `window` that is a `T` (an item by default; `QObject`
+/// for any object), from both trees of [`objects_named`]; nullptr when there is none.
+template <typename T = QQuickItem>
+T* lookup(QQuickWindow* window, const char* name) {
     for (QObject* o : objects_named(window, name)) {
-        if (auto* it = qobject_cast<QQuickItem*>(o)) {
-            return it;
+        if (auto* t = qobject_cast<T*>(o)) {
+            return t;
         }
     }
     return nullptr;
+}
+
+/// Saves the screenshot of `window` to `path`: 0, or `code` after saying why it failed.
+inline int shot(QQuickWindow* window, const QString& path, int code) {
+    if (save_screenshot(window, path)) {
+        return 0;
+    }
+    std::fprintf(stderr, "screenshot failed (%d): %s\n", code, qPrintable(path));
+    return code;
+}
+
+/// The screenshot of the scenario's window to its screenshot path.
+inline int shot(const Ctx& c, int code) {
+    return shot(c.window, c.out_path, code);
 }
 
 inline int count_visible(QQuickWindow* window, const char* name) {
@@ -202,8 +165,8 @@ inline QString combo_text(QObject* combo, int index) {
 /// Opens the detail page of backup `bid` and gives it time to settle.
 [[nodiscard]] inline bool open_backup_detail(QQuickWindow* window, const QString& bid) {
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
-    const bool opened = wait_until([&] { return item_named(window, "backupDetailPage") != nullptr; }, 3000);
-    wait_ms(250);
+    const bool opened = wait_until([&] { return lookup(window, "backupDetailPage") != nullptr; }, 3000);
+    wait_ms(250); // quiet window: the page ends its transition
     return opened;
 }
 
@@ -247,7 +210,7 @@ inline QStringList tab_missing(QQuickWindow* window, const QStringList& wanted, 
 /// First control whose accessible name is empty (empty list when all are named).
 inline QString first_unnamed(QQuickWindow* window, const QStringList& names) {
     for (const QString& n : names) {
-        QQuickItem* it = item_named(window, qPrintable(n));
+        QQuickItem* it = lookup(window, qPrintable(n));
         if (!it) {
             return n + QStringLiteral(" (missing)");
         }
@@ -259,3 +222,12 @@ inline QString first_unnamed(QQuickWindow* window, const QStringList& names) {
 }
 
 } // namespace kestic::smoke::m3
+
+namespace kestic::smoke {
+
+// The scenario tables of the files that share these helpers (nullptr for an unknown name).
+m3::ScenarioFn find_m3_pages_scenario(const QString& scen);
+m3::ScenarioFn find_m3_editor_scenario(const QString& scen);
+m3::ScenarioFn find_main_menu_scenario(const QString& scen);
+
+} // namespace kestic::smoke

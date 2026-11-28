@@ -21,6 +21,32 @@ fn compile_mo(po_file: &Path, locale_root: &Path) {
     assert!(status.success(), "msgfmt failed on {}", po_file.display());
 }
 
+/// Headers of the GUI smoke harness (test-harness feature only).
+const SMOKE_HEADERS: &[&str] = &[
+    "src/smoke_common.h",
+    "src/smoke_helper.h",
+    "src/smoke_m3_util.h",
+    "src/smoke_m4_util.h",
+    "src/smoke_m6.h",
+];
+
+/// Sources of the GUI smoke harness, compiled only with the test-harness feature.
+const SMOKE_SOURCES: &[&str] = &[
+    "src/smoke_helper.cpp",
+    "src/smoke_m1.cpp",
+    "src/smoke_m2.cpp",
+    "src/smoke_m3.cpp",
+    "src/smoke_m3_editors.cpp",
+    "src/smoke_m3_pages.cpp",
+    "src/smoke_m4.cpp",
+    "src/smoke_m4_browse.cpp",
+    "src/smoke_m4_lists.cpp",
+    "src/smoke_m4_restore.cpp",
+    "src/smoke_main_menu.cpp",
+    "src/smoke_m5.cpp",
+    "src/smoke_m6.cpp",
+];
+
 fn main() {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
@@ -123,24 +149,11 @@ fn main() {
     for qml in qml_files {
         println!("cargo:rerun-if-changed={qml}");
     }
-    for cpp in [
-        "src/qt_bridge.h",
-        "src/qt_bridge.cpp",
-        "src/smoke_common.h",
-        "src/smoke_helper.h",
-        "src/smoke_helper.cpp",
-        "src/smoke_m1.cpp",
-        "src/smoke_m2.cpp",
-        "src/smoke_m3.cpp",
-        "src/smoke_m3_editors.cpp",
-        "src/smoke_m3_pages.cpp",
-        "src/smoke_m4.cpp",
-        "src/smoke_main_menu.cpp",
-        "src/smoke_m5.cpp",
-        "src/smoke_m6.cpp",
-        "src/smoke_m6.h",
-        "src/smoke_m3_util.h",
-    ] {
+    for cpp in ["src/qt_bridge.h", "src/qt_bridge.cpp"]
+        .iter()
+        .chain(SMOKE_HEADERS)
+        .chain(SMOKE_SOURCES)
+    {
         println!("cargo:rerun-if-changed={cpp}");
     }
 
@@ -158,19 +171,10 @@ fn main() {
             .qt_module("Quick");
     if env::var_os("CARGO_FEATURE_TEST_HARNESS").is_some() {
         // Qt Test sends the smoke's input events; the shipped binary does not link it.
-        builder = builder
-            .qt_module("Test")
-            .file("src/smoke.rs")
-            .cpp_file("src/smoke_helper.cpp")
-            .cpp_file("src/smoke_m1.cpp")
-            .cpp_file("src/smoke_m2.cpp")
-            .cpp_file("src/smoke_m3.cpp")
-            .cpp_file("src/smoke_m3_editors.cpp")
-            .cpp_file("src/smoke_m3_pages.cpp")
-            .cpp_file("src/smoke_m4.cpp")
-            .cpp_file("src/smoke_main_menu.cpp")
-            .cpp_file("src/smoke_m5.cpp")
-            .cpp_file("src/smoke_m6.cpp");
+        builder = builder.qt_module("Test").file("src/smoke.rs");
+        for cpp in SMOKE_SOURCES {
+            builder = builder.cpp_file(cpp);
+        }
     }
 
     // SAFETY: Configures an additional C++ include path during build-script compilation.

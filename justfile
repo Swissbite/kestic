@@ -22,13 +22,14 @@ verify:
     just _smoke-run
     just _nextest
 
-# Checks that build nothing: formatting, file sizes, licenses and advisories, REUSE, the merge
+# Checks that build nothing: formatting, file sizes (and their check), licenses and advisories, REUSE, the merge
 # rule, the watcher and the GitHub token of the agent container, the release version arithmetic,
 # the release asset names, screenshots and flags, the job selection of the Verify workflow and the
 # screenshot source of the Pages site
 _static-checks:
     cargo fmt --all -- --check
     just _check-file-sizes
+    scripts/test-check-file-sizes.sh
     cargo deny check
     reuse lint
     .devcontainer/test-gh-wrapper.sh
@@ -47,19 +48,7 @@ _clippy:
     cargo clippy --workspace --all-targets --features kestic-gui/test-harness -- -D warnings
 
 _check-file-sizes:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    oversized=0
-    while IFS= read -r -d '' f; do
-        lines=$(wc -l < "$f")
-        if [ "$lines" -gt 1500 ]; then
-            echo "ERROR: $f has $lines lines (limit 1500, NFR-12)" >&2
-            oversized=1
-        fi
-    done < <(find build-stamp/src core/src i18n/src daemon/src gui/src test-support/src -type f \( -name '*.rs' -o -name '*.qml' \) -print0 | sort -z)
-    if [ "$oversized" -ne 0 ]; then
-        exit 1
-    fi
+    scripts/check-file-sizes.sh
 
 # Format all Rust code in the workspace
 fmt:

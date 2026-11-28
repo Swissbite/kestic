@@ -97,4 +97,16 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
 void run_rest_login_scene(QQuickWindow* window, const std::shared_ptr<QStringList>& warnings,
     const QString& out_path, const QString& lang);
 
+// AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late do not hold back pausing.
+void run_slow_start_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path);
+
+// AC-M6-33-1: «Back Up Now» before the first state arrived names the backup and the reason.
+void run_refused_start_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path);
+
+// AC-M6-33-4 (a): a change of the daemon state reaches the window within 1 s.
+void run_state_change_scene(QQuickWindow* window, QObject* backend,
+    const std::shared_ptr<QStringList>& warnings, const QString& out_path);
+
 } // namespace kestic::smoke

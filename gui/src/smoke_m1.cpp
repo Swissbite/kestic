@@ -26,6 +26,10 @@ struct Scene {
     QQuickItem* top_nav;
     std::shared_ptr<QStringList> warnings;
     QString out_path;
+    QString lang;
+    QQmlApplicationEngine* engine;
+    QString scen;
+    qint64 since_load_ms;
 };
 
 // Walks through the empty app: Destinations -> Add Destination wizard -> Overview -> Set Up
@@ -35,53 +39,53 @@ void scene_destinations_empty(const Scene& s) {
     run_steps(s.window, {
         {250, [s] {
             QQuickWindow* w = s.window;
-            SMOKE_CHECK("M1", 36, has_visible_text(w->contentItem(), QString::fromUtf8("Noch keine Ziele angelegt")),
+            SMOKE_CHECK("M1", 600, has_visible_text(w->contentItem(), QString::fromUtf8("Noch keine Ziele angelegt")),
                 "DestinationsPage empty PlaceholderMessage not visible");
             QQuickItem* add_btn = visible_button(w->contentItem(), "Ziel hinzufügen|Add Destination");
-            SMOKE_CHECK("M1", 36, add_btn, "visible Add Destination button not found");
+            SMOKE_CHECK("M1", 601, add_btn, "visible Add Destination button not found");
             SMOKE_CHECK("M1", 10, save_screenshot(w, s.out_path), "could not save the screenshot");
             SMOKE_CLICK("M1", 37, w, add_btn, "Placeholder Add Destination");
         }},
         {350, [s] {
             QQuickWindow* w = s.window;
             QQuickItem* wiz = child_item(w, "addDestinationWizard");
-            SMOKE_CHECK5("M1", 37, wiz, wiz->isVisible(), w->property("inWizardLayer").toBool(), !s.top_nav->isVisible(),
+            SMOKE_CHECK5("M1", 602, wiz, wiz->isVisible(), w->property("inWizardLayer").toBool(), !s.top_nav->isVisible(),
                 wiz->width() >= w->width() - 20, "AddDestinationWizard must open full-width without tab bar");
-            SMOKE_CLICK("M1", 37, w, visible_button(wiz, "Abbrechen|Cancel"), "Cancel AddDestinationWizard");
+            SMOKE_CLICK("M1", 603, w, visible_button(wiz, "Abbrechen|Cancel"), "Cancel AddDestinationWizard");
         }},
         {350, [s] { SMOKE_CLICK("M1", 38, s.window, visible_button(s.top_nav, "Übersicht|Overview"), "Overview tab"); }},
-        {250, [s] { SMOKE_CLICK("M1", 38, s.window, child_item(s.window, "setupFirstBackupButton"), "Set Up First Backup"); }},
+        {250, [s] { SMOKE_CLICK("M1", 604, s.window, child_item(s.window, "setupFirstBackupButton"), "Set Up First Backup"); }},
         {350, [s] {
             QQuickWindow* w = s.window;
             QQuickItem* nbw = child_item(w, "newBackupWizard");
             SMOKE_CHECK5("M1", 39, nbw, w->property("inWizardLayer").toBool(), !s.top_nav->isVisible(),
                 nbw->property("integratedDestFlow").toBool(), nbw->width() >= w->width() - 20,
                 "Setup First Backup must open full-width with integrated destination flow");
-            SMOKE_CLICK("M1", 39, w, child_item(w, "wizBackupNextButton"), "First Backup Step 1 Next");
+            SMOKE_CLICK("M1", 605, w, child_item(w, "wizBackupNextButton"), "First Backup Step 1 Next");
         }},
         {80, [s] {
             QQuickWindow* w = s.window;
             QQuickItem* nbw = child_item(w, "newBackupWizard");
             SMOKE_CHECK2("M1", 40, !child_item(w, "addDestinationWizard"), nbw->property("currentStage").toString() == QLatin1String("dest_type"),
                 "expected inline dest_type stage without nested AddDestinationWizard");
-            SMOKE_CLICK("M1", 40, w, child_item(w, "wizBackupNextButton"), "First Backup Step 2 Next");
+            SMOKE_CLICK("M1", 606, w, child_item(w, "wizBackupNextButton"), "First Backup Step 2 Next");
         }},
         {80, [s] {
             QQuickWindow* w = s.window;
             QQuickItem* nbw = child_item(w, "newBackupWizard");
             QQuickItem* dest_name_field = child_item(w, "wizBackupDestNameField");
-            SMOKE_CHECK3("M1", 40, nbw->property("currentStage").toString() == QLatin1String("dest_details"), dest_name_field,
+            SMOKE_CHECK3("M1", 607, nbw->property("currentStage").toString() == QLatin1String("dest_details"), dest_name_field,
                 dest_name_field->isVisible(), "expected inline dest_details stage in First Backup wizard");
-            SMOKE_CLICK("M1", 40, w, visible_button(nbw, "Abbrechen|Cancel"), "Cancel First Backup Wizard");
+            SMOKE_CLICK("M1", 608, w, visible_button(nbw, "Abbrechen|Cancel"), "Cancel First Backup Wizard");
         }},
         {350, [s] { SMOKE_CLICK("M1", 41, s.window, visible_button(s.top_nav, "Backups"), "Backups tab"); }},
         {250, [s] {
-            SMOKE_CHECK("M1", 41, has_visible_text(s.window->contentItem(), QString::fromUtf8("Noch keine Backups angelegt")),
+            SMOKE_CHECK("M1", 609, has_visible_text(s.window->contentItem(), QString::fromUtf8("Noch keine Backups angelegt")),
                 "BackupsPage empty PlaceholderMessage not visible");
             SMOKE_CLICK("M1", 42, s.window, visible_button(s.top_nav, "Verlauf|History"), "History tab");
         }},
         {250, [s] {
-            SMOKE_CHECK("M1", 42, has_visible_text(s.window->contentItem(), QString::fromUtf8("Keine passenden Läufe gefunden")),
+            SMOKE_CHECK("M1", 610, has_visible_text(s.window->contentItem(), QString::fromUtf8("Keine passenden Läufe gefunden")),
                 "HistoryPage empty PlaceholderMessage not visible");
             smoke_finish("M1", s.warnings.get());
         }},
@@ -93,9 +97,9 @@ void scene_e2e_wizard_backup(const Scene& s) {
     const QString repo_dir = qEnvironmentVariable("KESTIC_SMOKE_REPO_DIR");
     const QString src_dir = qEnvironmentVariable("KESTIC_SMOKE_SRC_DIR");
     SMOKE_CHECK("E2E", 50, !repo_dir.isEmpty(), "KESTIC_SMOKE_REPO_DIR not set");
-    SMOKE_CHECK("E2E", 50, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
+    SMOKE_CHECK("E2E", 611, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
     const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
-    SMOKE_CHECK("E2E", 50, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
+    SMOKE_CHECK("E2E", 612, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
     SMOKE_CLICK("E2E", 51, s.window, visible_button(s.top_nav, "Destinations"), "E2E Destinations tab");
     run_steps(s.window, {
         {250, [s] { SMOKE_CLICK("E2E", 52, s.window, visible_button(s.window->contentItem(), "Add Destination"), "E2E Add Destination"); }},
@@ -104,17 +108,17 @@ void scene_e2e_wizard_backup(const Scene& s) {
             QQuickWindow* w = s.window;
             QQuickItem* next_btn = child_item(w, "wizDestNextButton");
             SMOKE_ENTER_TEXT("E2E", 54, w, child_item(w, "wizDestNameField"), QStringLiteral("E2E Local Repo"), "Dest Name");
-            SMOKE_ENTER_TEXT("E2E", 54, w, child_item(w, "wizDestLocationField"), repo_dir, "Dest Location");
+            SMOKE_ENTER_TEXT("E2E", 613, w, child_item(w, "wizDestLocationField"), repo_dir, "Dest Location");
             SMOKE_CHECK("E2E", 55, !next_btn->isEnabled(), "Next must be disabled before connection test");
             SMOKE_CLICK("E2E", 56, w, child_item(w, "wizDestTestButton"), "E2E Test Connection");
             SMOKE_CHECK("E2E", 57, wait_for_connection_test(w, QStringLiteral("wizDest")), "the connection test never answered");
-            SMOKE_CHECK("E2E", 57, next_btn->isEnabled(), "Test Connection did not enable Next");
-            SMOKE_CLICK("E2E", 57, w, next_btn, "E2E Dest Step 2 Next");
+            SMOKE_CHECK("E2E", 614, next_btn->isEnabled(), "Test Connection did not enable Next");
+            SMOKE_CLICK("E2E", 615, w, next_btn, "E2E Dest Step 2 Next");
         }},
         {80, [s, repo_password] {
             QQuickWindow* w = s.window;
             SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordField"), repo_password, "Repo Password");
-            SMOKE_ENTER_TEXT("E2E", 58, w, child_item(w, "wizDestPasswordConfirmField"), repo_password, "Repeat Password");
+            SMOKE_ENTER_TEXT("E2E", 616, w, child_item(w, "wizDestPasswordConfirmField"), repo_password, "Repeat Password");
             SMOKE_CLICK("E2E", 59, w, child_item(w, "wizDestNextButton"), "E2E Save Destination");
         }},
         {400, [s] {
@@ -124,8 +128,8 @@ void scene_e2e_wizard_backup(const Scene& s) {
             SMOKE_CHECK("E2E", 60, !child_object(w, "addDestinationWizard"), "AddDestinationWizard did not close after Save Destination");
             auto* dm = model_named(w, "destinationsModel");
             SMOKE_CHECK("E2E", 61, dm, "destinationsModel missing");
-            SMOKE_CHECK("E2E", 61, dm->rowCount() == 1, "destinationsModel must hold exactly one destination");
-            SMOKE_CHECK("E2E", 61, role_value(dm, 0, "name").toString() == QLatin1String("E2E Local Repo"),
+            SMOKE_CHECK("E2E", 617, dm->rowCount() == 1, "destinationsModel must hold exactly one destination");
+            SMOKE_CHECK("E2E", 618, role_value(dm, 0, "name").toString() == QLatin1String("E2E Local Repo"),
                 "destinationsModel does not contain E2E Local Repo");
             SMOKE_CLICK("E2E", 62, w, visible_button(s.top_nav, "Backups"), "E2E Backups tab");
         }},
@@ -133,7 +137,7 @@ void scene_e2e_wizard_backup(const Scene& s) {
         {350, [s, src_dir] {
             QQuickWindow* w = s.window;
             SMOKE_ENTER_TEXT("E2E", 64, w, child_item(w, "wizBackupSourceField"), src_dir, "Backup Source");
-            SMOKE_CLICK("E2E", 64, w, child_item(w, "wizBackupNextButton"), "E2E Backup Step 1 Next");
+            SMOKE_CLICK("E2E", 619, w, child_item(w, "wizBackupNextButton"), "E2E Backup Step 1 Next");
         }},
         {80, [s] {
             QQuickWindow* w = s.window;
@@ -164,35 +168,35 @@ void scene_e2e_first_backup(const Scene& s) {
     const QString repo_dir = qEnvironmentVariable("KESTIC_SMOKE_REPO_DIR");
     const QString src_dir = qEnvironmentVariable("KESTIC_SMOKE_SRC_DIR");
     SMOKE_CHECK("E2E first-backup", 80, !repo_dir.isEmpty(), "KESTIC_SMOKE_REPO_DIR not set");
-    SMOKE_CHECK("E2E first-backup", 80, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
+    SMOKE_CHECK("E2E first-backup", 620, !src_dir.isEmpty(), "KESTIC_SMOKE_SRC_DIR not set");
     const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
-    SMOKE_CHECK("E2E first-backup", 80, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
+    SMOKE_CHECK("E2E first-backup", 621, !repo_password.isEmpty(), "KESTIC_SMOKE_REPO_PASSWORD not set");
     SMOKE_CLICK("E2E first-backup", 81, s.window, child_item(s.window, "setupFirstBackupButton"), "E2E First Backup Welcome Button");
     run_steps(s.window, {
         {350, [s, src_dir] {
             QQuickWindow* w = s.window;
             QQuickItem* nbw = child_item(w, "newBackupWizard");
             SMOKE_CHECK2("E2E first-backup", 82, nbw, nbw->property("integratedDestFlow").toBool(), "wizard must use the integrated destination flow");
-            SMOKE_ENTER_TEXT("E2E first-backup", 82, w, child_item(w, "wizBackupSourceField"), src_dir, "First Backup Source");
-            SMOKE_CLICK("E2E first-backup", 82, w, child_item(w, "wizBackupNextButton"), "First Backup Step 1 Next");
+            SMOKE_ENTER_TEXT("E2E first-backup", 622, w, child_item(w, "wizBackupSourceField"), src_dir, "First Backup Source");
+            SMOKE_CLICK("E2E first-backup", 623, w, child_item(w, "wizBackupNextButton"), "First Backup Step 1 Next");
         }},
         {80, [s] { SMOKE_CLICK("E2E first-backup", 83, s.window, child_item(s.window, "wizBackupNextButton"), "First Backup Step 2 Next"); }},
         {80, [s, repo_dir] {
             QQuickWindow* w = s.window;
             QQuickItem* next_btn = child_item(w, "wizBackupNextButton");
             SMOKE_ENTER_TEXT("E2E first-backup", 84, w, child_item(w, "wizBackupDestNameField"), QStringLiteral("First Local Repo"), "First Dest Name");
-            SMOKE_ENTER_TEXT("E2E first-backup", 84, w, child_item(w, "wizBackupDestLocationField"), repo_dir, "First Dest Location");
-            SMOKE_CLICK("E2E first-backup", 84, w, child_item(w, "wizBackupDestTestButton"), "First Dest Test Connection");
-            SMOKE_CHECK("E2E first-backup", 84, wait_for_connection_test(w, QStringLiteral("wizBackupDest")),
+            SMOKE_ENTER_TEXT("E2E first-backup", 624, w, child_item(w, "wizBackupDestLocationField"), repo_dir, "First Dest Location");
+            SMOKE_CLICK("E2E first-backup", 625, w, child_item(w, "wizBackupDestTestButton"), "First Dest Test Connection");
+            SMOKE_CHECK("E2E first-backup", 626, wait_for_connection_test(w, QStringLiteral("wizBackupDest")),
                 "the connection test never answered");
-            SMOKE_CHECK("E2E first-backup", 84, next_btn->isEnabled(), "Test Connection did not enable Next");
-            SMOKE_CLICK("E2E first-backup", 84, w, next_btn, "First Backup Step 3 Next");
+            SMOKE_CHECK("E2E first-backup", 627, next_btn->isEnabled(), "Test Connection did not enable Next");
+            SMOKE_CLICK("E2E first-backup", 628, w, next_btn, "First Backup Step 3 Next");
         }},
         {80, [s, repo_password] {
             QQuickWindow* w = s.window;
             SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordField"), repo_password, "First Repo Password");
-            SMOKE_ENTER_TEXT("E2E first-backup", 85, w, child_item(w, "wizBackupDestPasswordConfirmField"), repo_password, "First Repeat Password");
-            SMOKE_CLICK("E2E first-backup", 85, w, child_item(w, "wizBackupNextButton"), "First Backup Step 4 Next");
+            SMOKE_ENTER_TEXT("E2E first-backup", 629, w, child_item(w, "wizBackupDestPasswordConfirmField"), repo_password, "First Repeat Password");
+            SMOKE_CLICK("E2E first-backup", 630, w, child_item(w, "wizBackupNextButton"), "First Backup Step 4 Next");
         }},
         {80, [s] {
             QQuickWindow* w = s.window;
@@ -212,13 +216,13 @@ void scene_e2e_edit_reinit(const Scene& s) {
     QQuickWindow* w = s.window;
     QQuickItem* edit_page = child_item(w, "destinationEditPage");
     SMOKE_CHECK("E2E edit-reinit", 90, edit_page, "DestinationEditPage missing");
-    SMOKE_CLICK("E2E edit-reinit", 90, w, child_item(w, "destEditTestButton"), "Edit Dest Test Connection");
-    SMOKE_CHECK("E2E edit-reinit", 90, wait_for_connection_test(w, QStringLiteral("destEdit")),
+    SMOKE_CLICK("E2E edit-reinit", 631, w, child_item(w, "destEditTestButton"), "Edit Dest Test Connection");
+    SMOKE_CHECK("E2E edit-reinit", 632, wait_for_connection_test(w, QStringLiteral("destEdit")),
         "the connection test never answered");
     const QString kind = s.backend->property("connection_test_error_kind").toString();
     SMOKE_CHECK("E2E edit-reinit", 91, !s.backend->property("connection_test_ok").toBool(),
         "expected the connection test to fail for a missing repository");
-    SMOKE_CHECK("E2E edit-reinit", 91, kind == QLatin1String("repository_missing"),
+    SMOKE_CHECK("E2E edit-reinit", 633, kind == QLatin1String("repository_missing"),
         QStringLiteral("expected repository_missing, got kind='%1'").arg(kind));
     QObject* switch_init_act = child_object(w, "destEditSwitchToInitAction");
     SMOKE_CHECK_VISIBLE("E2E edit-reinit", 92, switch_init_act, "destEditSwitchToInitAction missing or not visible");
@@ -226,8 +230,8 @@ void scene_e2e_edit_reinit(const Scene& s) {
     QCoreApplication::processEvents();
     SMOKE_CHECK("E2E edit-reinit", 93, wait_for_connection_test(w, QStringLiteral("destEdit")),
         "the connection test never answered");
-    SMOKE_CHECK("E2E edit-reinit", 93, s.backend->property("connection_test_ok").toBool(), "switching to init did not pass connection test");
-    SMOKE_CHECK("E2E edit-reinit", 93, edit_page->property("setupMode").toString() == QLatin1String("init"),
+    SMOKE_CHECK("E2E edit-reinit", 634, s.backend->property("connection_test_ok").toBool(), "switching to init did not pass connection test");
+    SMOKE_CHECK("E2E edit-reinit", 635, edit_page->property("setupMode").toString() == QLatin1String("init"),
         "switching to init did not change setupMode to init");
     QObject* save_act = child_object(w, "saveDestinationAction");
     SMOKE_CHECK_ENABLED("E2E edit-reinit", 94, save_act, "saveDestinationAction missing or not enabled after init test");
@@ -238,7 +242,7 @@ void scene_e2e_edit_reinit(const Scene& s) {
             QQuickWindow* win = s.window;
             QQuickItem* nbw = child_item(win, "newBackupWizard");
             SMOKE_CHECK2("E2E nested-wizard", 95, nbw, !nbw->property("integratedDestFlow").toBool(), "wizard must not use the integrated destination flow");
-            SMOKE_CLICK("E2E nested-wizard", 95, win, child_item(win, "wizBackupNextButton"), "Nested Wizard Step 1 Next");
+            SMOKE_CLICK("E2E nested-wizard", 636, win, child_item(win, "wizBackupNextButton"), "Nested Wizard Step 1 Next");
         }},
         {120, [s] {
             QQuickWindow* win = s.window;
@@ -250,7 +254,7 @@ void scene_e2e_edit_reinit(const Scene& s) {
             QQuickItem* add_wiz = child_item(win, "addDestinationWizard");
             QQuickItem* dest_next = child_item(win, "wizDestNextButton");
             SMOKE_CHECK3("E2E nested-wizard", 97, add_wiz, add_wiz->isVisible(), dest_next, "nested AddDestinationWizard or wizDestNextButton missing");
-            SMOKE_CHECK("E2E nested-wizard", 97, add_wiz->width() >= win->width() - 20,
+            SMOKE_CHECK("E2E nested-wizard", 637, add_wiz->width() >= win->width() - 20,
                 QStringLiteral("nested AddDestinationWizard not full-width (w=%1 win=%2)").arg(add_wiz->width()).arg(win->width()));
             const QPointF c = dest_next->mapToScene(QPointF(dest_next->width() / 2.0, dest_next->height() / 2.0));
             const QString clipped = QStringLiteral("wizDestNextButton clipped at (%1,%2) in (%3x%4)")
@@ -294,7 +298,7 @@ void scene_keyboard_navigation(const Scene& s) {
     send_key(window, Qt::Key_Return);
     SMOKE_CHECK("M1 keyboard", 105, child_item(window, "backupSnapshotsPage"),
         "Return on showSnapshotsButton did not open BackupSnapshotsPage");
-    press_and_wait(window, Qt::Key_Escape, 100);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupSnapshotsPage"); }, 100);
     SMOKE_CHECK("M1 keyboard", 106, !child_item(window, "backupSnapshotsPage"),
         "Esc did not close BackupSnapshotsPage");
 
@@ -312,10 +316,10 @@ void scene_keyboard_navigation(const Scene& s) {
     SMOKE_CHECK("M1 keyboard", 113, cb1 != cb0, "Return did not toggle excludeCachesCheckbox (or double-toggled)");
     SMOKE_CHECK("M1 keyboard", 114, excl_page->property("dirty").toBool(),
         "BackupExcludesEditPage did not mark dirty after checkbox toggle");
-    press_and_wait(window, Qt::Key_Escape, 120);
+    send_key(window, Qt::Key_Escape);
     QObject* unsaved_dlg = child_object(window, "unsavedExcludesDialog");
     SMOKE_CHECK_OPENED("M1 keyboard", 115, unsaved_dlg, "Esc on dirty BackupExcludesEditPage did not open unsavedExcludesDialog");
-    press_and_wait(window, Qt::Key_Escape, 300);
+    press_until(window, Qt::Key_Escape, [&] { return is_closed(unsaved_dlg); }, 300);
     SMOKE_CHECK_CLOSED("M1 keyboard", 116, unsaved_dlg, "Esc did not close unsavedExcludesDialog");
     // Restore checkbox to clean state
     cache_cb->forceActiveFocus(Qt::TabFocusReason);
@@ -342,7 +346,7 @@ void scene_keyboard_navigation(const Scene& s) {
         SMOKE_CHECK("M1 keyboard", 164, wait_until([&] { return !backend->property("expert_mode").toBool(); }, 15000),
             "Expert mode did not switch off");
     }
-    press_and_wait(window, Qt::Key_Escape, 120);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupExcludesEditPage"); }, 120);
     SMOKE_CHECK("M1 keyboard", 118, !child_item(window, "backupExcludesEditPage"),
         "Clean Esc did not close BackupExcludesEditPage");
 
@@ -412,10 +416,10 @@ void scene_keyboard_navigation(const Scene& s) {
 
     if (QObject* show_cmd = child_object(window, "runDetailShowCommandAction")) {
         trigger(show_cmd);
-        wait_ms(120);
         QObject* cmd_dlg = child_object(window, "showCommandDialog");
+        wait_until([&] { return cmd_dlg && cmd_dlg->property("visible").toBool(); }, 120);
         SMOKE_CHECK_VISIBLE("M1 keyboard", 134, cmd_dlg, "showCommandDialog failed to open");
-        press_and_wait(window, Qt::Key_Escape, 300);
+        press_until(window, Qt::Key_Escape, [&] { return is_closed(cmd_dlg); }, 300);
         SMOKE_CHECK_CLOSED("M1 keyboard", 135, cmd_dlg, "Esc did not close showCommandDialog");
     } else {
         SMOKE_FAIL("M1 keyboard", 136, "runDetailShowCommandAction missing");
@@ -423,7 +427,7 @@ void scene_keyboard_navigation(const Scene& s) {
 
     // 5. Wizards: NewBackupWizard Step 3 TextArea Tab escape + Esc, AddDestinationWizard clean & dirty Esc
     QMetaObject::invokeMethod(window, "openNewBackupWizard", Q_ARG(QVariant, false));
-    wait_ms(120);
+    wait_until([&] { return child_object(window, "newBackupWizard") != nullptr; }, 120);
     if (QObject* nbw = child_object(window, "newBackupWizard")) {
         nbw->setProperty("stepIndex", 2);
         QCoreApplication::processEvents();
@@ -435,32 +439,32 @@ void scene_keyboard_navigation(const Scene& s) {
     press_tab(window);
     SMOKE_CHECK2("M1 keyboard", 139, window->activeFocusItem() != wiz_excl, !wiz_excl->property("text").toString().contains(QLatin1Char('\t')),
         "Tab trapped or inserted \\t in wizBackupExcludesArea");
-    press_and_wait(window, Qt::Key_Escape, 150);
+    press_until(window, Qt::Key_Escape, [&] { return !window->property("inWizardLayer").toBool(); }, 150);
     SMOKE_CHECK("M1 keyboard", 140, !window->property("inWizardLayer").toBool(), "Esc did not close clean NewBackupWizard");
 
     QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
-    wait_ms(120);
-    SMOKE_CHECK("M1 keyboard", 141, window->property("inWizardLayer").toBool(), "AddDestinationWizard did not open");
-    press_and_wait(window, Qt::Key_Escape, 150);
+    SMOKE_CHECK("M1 keyboard", 141, wait_until([&] { return window->property("inWizardLayer").toBool(); }, 120),
+        "AddDestinationWizard did not open");
+    press_until(window, Qt::Key_Escape, [&] { return !window->property("inWizardLayer").toBool(); }, 150);
     SMOKE_CHECK("M1 keyboard", 142, !window->property("inWizardLayer").toBool(), "Esc did not close clean AddDestinationWizard");
     QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
-    wait_ms(120);
+    wait_until([&] { return window->property("inWizardLayer").toBool() && child_object(window, "addDestinationWizard"); }, 120);
     QObject* wiz = child_object(window, "addDestinationWizard");
     SMOKE_CHECK("M1 keyboard", 157, wiz, "addDestinationWizard missing");
     wiz->setProperty("destName", QStringLiteral("Unsaved Name"));
     QCoreApplication::processEvents();
-    press_and_wait(window, Qt::Key_Escape, 120);
+    send_key(window, Qt::Key_Escape);
     QObject* discard_dlg = child_object(window, "discardDestDialog");
     SMOKE_CHECK_OPENED("M1 keyboard", 143, discard_dlg, "Esc on dirty AddDestinationWizard did not open discardDestDialog");
-    press_and_wait(window, Qt::Key_Escape, 300);
+    press_until(window, Qt::Key_Escape, [&] { return is_closed(discard_dlg); }, 300);
     SMOKE_CHECK_CLOSED("M1 keyboard", 144, discard_dlg, "Esc did not close discardDestDialog");
     QMetaObject::invokeMethod(window, "closeWizardLayer");
-    wait_ms(100);
+    wait_until([&] { return !window->property("inWizardLayer").toBool(); }, 100);
 
     // 6. SettingsDialog: Tab -> expertModeSwitch single toggle on Return -> resticSourceDialog -> Esc closes dialog, second Esc closes SettingsWindow
     QMetaObject::invokeMethod(window, "openSettingsWindow");
-    wait_ms(120);
     auto* sw = window->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
+    wait_until([&] { return sw && sw->isVisible(); }, 120);
     SMOKE_CHECK_VISIBLE("M1 keyboard", 145, sw, "SettingsDialog failed to open");
     const bool exp0 = backend->property("expert_mode").toBool();
     QQuickItem* exp_sw = tab_to(sw, "expertModeSwitch", 10);
@@ -475,13 +479,15 @@ void scene_keyboard_navigation(const Scene& s) {
         "Second Return did not restore expertModeSwitch in SettingsDialog");
     SMOKE_CHECK("M1 keyboard", 149, tab_to(sw, "changeResticSourceButton", 10),
         "Tab did not reach changeResticSourceButton in SettingsDialog");
-    press_and_wait(sw, Qt::Key_Return, 120);
+    send_key(sw, Qt::Key_Return);
     QObject* restic_dlg = child_object(sw, "resticSourceDialog");
     SMOKE_CHECK_OPENED("M1 keyboard", 150, restic_dlg, "Return on changeResticSourceButton did not open resticSourceDialog");
-    press_and_wait(sw, Qt::Key_Escape, 300);
+    press_until(sw, Qt::Key_Escape, [&] {
+        return !restic_dlg->property("visible").toBool() && !restic_dlg->property("opened").toBool();
+    }, 300);
     SMOKE_CHECK3("M1 keyboard", 151, !restic_dlg->property("visible").toBool(), !restic_dlg->property("opened").toBool(), sw->isVisible(),
         "First Esc in SettingsDialog did not close resticSourceDialog while keeping SettingsDialog open");
-    press_and_wait(sw, Qt::Key_Escape, 150);
+    press_until(sw, Qt::Key_Escape, [&] { return !sw->isVisible(); }, 150);
     SMOKE_CHECK("M1 keyboard", 152, !sw->isVisible(), "Second Esc in SettingsDialog did not close SettingsDialog window");
 
     // Return to Overview and focus overviewBackupCard so the artifact screenshot also captures the visible 2px focus ring
@@ -490,7 +496,7 @@ void scene_keyboard_navigation(const Scene& s) {
     QCoreApplication::processEvents();
     QPointer<QQuickItem> final_card(tab_to(window, "overviewBackupCard", 20));
     SMOKE_CHECK("M1 keyboard", 153, !final_card.isNull(), "Could not re-focus overviewBackupCard on OverviewPage");
-    wait_ms(120);
+    wait_ms(120); // quiet window: an idle state sync that took the focus would show by now
     SMOKE_CHECK2("M1 keyboard", 154, !final_card.isNull(), final_card->property("activeFocus").toBool(),
         "overviewBackupCard lost activeFocus across idle state sync");
 
@@ -543,7 +549,7 @@ void run_daemon_starting_scene(
             smoke_fail("M6", 8, QStringLiteral("the daemon the GUI started never became reachable"));
         } else if (backend->property("blocking_kind").toString() != QLatin1String("daemon_starting")) {
             poll->stop();
-            smoke_fail("M6", 10, QStringLiteral("(b) after %1 ms the window no longer says that the service starts: '%2'")
+            smoke_fail("M6", 638, QStringLiteral("(b) after %1 ms the window no longer says that the service starts: '%2'")
                 .arg(waited->elapsed()).arg(backend->property("blocking_message").toString()));
         }
     });
@@ -600,18 +606,18 @@ void run_slow_daemon_scene(
     const QString& out_path,
     qint64 since_load_ms
 ) {
-    SMOKE_CHECK("M6", 40, since_load_ms < 3000,
+    SMOKE_CHECK("M6", 639, since_load_ms < 3000,
         QStringLiteral("(a) the window answered %1 ms after loading: the main thread waited for the daemon").arg(since_load_ms));
-    SMOKE_CHECK("M6", 41, !backend->property("daemon_reachable").toBool(),
+    SMOKE_CHECK("M6", 640, !backend->property("daemon_reachable").toBool(),
         "precondition: the first state is still on its way");
     const QString kind = backend->property("blocking_kind").toString();
-    SMOKE_CHECK("M6", 42, kind.isEmpty(),
+    SMOKE_CHECK("M6", 641, kind.isEmpty(),
         QStringLiteral("(b) while the first state loads, no blocking state is shown: '%1'").arg(kind));
     QQuickItem* loading = child_item(window, "stateLoadingPlaceholder");
     SMOKE_CHECK_VISIBLE("M6", 43, loading, "(b) the overview shows that it loads");
     QString loading_shot = out_path;
     loading_shot.replace(QStringLiteral("m6-slow-daemon"), QStringLiteral("m6-slow-daemon-loading"));
-    SMOKE_CHECK("M6", 53, save_screenshot(window, loading_shot), "screenshot of the loading state");
+    SMOKE_CHECK("M6", 642, save_screenshot(window, loading_shot), "screenshot of the loading state");
     // (b) no tab claims that nothing is configured while the state loads.
     const std::vector<std::pair<int, const char*>> empty_texts = {
         {1, "backupsEmptyPlaceholder"}, {2, "destinationsEmptyPlaceholder"}, {3, "historyEmptyPlaceholder"}};
@@ -619,7 +625,7 @@ void run_slow_daemon_scene(
         QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, tab));
         QCoreApplication::processEvents();
         QQuickItem* empty = child_item(window, name);
-        SMOKE_CHECK2("M6", 52, empty, !empty->property("visible").toBool(),
+        SMOKE_CHECK2("M6", 643, empty, !empty->property("visible").toBool(),
             QStringLiteral("(b) %1 is shown while the state loads").arg(QLatin1String(name)));
     }
     QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 0));
@@ -647,7 +653,7 @@ void run_slow_daemon_scene(
             *bid = backup_id_at(window, 0);
             if (bid->isEmpty()) {
                 poll->stop();
-                smoke_fail("M6", 54, QStringLiteral("precondition: one backup"));
+                smoke_fail("M6", 644, QStringLiteral("precondition: one backup"));
                 return;
             }
         }
@@ -692,13 +698,13 @@ void run_slow_daemon_scene(
                 const qint64 switch_ms = switching.elapsed();
                 if (switch_ms >= 1000) {
                     poll->stop();
-                    smoke_fail("M6", 55, QStringLiteral("(a) switching tabs took %1 ms: it waited for the daemon").arg(switch_ms));
+                    smoke_fail("M6", 645, QStringLiteral("(a) switching tabs took %1 ms: it waited for the daemon").arg(switch_ms));
                     return;
                 }
                 const int tab = window->property("activeTab").toInt();
                 if (tab != 2) {
                     poll->stop();
-                    smoke_fail("M6", 50, QStringLiteral("(b) the window did not switch tabs while calls were pending: %1").arg(tab));
+                    smoke_fail("M6", 646, QStringLiteral("(b) the window did not switch tabs while calls were pending: %1").arg(tab));
                 }
                 return;
             }
@@ -712,7 +718,7 @@ void run_slow_daemon_scene(
                 && backend->property("expert_mode").toBool() != *expert_before) {
             poll->stop();
             *stop = true;
-            SMOKE_CHECK("M6", 51, *largest_gap <= 100,
+            SMOKE_CHECK("M6", 647, *largest_gap <= 100,
                 QStringLiteral("(a) the main thread paused %1 ms while the daemon was slow").arg(*largest_gap));
             smoke_finish("M6", warnings.get(), window, out_path);
         }
@@ -787,7 +793,7 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
     QObject::connect(poll, &QTimer::timeout, window, [=]() {
         if (waited->elapsed() > 90000) {
             poll->stop();
-            smoke_fail("M6", 70, QStringLiteral("timed out at step %1").arg(*step));
+            smoke_fail("M6", 648, QStringLiteral("timed out at step %1").arg(*step));
             return;
         }
         if (*step < 0) {
@@ -869,11 +875,11 @@ void run_slow_edits_scene(QQuickWindow* window, QObject* backend,
                 return;
             }
             QQuickItem* loading = child_item(window, "wizDestCardsLoading");
-            SMOKE_CHECK2("M6", 78, loading, !loading->isVisible(), "(b) the loading state stays after the destination types arrived");
+            SMOKE_CHECK2("M6", 649, loading, !loading->isVisible(), "(b) the loading state stays after the destination types arrived");
             QObject* wizard = child_object(window, "addDestinationWizard");
-            SMOKE_CHECK("M6", 78, wizard, "addDestinationWizard missing");
+            SMOKE_CHECK("M6", 650, wizard, "addDestinationWizard missing");
             auto* draft = wizard->property("draft").value<QObject*>();
-            SMOKE_CHECK("M6", 78, draft, "the wizard's draft missing");
+            SMOKE_CHECK("M6", 651, draft, "the wizard's draft missing");
             *building_page = true;
             draft->setProperty("typeCard", QStringLiteral("drive"));
             wizard->setProperty("step", 2);
@@ -932,7 +938,7 @@ void run_slow_order_scene(QQuickWindow* window, QObject* backend,
     const QString backup_b = qEnvironmentVariable("KESTIC_TEST_BACKUP_B");
     const QString run_a = qEnvironmentVariable("KESTIC_TEST_RUN_A");
     const QString run_b = qEnvironmentVariable("KESTIC_TEST_RUN_B");
-    SMOKE_CHECK("M6", 80, !backup_a.isEmpty() && !backup_b.isEmpty() && !run_a.isEmpty() && !run_b.isEmpty(),
+    SMOKE_CHECK("M6", 652, !backup_a.isEmpty() && !backup_b.isEmpty() && !run_a.isEmpty() && !run_b.isEmpty(),
         "precondition: backup and run ids");
     auto step = std::make_shared<int>(-1);
     auto settled = std::make_shared<QElapsedTimer>();
@@ -942,7 +948,7 @@ void run_slow_order_scene(QQuickWindow* window, QObject* backend,
     QObject::connect(poll, &QTimer::timeout, window, [=]() {
         if (waited->elapsed() > 60000) {
             poll->stop();
-            smoke_fail("M6", 81, QStringLiteral("timed out at step %1").arg(*step));
+            smoke_fail("M6", 653, QStringLiteral("timed out at step %1").arg(*step));
             return;
         }
         if (*step < 0) {
@@ -983,14 +989,14 @@ void run_slow_order_scene(QQuickWindow* window, QObject* backend,
             if (settled->elapsed() < 9000) return;
             poll->stop();
             const QString shown_run = backend->property("selected_run_id").toString();
-            SMOKE_CHECK("M6", 82, shown_run == run_b,
+            SMOKE_CHECK("M6", 654, shown_run == run_b,
                 QStringLiteral("(b) the detail of run %1 shows instead of run B").arg(shown_run));
             const QString shown_list = backend->property("snapshots_backup_id").toString();
-            SMOKE_CHECK2("M6", 83, shown_list == backup_b, !backend->property("snapshots_loading").toBool(),
+            SMOKE_CHECK2("M6", 655, shown_list == backup_b, !backend->property("snapshots_loading").toBool(),
                 QStringLiteral("(b) the snapshot list of %1 shows instead of backup B").arg(shown_list));
             const int row = row_of(window, "backupsModel", "backupId", backup_a);
             const QString name = role_value(model_named(window, "backupsModel"), row, "name").toString();
-            SMOKE_CHECK("M6", 84, name == QLatin1String("Renamed A"),
+            SMOKE_CHECK("M6", 656, name == QLatin1String("Renamed A"),
                 QStringLiteral("(b) saving the exclude rules undid the rename: '%1'").arg(name));
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
@@ -1013,7 +1019,7 @@ void run_double_save(QQuickWindow* window, const std::shared_ptr<QStringList>& w
             const bool caches = page->property("excludeCaches").toBool();
             page->setProperty("excludeCaches", !caches);
             QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
-            SMOKE_CHECK3("M6", 89, page->property("saving").toBool(), save, !save->property("enabled").toBool(),
+            SMOKE_CHECK3("M6", 657, page->property("saving").toBool(), save, !save->property("enabled").toBool(),
                 "(b) «Save» stays on while the exclude rules are saved");
             QMetaObject::invokeMethod(page, "saveForGuard", Q_ARG(QVariant, QVariant()));
             wait_then(window, 20000, 90, QStringLiteral("the save never answered"),
@@ -1027,7 +1033,7 @@ void run_double_save(QQuickWindow* window, const std::shared_ptr<QStringList>& w
                     wait_then(window, 20000, 91, QStringLiteral("timed out"),
                         [=]() { return settled->elapsed() > 12000; },
                         [=]() {
-                            SMOKE_CHECK2("M6", 91, page->property("dirty").toBool(),
+                            SMOKE_CHECK2("M6", 658, page->property("dirty").toBool(),
                                 page->property("excludeCaches").toBool() == caches,
                                 "(b) a second save discarded the change made after the first one answered");
                             smoke_finish("M6", warnings.get(), window, out_path);
@@ -1045,7 +1051,7 @@ void run_slow_save_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     const QString repo = qEnvironmentVariable("KESTIC_TEST_REPO");
     const QString source = qEnvironmentVariable("KESTIC_TEST_SOURCE");
-    SMOKE_CHECK("M6", 85, !repo.isEmpty() && !source.isEmpty(), "precondition: repository and source paths");
+    SMOKE_CHECK("M6", 659, !repo.isEmpty() && !source.isEmpty(), "precondition: repository and source paths");
     wait_then(window, 30000, 86, QStringLiteral("the state never arrived"),
         [=]() { return backend->property("daemon_reachable").toBool() && !backup_id_at(window, 0).isEmpty(); },
         [=]() {
@@ -1063,146 +1069,225 @@ void run_slow_save_scene(QQuickWindow* window, QObject* backend,
                 "  });"
                 "})(%1)").arg(args));
             chain.evaluate();
-            SMOKE_CHECK("M6", 87, !chain.hasError(), chain.error().toString());
+            SMOKE_CHECK("M6", 660, !chain.hasError(), chain.error().toString());
             wait_then(window, 30000, 87, QStringLiteral("the added backup never arrived"),
                 [=]() {
                     return row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0
                         || !backend->property("last_action_error").toString().isEmpty();
                 },
                 [=]() {
-                    SMOKE_CHECK("M6", 87, row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0,
+                    SMOKE_CHECK("M6", 661, row_of(window, "backupsModel", "name", QStringLiteral("Added")) >= 0,
                         QStringLiteral("adding failed: %1").arg(backend->property("last_action_error").toString()));
                     run_double_save(window, warnings, out_path);
                 });
         });
 }
 
-// AC-M6-33-1: «Back Up Now» and «Back Up All Now» answered late (the test holds StartBackup and
-// StartAllBackups back 30 s) do not hold back pausing that backup or all backups.
-void run_slow_start_scene(QQuickWindow* window, QObject* backend,
-    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    wait_then(window, 30000, 67, QStringLiteral("the state never arrived"),
-        [=]() { return backend->property("daemon_reachable").toBool(); },
-        [=]() {
-            const QString bid = backup_id_at(window, 0);
-            QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
-            QMetaObject::invokeMethod(backend, "startAllBackups");
-            QMetaObject::invokeMethod(backend, "pauseBackup", Q_ARG(QString, bid), Q_ARG(QString, QStringLiteral("1h")));
-            QMetaObject::invokeMethod(backend, "pauseGlobal", Q_ARG(QString, QStringLiteral("1h")));
-            wait_then(window, 5000, 68, QStringLiteral("pausing waited for the slow starts"),
-                [=]() {
-                    return backend->property("global_paused").toBool()
-                        && role_value(model_named(window, "backupsModel"), 0, "isPaused").toBool();
-                },
-                [=]() { smoke_finish("M6", warnings.get(), window, out_path); });
-        });
-}
+const NamedScenario<void (*)(const Scene&)> kM6Scenes[] = {
+    {"m6-daemon-starting", [](const Scene& s) {
+        run_daemon_starting_scene(s.window, s.backend, s.warnings, s.out_path, s.lang, s.since_load_ms);
+    }},
+    {"m6-transparent-command", [](const Scene& s) { run_transparent_command_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-state-change", [](const Scene& s) { run_state_change_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-daemon", [](const Scene& s) {
+        run_slow_daemon_scene(s.window, s.backend, s.warnings, s.out_path, s.since_load_ms);
+    }},
+    {"m6-quit-running", [](const Scene& s) { run_quit_running_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-prompt-alone", [](const Scene& s) { run_prompt_alone_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-close-window", [](const Scene& s) { run_close_window_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-order", [](const Scene& s) { run_slow_order_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-stale", [](const Scene& s) { run_slow_stale_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-queries", [](const Scene& s) { run_slow_queries_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-save", [](const Scene& s) { run_slow_save_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-edits", [](const Scene& s) { run_slow_edits_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-slow-start", [](const Scene& s) { run_slow_start_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-refused-start", [](const Scene& s) { run_refused_start_scene(s.window, s.backend, s.warnings, s.out_path); }},
+    {"m6-rest-login", [](const Scene& s) { run_rest_login_scene(s.window, s.warnings, s.out_path, s.lang); }},
+};
 
-// AC-M6-33-1: «Back Up Now» before the first state arrived, for a backup whose source is gone:
-// the refusal names the backup and the reason the daemon gave.
-void run_refused_start_scene(QQuickWindow* window, QObject* backend,
-    const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
-    const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP_ID");
-    SMOKE_CHECK("M6", 64, !bid.isEmpty(), "precondition: backup id");
-    QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
-    wait_then(window, 30000, 65, QStringLiteral("the refusal never arrived"),
-        [=]() { return !backend->property("manual_run_blocked_message").toString().isEmpty(); },
-        [=]() {
-            const QString shown = backend->property("manual_run_blocked_message").toString();
-            if (shown != QStringLiteral("Cannot back up 'Documents': source is unavailable.")) {
-                smoke_fail("M6", 66, QStringLiteral("the refusal reads '%1'").arg(shown));
-                return;
-            }
-            smoke_finish("M6", warnings.get(), window, out_path);
-        });
-}
-
-// AC-M6-33-4 (a): the test changes the daemon state; the window shows it within 1 s, with no
-// timer of its own. The scene writes `<marker>.ready` when it is up; the test writes
-// `<marker>.go` and then changes expert mode over D-Bus.
-void run_state_change_scene(
-    QQuickWindow* window,
-    QObject* backend,
-    const std::shared_ptr<QStringList>& warnings,
-    const QString& out_path
-) {
-    const QString marker = qEnvironmentVariable("KESTIC_TEST_STATE_CHANGE_MARKER");
-    SMOKE_CHECK("M6", 30, !marker.isEmpty(), "precondition: marker path");
-    const bool before = backend->property("expert_mode").toBool();
-    QFile ready(marker + QStringLiteral(".ready"));
-    SMOKE_CHECK("M6", 31, ready.open(QIODevice::WriteOnly), "write the ready marker");
-    ready.close();
-    auto since_go = std::make_shared<QElapsedTimer>();
-    auto waited = std::make_shared<QElapsedTimer>();
-    waited->start();
-    auto* poll = new QTimer(window);
-    QObject::connect(poll, &QTimer::timeout, window, [=]() {
-        if (!since_go->isValid()) {
-            if (QFile::exists(marker + QStringLiteral(".go"))) {
-                since_go->start();
-            } else if (waited->elapsed() > 60000) {
-                poll->stop();
-                smoke_fail("M6", 32, QStringLiteral("the test never changed the daemon state"));
-            }
-            return;
-        }
-        if (backend->property("expert_mode").toBool() != before) {
-            poll->stop();
-            const qint64 ms = since_go->elapsed();
-            SMOKE_CHECK("M6", 33, ms <= 1000,
-                QStringLiteral("(a) the window showed the change after %1 ms").arg(ms));
-            smoke_finish("M6", warnings.get(), window, out_path);
-        } else if (since_go->elapsed() > 10000) {
-            poll->stop();
-            smoke_fail("M6", 34, QStringLiteral("(a) the change never reached the window"));
-        }
-    });
-    poll->start(20);
-}
-
-void run_m6_smoke_scenario(
-    QQuickWindow* window,
-    QObject* backend,
-    const std::shared_ptr<QStringList>& warnings,
-    const QString& scen,
-    const QString& out_path,
-    const QString& lang,
-    qint64 since_load_ms
-) {
-    if (scen == QLatin1String("m6-daemon-starting")) {
-        run_daemon_starting_scene(window, backend, warnings, out_path, lang, since_load_ms);
-    } else if (scen == QLatin1String("m6-transparent-command")) {
-        run_transparent_command_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-state-change")) {
-        run_state_change_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-daemon")) {
-        run_slow_daemon_scene(window, backend, warnings, out_path, since_load_ms);
-    } else if (scen == QLatin1String("m6-quit-running")) {
-        run_quit_running_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-prompt-alone")) {
-        run_prompt_alone_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-close-window")) {
-        run_close_window_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-order")) {
-        run_slow_order_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-stale")) {
-        run_slow_stale_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-queries")) {
-        run_slow_queries_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-save")) {
-        run_slow_save_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-edits")) {
-        run_slow_edits_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-slow-start")) {
-        run_slow_start_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-refused-start")) {
-        run_refused_start_scene(window, backend, warnings, out_path);
-    } else if (scen == QLatin1String("m6-rest-login")) {
-        run_rest_login_scene(window, warnings, out_path, lang);
-    } else {
-        smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(scen));
+void run_m6_smoke_scenario(const Scene& s) {
+    if (auto run = find_scenario(kM6Scenes, s.scen)) {
+        run(s);
+        return;
     }
+    smoke_fail("M6", 99, QStringLiteral("unknown scenario %1").arg(s.scen));
 }
+
+// Navigation before the checks of the main-window scenarios: opens the page they check.
+const NamedScenario<void (*)(QQuickWindow*, QObject*)> kSetups[] = {
+    {"backups-detail-show-cmd", [](QQuickWindow* window, QObject*) {
+        QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 1));
+    }},
+    {"destinations-reassign", [](QQuickWindow* window, QObject*) {
+        const QString bid = backup_id_at(window, 0);
+        if (!bid.isEmpty()) {
+            QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
+            QMetaObject::invokeMethod(window, "openBackupReassignPage", Q_ARG(QVariant, bid));
+        }
+    }},
+    {"snapshots-previous", [](QQuickWindow* window, QObject*) {
+        QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 1));
+        const QString bid = backup_id_at(window, 0);
+        if (!bid.isEmpty()) {
+            const QString bname = role_value(model_named(window, "backupsModel"), 0, "name").toString();
+            QMetaObject::invokeMethod(window, "openBackupSnapshotsPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, bname));
+        }
+    }},
+    {"history-run-detail", [](QQuickWindow* window, QObject*) {
+        QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 3));
+        const QString rid = run_id_at(window, 0);
+        if (!rid.isEmpty()) {
+            QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
+        }
+    }},
+    {"manual-run-blocked", [](QQuickWindow* window, QObject* backend) {
+        const QString bid = backup_id_at(window, 0);
+        if (!bid.isEmpty()) {
+            QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
+        }
+    }},
+    {"wizard-validation", [](QQuickWindow* window, QObject*) {
+        QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
+    }},
+    {"e2e-edit-reinit-and-nested-wizard", [](QQuickWindow* window, QObject*) {
+        const QString did = destination_id_at(window, 0);
+        if (!did.isEmpty()) {
+            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
+            QMetaObject::invokeMethod(window, "openDestinationEditPage", Q_ARG(QVariant, did));
+        }
+    }},
+    {"settings", [](QQuickWindow* window, QObject*) { QMetaObject::invokeMethod(window, "openSettingsWindow"); }},
+};
+
+// The checks of a main-window scenario after the common ones: each ends the smoke itself.
+void finish_main(const Scene& s, QQuickWindow* shot) {
+    smoke_finish("M1", nullptr, shot, s.out_path);
+}
+
+// The scenarios of the later milestones and of the blocking banners, by name prefix.
+const NamedScenario<void (*)(const Scene&)> kPrefixChecks[] = {
+    {"m2-", [](const Scene& s) {
+        run_m2_smoke_scenario(*s.engine, s.window, s.backend, s.warnings, s.scen, s.out_path, s.lang);
+    }},
+    {"m3-", [](const Scene& s) {
+        run_m3_smoke_scenario(*s.engine, s.window, s.backend, s.warnings, s.scen, s.out_path, s.lang);
+    }},
+    {"m4-", [](const Scene& s) {
+        run_m4_smoke_scenario(*s.engine, s.window, s.backend, s.warnings, s.scen, s.out_path, s.lang);
+    }},
+    {"m5-", [](const Scene& s) {
+        run_m5_smoke_scenario(*s.engine, s.window, s.backend, s.warnings, s.scen, s.out_path, s.lang);
+    }},
+    {"m6-", run_m6_smoke_scenario},
+    {"blocking-", [](const Scene& s) {
+        const QString expected_kind = s.scen.mid(QStringLiteral("blocking-").size());
+        const QString actual_kind = s.backend->property("blocking_kind").toString();
+        SMOKE_CHECK("M1", 664, actual_kind == expected_kind,
+            QStringLiteral("expected blocking_kind='%1', got '%2'").arg(expected_kind, actual_kind));
+        if (expected_kind == QLatin1String("restic_unavailable")) {
+            QObject* dl_action = child_object(s.window, "downloadResticAction");
+            SMOKE_CHECK_ENABLED("M1", 23, dl_action, "Download restic action must be offered while restic is unusable");
+        }
+        finish_main(s, s.window);
+    }},
+};
+
+const NamedScenario<void (*)(const Scene&)> kChecks[] = {
+    {"welcome", [](const Scene& s) {
+        QQuickItem* wv = child_item(s.window, "welcomeView");
+        SMOKE_CHECK_VISIBLE("M1", 665, wv, "welcomeView should be visible when unconfigured");
+        finish_main(s, s.window);
+    }},
+    {"overview", [](const Scene& s) {
+        QQuickItem* ov = child_item(s.window, "overviewContent");
+        SMOKE_CHECK_VISIBLE("M1", 666, ov, "overviewContent should be visible");
+        finish_main(s, s.window);
+    }},
+    {"backups-detail-show-cmd", [](const Scene& s) {
+        QObject* show_cmd = child_object(s.window, "backupDetailShowCommandAction");
+        SMOKE_CHECK_ENABLED("M1", 24, show_cmd, "Show Command action on BackupDetailPage must be enabled even when expert_mode=false");
+        trigger(show_cmd);
+        QQuickWindow* window = s.window;
+        const QString out_path = s.out_path;
+        QTimer::singleShot(250, window, [window, out_path]() {
+            QObject* cmd_area = child_object(window, "showCommandTextArea");
+            SMOKE_CHECK2("M1", 25, cmd_area, cmd_area->property("text").toString().contains(QStringLiteral("RESTIC_PASSWORD_COMMAND")),
+                "Show Command dialog missing transparent command");
+            smoke_finish("M1", nullptr, window, out_path);
+        });
+    }},
+    {"destinations-reassign", [](const Scene& s) {
+        QObject* switch_act = child_object(s.window, "switchDestinationAction");
+        SMOKE_CHECK_DISABLED("M1", 26, switch_act, "Switch Destination must be disabled before selecting a destination");
+        finish_main(s, s.window);
+    }},
+    {"snapshots-previous", [](const Scene& s) {
+        QQuickItem* snap_list = child_item(s.window, "snapshotsListView");
+        SMOKE_CHECK("M1", 27, snap_list, "snapshotsListView not found");
+        QList<QQuickItem*> snap_items;
+        collect_visual_descendants(snap_list, snap_items);
+        const QString earlier_header_prefix = (s.lang == QLatin1String("de"))
+            ? QString::fromUtf8("Frühere Snapshots auf '")
+            : QStringLiteral("Earlier snapshots on '");
+        bool found_prev_header = false;
+        for (QQuickItem* it : snap_items) {
+            if (it->objectName() == QLatin1String("snapshotSectionHeader")) {
+                const QString hdr = it->property("text").toString();
+                if (hdr.contains(earlier_header_prefix)) {
+                    found_prev_header = true;
+                    break;
+                }
+            }
+        }
+        SMOKE_CHECK("M1", 28, found_prev_header, "previous destination snapshots section header not found");
+        finish_main(s, s.window);
+    }},
+    {"history-run-detail", [](const Scene& s) {
+        QObject* tab_bar = child_object(s.window, "runDetailTabBar");
+        QObject* show_cmd = child_object(s.window, "runDetailShowCommandAction");
+        SMOKE_CHECK4("M1", 29, tab_bar, tab_bar->property("count").toInt() == 3, show_cmd, show_cmd->property("enabled").toBool(),
+            "RunDetailPage 3 tabs or Show Command missing");
+        finish_main(s, s.window);
+    }},
+    {"manual-run-blocked", [](const Scene& s) {
+        QQuickItem* banner = child_item(s.window, "manualRunBlockedBanner");
+        // The refusal arrives once the daemon answered.
+        wait_until([&] { return banner && banner->isVisible(); }, 10000);
+        SMOKE_CHECK3("M1", 667, banner, banner->isVisible(), !s.backend->property("manual_run_blocked_message").toString().isEmpty(),
+            "ManualRunBlocked inline banner not shown");
+        finish_main(s, s.window);
+    }},
+    {"wizard-validation", [](const Scene& s) {
+        QObject* wiz = child_object(s.window, "addDestinationWizard");
+        QObject* next_btn = child_object(s.window, "wizDestNextButton");
+        SMOKE_CHECK2("M1", 668, wiz, next_btn, "AddDestinationWizard not opened");
+        wiz->setProperty("step", 2);
+        QCoreApplication::processEvents();
+        QQuickItem* name_err = child_item(s.window, "wizDestNameError");
+        QQuickItem* loc_err = child_item(s.window, "wizDestLocationError");
+        SMOKE_CHECK5("M1", 669, name_err, name_err->isVisible(), loc_err, loc_err->isVisible(), !next_btn->property("enabled").toBool(),
+            "wizard validation errors / disabled Next not enforced");
+        finish_main(s, s.window);
+    }},
+    {"quit-dialog", [](const Scene& s) {
+        QObject* dlg = child_object(s.window, "quitConfirmDialog");
+        SMOKE_CHECK_VISIBLE("M1", 670, dlg, "quitConfirmDialog must open when --confirm-quit is passed");
+        finish_main(s, s.window);
+    }},
+    {"settings", [](const Scene& s) {
+        auto* sw = s.window->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
+        SMOKE_CHECK_VISIBLE("M1", 671, sw, "settingsWindow not visible");
+        QObject* dl_btn = child_object(sw, "downloadResticButton");
+        SMOKE_CHECK_VISIBLE("M1", 35, dl_btn, "Download restic button must be offered while restic is unusable");
+        SMOKE_CHECK_ENABLED("M1", 672, dl_btn, "Download restic button must be enabled while restic is unusable");
+        finish_main(s, sw);
+    }},
+    {"destinations-empty", scene_destinations_empty},
+    {"e2e-wizard-backup", scene_e2e_wizard_backup},
+    {"e2e-first-backup", scene_e2e_first_backup},
+    {"e2e-edit-reinit-and-nested-wizard", scene_e2e_edit_reinit},
+    {"keyboard-navigation", scene_keyboard_navigation},
+};
 
 } // namespace
 
@@ -1239,53 +1324,19 @@ void install_m1_smoke_check(
 
     QTimer::singleShot(250, &engine, [&engine, warnings, scen, out_path, mode, lang, since_load]() {
         const auto roots = engine.rootObjects();
-        SMOKE_CHECK("M1", 2, !roots.isEmpty(), "no root objects loaded");
+        SMOKE_CHECK("M1", 673, !roots.isEmpty(), "no root objects loaded");
         auto* window = qobject_cast<QQuickWindow*>(roots.first());
-        SMOKE_CHECK("M1", 4, window, "root object is not a QQuickWindow");
+        SMOKE_CHECK("M1", 674, window, "root object is not a QQuickWindow");
         QObject* backend = child_object(window, "appBackend");
-        SMOKE_CHECK("M1", 5, backend, "appBackend not found");
+        SMOKE_CHECK("M1", 675, backend, "appBackend not found");
 
         if (mode == QLatin1String("narrow")) {
             QMetaObject::invokeMethod(window, "resizeToMinWidthForSmoke");
         }
 
         // Perform scenario navigation setup
-        if (scen == QLatin1String("backups-detail-show-cmd")) {
-            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 1));
-        } else if (scen == QLatin1String("destinations-reassign")) {
-            const QString bid = backup_id_at(window, 0);
-            if (!bid.isEmpty()) {
-                QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
-                QMetaObject::invokeMethod(window, "openBackupReassignPage", Q_ARG(QVariant, bid));
-            }
-        } else if (scen == QLatin1String("snapshots-previous")) {
-            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 1));
-            const QString bid = backup_id_at(window, 0);
-            if (!bid.isEmpty()) {
-                const QString bname = role_value(model_named(window, "backupsModel"), 0, "name").toString();
-                QMetaObject::invokeMethod(window, "openBackupSnapshotsPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, bname));
-            }
-        } else if (scen == QLatin1String("history-run-detail")) {
-            QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 3));
-            const QString rid = run_id_at(window, 0);
-            if (!rid.isEmpty()) {
-                QMetaObject::invokeMethod(window, "openRunDetailById", Q_ARG(QVariant, rid));
-            }
-        } else if (scen == QLatin1String("manual-run-blocked")) {
-            const QString bid = backup_id_at(window, 0);
-            if (!bid.isEmpty()) {
-                QMetaObject::invokeMethod(backend, "startBackup", Q_ARG(QString, bid));
-            }
-        } else if (scen == QLatin1String("wizard-validation")) {
-            QMetaObject::invokeMethod(window, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QVariant()));
-        } else if (scen == QLatin1String("e2e-edit-reinit-and-nested-wizard")) {
-            const QString did = destination_id_at(window, 0);
-            if (!did.isEmpty()) {
-                QMetaObject::invokeMethod(window, "switchTab", Q_ARG(QVariant, 2));
-                QMetaObject::invokeMethod(window, "openDestinationEditPage", Q_ARG(QVariant, did));
-            }
-        } else if (scen == QLatin1String("settings")) {
-            QMetaObject::invokeMethod(window, "openSettingsWindow");
+        if (auto setup = find_scenario(kSetups, scen)) {
+            setup(window, backend);
         }
 
         // Allow async QML creations / wizard advance / snapshots load
@@ -1326,7 +1377,7 @@ void install_m1_smoke_check(
             if (in_wizard) {
                 SMOKE_CHECK2("M1", 13, !top_nav->isVisible(), !bottom_nav->isVisible(), "NavigationTabBar must be hidden inside wizard layer");
             } else if (mode == QLatin1String("narrow")) {
-                SMOKE_CHECK2("M1", 13, !top_nav->isVisible(), bottom_nav->isVisible(), "expected bottomNavBar visible in narrow mode");
+                SMOKE_CHECK2("M1", 676, !top_nav->isVisible(), bottom_nav->isVisible(), "expected bottomNavBar visible in narrow mode");
                 SMOKE_CHECK("M1", 14, verify_tab_bar_labels(bottom_nav, 5, required_tabs), "bottomNavBar tab labels missing or truncated");
             } else {
                 SMOKE_CHECK("M1", 15, verify_tab_bar_labels(top_nav, 5, required_tabs), "topNavBar tab labels missing or truncated");
@@ -1374,120 +1425,16 @@ void install_m1_smoke_check(
                 }
             }
 
-            QQuickWindow* screenshot_target = window;
-
-            if (scen.startsWith(QLatin1String("m2-"))) {
-                run_m2_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
-                return;
-            } else if (scen.startsWith(QLatin1String("m3-"))) {
-                run_m3_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
-                return;
-            } else if (scen.startsWith(QLatin1String("m4-"))) {
-                run_m4_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
-                return;
-            } else if (scen.startsWith(QLatin1String("m5-"))) {
-                run_m5_smoke_scenario(engine, window, backend, warnings, scen, out_path, lang);
-                return;
-            } else if (scen.startsWith(QLatin1String("m6-"))) {
-                run_m6_smoke_scenario(window, backend, warnings, scen, out_path, lang, since_load->elapsed());
-                return;
-            } else if (scen == QLatin1String("welcome")) {
-                QQuickItem* wv = child_item(window, "welcomeView");
-                SMOKE_CHECK_VISIBLE("M1", 20, wv, "welcomeView should be visible when unconfigured");
-            } else if (scen == QLatin1String("overview")) {
-                QQuickItem* ov = child_item(window, "overviewContent");
-                SMOKE_CHECK_VISIBLE("M1", 21, ov, "overviewContent should be visible");
-            } else if (scen.startsWith(QLatin1String("blocking-"))) {
-                const QString expected_kind = scen.mid(QStringLiteral("blocking-").size());
-                const QString actual_kind = backend->property("blocking_kind").toString();
-                SMOKE_CHECK("M1", 22, actual_kind == expected_kind,
-                    QStringLiteral("expected blocking_kind='%1', got '%2'").arg(expected_kind, actual_kind));
-                if (expected_kind == QLatin1String("restic_unavailable")) {
-                    QObject* dl_action = child_object(window, "downloadResticAction");
-                    SMOKE_CHECK_ENABLED("M1", 23, dl_action, "Download restic action must be offered while restic is unusable");
-                }
-            } else if (scen == QLatin1String("backups-detail-show-cmd")) {
-                QObject* show_cmd = child_object(window, "backupDetailShowCommandAction");
-                SMOKE_CHECK_ENABLED("M1", 24, show_cmd, "Show Command action on BackupDetailPage must be enabled even when expert_mode=false");
-                trigger(show_cmd);
-                QTimer::singleShot(250, &engine, [window, screenshot_target, out_path]() {
-                    QObject* cmd_area = child_object(window, "showCommandTextArea");
-                    SMOKE_CHECK2("M1", 25, cmd_area, cmd_area->property("text").toString().contains(QStringLiteral("RESTIC_PASSWORD_COMMAND")),
-                        "Show Command dialog missing transparent command");
-                    smoke_finish("M1", nullptr, screenshot_target, out_path);
-                });
-                return;
-            } else if (scen == QLatin1String("destinations-reassign")) {
-                QObject* switch_act = child_object(window, "switchDestinationAction");
-                SMOKE_CHECK_DISABLED("M1", 26, switch_act, "Switch Destination must be disabled before selecting a destination");
-            } else if (scen == QLatin1String("snapshots-previous")) {
-                QQuickItem* snap_list = child_item(window, "snapshotsListView");
-                SMOKE_CHECK("M1", 27, snap_list, "snapshotsListView not found");
-                QList<QQuickItem*> snap_items;
-                collect_visual_descendants(snap_list, snap_items);
-                const QString earlier_header_prefix = (lang == QLatin1String("de"))
-                    ? QString::fromUtf8("Frühere Snapshots auf '")
-                    : QStringLiteral("Earlier snapshots on '");
-                bool found_prev_header = false;
-                for (QQuickItem* it : snap_items) {
-                    if (it->objectName() == QLatin1String("snapshotSectionHeader")) {
-                        const QString hdr = it->property("text").toString();
-                        if (hdr.contains(earlier_header_prefix)) {
-                            found_prev_header = true;
-                            break;
-                        }
-                    }
-                }
-                SMOKE_CHECK("M1", 28, found_prev_header, "previous destination snapshots section header not found");
-            } else if (scen == QLatin1String("history-run-detail")) {
-                QObject* tab_bar = child_object(window, "runDetailTabBar");
-                QObject* show_cmd = child_object(window, "runDetailShowCommandAction");
-                SMOKE_CHECK4("M1", 29, tab_bar, tab_bar->property("count").toInt() == 3, show_cmd, show_cmd->property("enabled").toBool(),
-                    "RunDetailPage 3 tabs or Show Command missing");
-            } else if (scen == QLatin1String("manual-run-blocked")) {
-                QQuickItem* banner = child_item(window, "manualRunBlockedBanner");
-                // The refusal arrives once the daemon answered.
-                wait_until([&] { return banner && banner->isVisible(); }, 10000);
-                SMOKE_CHECK3("M1", 30, banner, banner->isVisible(), !backend->property("manual_run_blocked_message").toString().isEmpty(),
-                    "ManualRunBlocked inline banner not shown");
-            } else if (scen == QLatin1String("wizard-validation")) {
-                QObject* wiz = child_object(window, "addDestinationWizard");
-                QObject* next_btn = child_object(window, "wizDestNextButton");
-                SMOKE_CHECK2("M1", 31, wiz, next_btn, "AddDestinationWizard not opened");
-                wiz->setProperty("step", 2);
-                QCoreApplication::processEvents();
-                QQuickItem* name_err = child_item(window, "wizDestNameError");
-                QQuickItem* loc_err = child_item(window, "wizDestLocationError");
-                SMOKE_CHECK5("M1", 32, name_err, name_err->isVisible(), loc_err, loc_err->isVisible(), !next_btn->property("enabled").toBool(),
-                    "wizard validation errors / disabled Next not enforced");
-            } else if (scen == QLatin1String("quit-dialog")) {
-                QObject* dlg = child_object(window, "quitConfirmDialog");
-                SMOKE_CHECK_VISIBLE("M1", 33, dlg, "quitConfirmDialog must open when --confirm-quit is passed");
-            } else if (scen == QLatin1String("settings")) {
-                auto* sw = window->findChild<QQuickWindow*>(QStringLiteral("settingsWindow"));
-                SMOKE_CHECK_VISIBLE("M1", 34, sw, "settingsWindow not visible");
-                QObject* dl_btn = child_object(sw, "downloadResticButton");
-                SMOKE_CHECK_VISIBLE("M1", 35, dl_btn, "Download restic button must be offered while restic is unusable");
-                SMOKE_CHECK_ENABLED("M1", 157, dl_btn, "Download restic button must be enabled while restic is unusable");
-                screenshot_target = sw;
-            } else if (scen == QLatin1String("destinations-empty")) {
-                scene_destinations_empty({window, backend, top_nav, warnings, out_path});
-                return;
-            } else if (scen == QLatin1String("e2e-wizard-backup")) {
-                scene_e2e_wizard_backup({window, backend, top_nav, warnings, out_path});
-                return;
-            } else if (scen == QLatin1String("e2e-first-backup")) {
-                scene_e2e_first_backup({window, backend, top_nav, warnings, out_path});
-                return;
-            } else if (scen == QLatin1String("e2e-edit-reinit-and-nested-wizard")) {
-                scene_e2e_edit_reinit({window, backend, top_nav, warnings, out_path});
-                return;
-            } else if (scen == QLatin1String("keyboard-navigation")) {
-                scene_keyboard_navigation({window, backend, top_nav, warnings, out_path});
+            const Scene scene {window, backend, top_nav, warnings, out_path, lang, &engine, scen, since_load->elapsed()};
+            if (auto run = find_scenario_by_prefix(kPrefixChecks, scen)) {
+                run(scene);
                 return;
             }
-
-            smoke_finish("M1", nullptr, screenshot_target, out_path);
+            if (auto run = find_scenario(kChecks, scen)) {
+                run(scene);
+                return;
+            }
+            finish_main(scene, window);
         });
     });
 }

@@ -32,12 +32,15 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     const QString bid = backup_id_at(window, 0);
     SMOKE_CHECK("M2", 201, !bid.isEmpty(), "no backup found in backupsModel");
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] { return child_item(window, "editExcludesRow") != nullptr; }, 200);
     QQuickItem* excl_row = child_item(window, "editExcludesRow");
-    SMOKE_CHECK("M2", 201, excl_row, "editExcludesRow missing on BackupDetailPage");
+    SMOKE_CHECK("M2", 300, excl_row, "editExcludesRow missing on BackupDetailPage");
     QMetaObject::invokeMethod(window, "focusItemInPageStack", Q_ARG(QVariant, QVariant::fromValue<QObject*>(excl_row)));
-    wait_ms(80);
-    press_and_wait(window, Qt::Key_Return, 200);
+    wait_until([&] { return excl_row->hasActiveFocus(); }, 80);
+    press_until(window, Qt::Key_Return, [&] {
+        QQuickItem* add = child_item(window, "addExcludeFolderButton");
+        return add && window->activeFocusItem() == add;
+    }, 200);
 
     QQuickItem* excl_page = child_item(window, "backupExcludesEditPage");
     QQuickItem* expert_sec = child_item(window, "excludeExpertSection");
@@ -45,11 +48,11 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     QQuickItem* add_btn = child_item(window, "addExcludeFolderButton");
     QQuickItem* cache_cb = child_item(window, "excludeCachesCheckbox");
     SMOKE_CHECK("M2", 202, excl_page, "backupExcludesEditPage missing");
-    SMOKE_CHECK("M2", 202, expert_sec, "excludeExpertSection missing");
-    SMOKE_CHECK("M2", 202, readonly_info, "expertRulesReadonlyInfo missing");
-    SMOKE_CHECK("M2", 202, add_btn, "addExcludeFolderButton missing");
-    SMOKE_CHECK("M2", 202, cache_cb, "excludeCachesCheckbox missing");
-    SMOKE_CHECK("M2", 202, window->activeFocusItem() == add_btn,
+    SMOKE_CHECK("M2", 301, expert_sec, "excludeExpertSection missing");
+    SMOKE_CHECK("M2", 302, readonly_info, "expertRulesReadonlyInfo missing");
+    SMOKE_CHECK("M2", 303, add_btn, "addExcludeFolderButton missing");
+    SMOKE_CHECK("M2", 304, cache_cb, "excludeCachesCheckbox missing");
+    SMOKE_CHECK("M2", 305, window->activeFocusItem() == add_btn,
         QStringLiteral("opening BackupExcludesEditPage must focus addExcludeFolderButton immediately, focus is on %1") .arg(describe_focus_item(window->activeFocusItem())));
     SMOKE_CHECK2("M2", 203, !expert_sec->isVisible(), readonly_info->isVisible(),
         "Simple Mode must hide excludeExpertSection and show expertRulesReadonlyInfo");
@@ -62,7 +65,7 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     send_key(window, Qt::Key_Return);
     SMOKE_CHECK2("M2", 205, excl_page->property("dirty").toBool(), window->activeFocusItem() == cache_cb,
         "toggling excludeCachesCheckbox did not mark dirty or lost focus");
-    press_and_wait(window, Qt::Key_Escape, 120);
+    send_key(window, Qt::Key_Escape);
     QObject* unsaved_dlg = child_object(window, "unsavedExcludesDialog");
     SMOKE_CHECK_OPENED("M2", 206, unsaved_dlg, "Escape on dirty excludes page did not open unsavedExcludesDialog");
     send_key(window, Qt::Key_Escape);
@@ -72,53 +75,66 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     send_key(window, Qt::Key_Return);
     SMOKE_CHECK2("M2", 207, !excl_page->property("dirty").toBool(), window->activeFocusItem() == cache_cb,
         "toggling back did not restore clean state or lost focus");
-    press_and_wait(window, Qt::Key_Escape, 150);
+    press_until(window, Qt::Key_Escape, [&] {
+        return !child_item(window, "backupExcludesEditPage") && window->activeFocusItem() == excl_row;
+    }, 150);
     SMOKE_CHECK("M2", 208, !child_item(window, "backupExcludesEditPage"),
         "clean Escape did not close BackupExcludesEditPage");
-    SMOKE_CHECK("M2", 208, window->activeFocusItem() == excl_row,
+    SMOKE_CHECK("M2", 306, window->activeFocusItem() == excl_row,
         QStringLiteral("closing BackupExcludesEditPage with Escape did not restore focus to editExcludesRow, focus is on %1") .arg(describe_focus_item(window->activeFocusItem())));
 
     // Second cycle: pressing Return on editExcludesRow and Escape again must behave identically (no alternating columnView scroll/stack leak).
-    press_and_wait(window, Qt::Key_Return, 200);
+    press_until(window, Qt::Key_Return, [&] {
+        QQuickItem* add = child_item(window, "addExcludeFolderButton");
+        return add && window->activeFocusItem() == add;
+    }, 200);
     add_btn = child_item(window, "addExcludeFolderButton");
-    SMOKE_CHECK2("M2", 208, add_btn, window->activeFocusItem() == add_btn,
+    SMOKE_CHECK2("M2", 307, add_btn, window->activeFocusItem() == add_btn,
         "second Return on editExcludesRow did not focus addExcludeFolderButton");
     // Verify 2-column Shift-Left invariant (in wide mode: Lv1 disabled off-screen, Lv2 + Lv3 visible at ~50% width each) and accessible breadcrumb bar.
     for (const char* name : {"breadcrumbToolBar", "breadcrumbBackButton", "breadcrumbButton_0", "breadcrumbButton_1"}) {
         QQuickItem* crumb = find_visual_item(window, QString::fromLatin1(name));
-        SMOKE_CHECK_VISIBLE("M2", 208, crumb, QStringLiteral("%1 missing or not visible").arg(QString::fromLatin1(name)));
+        SMOKE_CHECK_VISIBLE("M2", 308, crumb, QStringLiteral("%1 missing or not visible").arg(QString::fromLatin1(name)));
     }
     for (const char* name : {"breadcrumbButton_0", "breadcrumbButton_1"}) {
-        SMOKE_CHECK("M2", 208, !find_visual_item(window, QString::fromLatin1(name))->property("text").toString().isEmpty(),
+        SMOKE_CHECK("M2", 309, !find_visual_item(window, QString::fromLatin1(name))->property("text").toString().isEmpty(),
             QStringLiteral("%1 has no text").arg(QString::fromLatin1(name)));
     }
     if (!window->property("narrowMode").toBool()) {
         QQuickItem* lv1_page = child_item(window, "backupsListPage");
         QQuickItem* lv2_page = child_item(window, "backupDetailPage");
         QQuickItem* lv3_page = child_item(window, "backupExcludesEditPage");
-        SMOKE_CHECK5("M2", 208, lv1_page, !lv1_page->isEnabled(), lv2_page, lv2_page->isEnabled(), lv3_page,
+        SMOKE_CHECK5("M2", 310, lv1_page, !lv1_page->isEnabled(), lv2_page, lv2_page->isEnabled(), lv3_page,
             "wide mode at depth 3 must disable off-screen Lv1 and show Lv2 + Lv3 at 50% width each");
-        SMOKE_CHECK3("M2", 208, lv3_page->isEnabled(), lv2_page->width() >= (window->width() / 2.0 - 10.0), lv3_page->width() >= (window->width() / 2.0 - 10.0),
+        SMOKE_CHECK3("M2", 311, lv3_page->isEnabled(), lv2_page->width() >= (window->width() / 2.0 - 10.0), lv3_page->width() >= (window->width() / 2.0 - 10.0),
             "wide mode at depth 3 must disable off-screen Lv1 and show Lv2 + Lv3 at 50% width each");
     }
     // Opening another Lv3 page (Source) while Excludes is open must REPLACE Lv3 at depth 3, never stack to depth 4.
     QMetaObject::invokeMethod(window, "openBackupSourcePage", Q_ARG(QVariant, bid));
-    wait_ms(180);
-    SMOKE_CHECK2("M2", 208, !child_item(window, "backupExcludesEditPage"), child_item(window, "backupSourceEditPage"),
+    wait_until([&] { return !child_item(window, "backupExcludesEditPage") && child_item(window, "backupSourceEditPage"); }, 180);
+    SMOKE_CHECK2("M2", 312, !child_item(window, "backupExcludesEditPage"), child_item(window, "backupSourceEditPage"),
         "opening BackupSourceEditPage from Lv2 did not replace BackupExcludesEditPage at depth 3");
-    press_and_wait(window, Qt::Key_Escape, 150);
-    SMOKE_CHECK2("M2", 208, !child_item(window, "backupSourceEditPage"), window->activeFocusItem() == excl_row,
+    press_until(window, Qt::Key_Escape, [&] {
+        return !child_item(window, "backupSourceEditPage") && window->activeFocusItem() == excl_row;
+    }, 150);
+    SMOKE_CHECK2("M2", 313, !child_item(window, "backupSourceEditPage"), window->activeFocusItem() == excl_row,
         "Escape after Lv3 replacement did not close subpage or restore focus to editExcludesRow");
 
     // Reopen and enable Expert Mode via the inline notice dialog (AC-M2-02-2 / AC-M2-02-3).
     QMetaObject::invokeMethod(window, "openBackupExcludesPage", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] {
+        return child_item(window, "backupExcludesEditPage") && child_item(window, "excludeExpertSection")
+            && child_object(window, "enableExpertModeAction");
+    }, 200);
     excl_page = child_item(window, "backupExcludesEditPage");
     expert_sec = child_item(window, "excludeExpertSection");
     QObject* enable_act = child_object(window, "enableExpertModeAction");
     SMOKE_CHECK3("M2", 209, excl_page, expert_sec, enable_act, "failed to reopen BackupExcludesEditPage");
     trigger(enable_act);
-    wait_ms(120);
+    wait_until([&] {
+        QObject* dlg = child_object(window, "enableExpertModeDialog");
+        return dlg && dlg->property("visible").toBool() && child_object(window, "confirmEnableExpertModeAction");
+    }, 120);
     QObject* exp_dlg = child_object(window, "enableExpertModeDialog");
     QObject* confirm_exp = child_object(window, "confirmEnableExpertModeAction");
     SMOKE_CHECK3("M2", 210, exp_dlg, exp_dlg->property("visible").toBool(), confirm_exp, "enableExpertModeDialog did not open");
@@ -149,7 +165,7 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     SMOKE_CHECK("M2", 214, lint_msg->property("text").toString().contains(QStringLiteral("dir/*")),
         "lint warning text missing suggested fix dir/*");
     trigger(apply_fix);
-    wait_ms(150);
+    wait_until([&] { return excl_area->property("text").toString().contains(QStringLiteral("dir/*")); }, 150);
     SMOKE_CHECK("M2", 215, excl_area->property("text").toString().contains(QStringLiteral("dir/*")),
         "applying quick-fix did not rewrite dir to dir/*");
     SMOKE_CHECK("M2", 216, wait_until([&] { return !lint_msg->isVisible(); }, 10000),
@@ -163,7 +179,7 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     QCoreApplication::processEvents();
     test_btn->forceActiveFocus(Qt::TabFocusReason);
     QCoreApplication::processEvents();
-    press_and_wait(window, Qt::Key_Return, 120);
+    send_key(window, Qt::Key_Return);
     // The result arrives from the daemon.
     wait_until([&] {
         QQuickItem* shown = child_item(window, "testPathResultBanner");
@@ -182,7 +198,7 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
 
     // AC-M2-02-6: Invalid D-Bus save preserves draft and shows error banner.
     excl_area->setProperty("text", QStringLiteral("*.tmp\ndraft-preserved\ndir/*\n!dir/inner"));
-    wait_ms(80);
+    wait_until([&] { return excl_page->property("dirty").toBool(); }, 80);
     // Invalid input is refused before it reaches the daemon: no request (0) and the error at once.
     int invalid_request = -1;
     QMetaObject::invokeMethod(
@@ -197,12 +213,15 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     SMOKE_CHECK2("M2", 222, invalid_request == 0, !backend->property("last_action_error").toString().isEmpty(),
         "invalid updateBackupExcludes should fail with last_action_error");
     excl_page->setProperty("saveErrorText", backend->property("last_action_error"));
-    wait_ms(80);
+    wait_until([&] {
+        QQuickItem* banner = child_item(window, "excludeSaveErrorBanner");
+        return banner && banner->isVisible();
+    }, 80);
     QQuickItem* err_banner = child_item(window, "excludeSaveErrorBanner");
     SMOKE_CHECK3("M2", 223, err_banner, err_banner->isVisible(), excl_area->property("text").toString().contains(QStringLiteral("draft-preserved")),
         "error banner missing or draft lost after validation error");
     excl_page->setProperty("saveErrorText", QString());
-    wait_ms(80);
+    wait_ms(80); // quiet window: the banner hides before the screenshot
 
     smoke_finish("M2", warnings.get(), window, out_path);
 }
@@ -216,7 +235,7 @@ void scene_dry_run_preview(const Scene& s) {
     SMOKE_CHECK("M2", 230, !bid.isEmpty(), "no backup found");
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
     QMetaObject::invokeMethod(window, "openBackupDryRunPreviewPage", Q_ARG(QVariant, bid), Q_ARG(QVariant, QString()));
-    wait_ms(100);
+    wait_until([&] { return child_item(window, "backupPreviewPage") != nullptr; }, 100);
 
     QQuickItem* preview_page = child_item(window, "backupPreviewPage");
     SMOKE_CHECK("M2", 231, preview_page, "BackupPreviewPage did not open");
@@ -232,12 +251,15 @@ void scene_dry_run_preview(const Scene& s) {
     QVariantMap fake_result = real_result.value<QJSValue>().toVariant().toMap();
     fake_result.insert(QStringLiteral("total_bytes"), 1234500000000.0);
     preview_page->setProperty("dryRunResult", fake_result);
-    wait_ms(50);
+    wait_until([&] {
+        QQuickItem* total = child_item(window, "dryRunTotalSize");
+        return total && total->property("text").toString() == QStringLiteral("1,234.5 GB");
+    }, 50);
     QQuickItem* total_size = child_item(window, "dryRunTotalSize");
     SMOKE_CHECK2("M2", 234, total_size, total_size->property("text").toString() == QStringLiteral("1,234.5 GB"),
         "dry-run total size is not formatted by formatBytes");
     preview_page->setProperty("dryRunResult", real_result);
-    wait_ms(50);
+    wait_ms(50); // quiet window: the page shows the real result again before the screenshot
     smoke_finish("M2", warnings.get(), window, out_path);
 }
 
@@ -250,7 +272,10 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     SMOKE_CHECK("M2", 240, !bid.isEmpty(), "no backup found");
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
     QMetaObject::invokeMethod(window, "openBackupRetentionPage", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] {
+        QQuickItem* info = child_item(window, "retentionSemanticsInfo");
+        return child_item(window, "backupRetentionPage") && child_item(window, "retentionPresetCombo") && info && info->isVisible();
+    }, 200);
 
     QQuickItem* ret_page = child_item(window, "backupRetentionPage");
     QQuickItem* preset_combo = child_item(window, "retentionPresetCombo");
@@ -258,11 +283,11 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     SMOKE_CHECK4("M2", 241, ret_page, preset_combo, semantics_info, semantics_info->isVisible(), "BackupRetentionPage controls missing");
 
     // AC-M2-06-8: clean Escape closes; dirty Escape prompts.
-    press_and_wait(window, Qt::Key_Escape, 150);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupRetentionPage"); }, 150);
     SMOKE_CHECK("M2", 242, !child_item(window, "backupRetentionPage"),
         "clean Escape did not close BackupRetentionPage");
     QMetaObject::invokeMethod(window, "openBackupRetentionPage", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] { return child_item(window, "backupRetentionPage") != nullptr; }, 200);
     ret_page = child_item(window, "backupRetentionPage");
     SMOKE_CHECK("M2", 243, ret_page, "could not reopen BackupRetentionPage");
 
@@ -278,23 +303,23 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     ret_page->setProperty("keepMonthlyOn", false);
     ret_page->setProperty("keepYearlyOn", false);
     QMetaObject::invokeMethod(ret_page, "onFieldEdited");
-    wait_ms(100);
+    wait_until([&] { return ret_page->property("dirty").toBool(); }, 100);
     SMOKE_CHECK("M2", 244, ret_page->property("dirty").toBool(), "BackupRetentionPage did not become dirty after changing rules");
-    press_and_wait(window, Qt::Key_Escape, 120);
+    send_key(window, Qt::Key_Escape);
     QObject* unsaved_dlg = child_object(window, "unsavedRetentionDialog");
     SMOKE_CHECK_OPENED("M2", 245, unsaved_dlg, "dirty Escape did not open unsavedRetentionDialog");
-    press_and_wait(window, Qt::Key_Escape, 200);
+    press_until(window, Qt::Key_Escape, [&] { return is_closed(unsaved_dlg); }, 200);
 
     // AC-M2-06-2: Open Retention Preview page.
     QObject* prev_act = child_object(window, "previewRetentionAction");
     SMOKE_CHECK("M2", 246, prev_act, "previewRetentionAction missing");
     trigger(prev_act);
-    wait_ms(100);
+    wait_until([&] { return child_item(window, "backupPreviewPage") != nullptr; }, 100);
     QQuickItem* prev_page = child_item(window, "backupPreviewPage");
     SMOKE_CHECK2("M2", 247, prev_page, prev_page->property("mode").toString() == QLatin1String("retention"), "retention preview page missing");
     wait_until([&] { return prev_page->property("retentionPreviewState").toString() != QLatin1String("running"); }, 6000);
     QQuickItem* ret_banner = child_item(window, "retentionPreviewSummaryBanner");
-    SMOKE_CHECK3("M2", 247, prev_page->property("retentionPreviewState").toString() == QLatin1String("done"), ret_banner, ret_banner->isVisible(),
+    SMOKE_CHECK3("M2", 314, prev_page->property("retentionPreviewState").toString() == QLatin1String("done"), ret_banner, ret_banner->isVisible(),
         "retention preview summary banner missing or preview did not complete");
     // AC-M2-06-2: (a) the summary counts kept and removed snapshots, (b) a kept snapshot names
     // its reason in the GUI language, (c) each snapshot shows its local date and time.
@@ -306,30 +331,30 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     QQuickItem* kept_result = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotResult"));
     SMOKE_CHECK("M2", 254, kept_result, "(b) retention preview rows missing");
     const QString kept_text = kept_result->property("text").toString();
-    SMOKE_CHECK("M2", 254, kept_text == (de ? QStringLiteral("Behalten — jüngster, täglich") : QStringLiteral("Keep — latest snapshot, daily snapshot")),
+    SMOKE_CHECK("M2", 315, kept_text == (de ? QStringLiteral("Behalten — jüngster, täglich") : QStringLiteral("Keep — latest snapshot, daily snapshot")),
         QStringLiteral("(b) unexpected result of the kept snapshot '%1'").arg(kept_text));
     QQuickItem* kept_time = find_visual_item(window, QStringLiteral("retentionPreviewSnapshotTime"));
     SMOKE_CHECK("M2", 255, kept_time, "(c) retention preview time missing");
     const QString time_text = kept_time->property("text").toString();
     static const QRegularExpression local_time(QStringLiteral("^[0-9a-f]{8} · \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$"));
-    SMOKE_CHECK("M2", 255, local_time.match(time_text).hasMatch(),
+    SMOKE_CHECK("M2", 316, local_time.match(time_text).hasMatch(),
         QStringLiteral("(c) snapshot time is not local date and time: '%1'").arg(time_text));
     // The title of the current page stays inside the window: it elides where the bar is too narrow.
     QQuickItem* current_crumb = find_visual_item(window, QStringLiteral("breadcrumbCurrentLabel"));
     SMOKE_CHECK_VISIBLE("M2", 257, current_crumb, "current breadcrumb missing");
     const qreal crumb_right = current_crumb->mapToScene(QPointF(current_crumb->width(), 0)).x();
-    SMOKE_CHECK("M2", 257, crumb_right <= window->width() + 0.5,
+    SMOKE_CHECK("M2", 317, crumb_right <= window->width() + 0.5,
         QStringLiteral("current breadcrumb ends at %1, outside the window").arg(crumb_right));
     // It elides only where the bar is too narrow: in the wide layout it shows in full.
-    SMOKE_CHECK("M2", 257, current_crumb->property("truncated").toBool() == (window->width() < 600),
+    SMOKE_CHECK("M2", 318, current_crumb->property("truncated").toBool() == (window->width() < 600),
         QStringLiteral("current breadcrumb '%1' elided %2 in a window %3 px wide")
             .arg(current_crumb->property("text").toString())
             .arg(current_crumb->property("truncated").toBool())
             .arg(window->width()));
-    SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
+    SMOKE_CHECK("M2", 319, save_screenshot(window, out_path), "could not save the screenshot");
 
     // Go back to BackupRetentionPage and save -> must show confirmation dialog (AC-M2-06-3).
-    press_and_wait(window, Qt::Key_Escape, 200);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupPreviewPage"); }, 200);
     QObject* save_act = child_object(window, "saveRetentionAction");
     SMOKE_CHECK("M2", 248, save_act, "saveRetentionAction missing");
     trigger(save_act);
@@ -347,7 +372,7 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     SMOKE_CHECK("M2", 256, pending_removals.size() == 2, "confirmation must list the 2 snapshots to remove");
     static const QRegularExpression removal_entry(QStringLiteral("^[0-9a-f]{8} \\(\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}\\)$"));
     for (const QString& entry : pending_removals) {
-        SMOKE_CHECK("M2", 256, removal_entry.match(entry).hasMatch(),
+        SMOKE_CHECK("M2", 320, removal_entry.match(entry).hasMatch(),
             QStringLiteral("unexpected entry in the confirmation list: '%1'").arg(entry));
     }
     trigger(confirm_act);
@@ -358,7 +383,8 @@ void scene_retention_editor_preview_confirm(const Scene& s) {
     // AC-M2-06-5: Saving policy that removes 0 snapshots saves immediately without confirmation dialog.
     ret_page->setProperty("keepLastNum", 5);
     QMetaObject::invokeMethod(ret_page, "onFieldEdited");
-    wait_ms(80);
+    // The confirmation of the save before closes while the page takes the edit.
+    wait_until([&] { return ret_page->property("dirty").toBool() && is_closed(confirm_dlg); }, 80);
     trigger(save_act);
     wait_until([&] { return !ret_page->property("saveBusy").toBool() && !ret_page->property("dirty").toBool(); }, 6000);
     SMOKE_CHECK_CLOSED("M2", 251, confirm_dlg, "confirmRetentionRemoveDialog must NOT open when 0 snapshots would be removed");
@@ -376,7 +402,7 @@ void scene_keyboard_nav(const Scene& s) {
     SMOKE_CHECK("M2", 260, !bid.isEmpty(), "no backup found");
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, bid));
     QMetaObject::invokeMethod(window, "openBackupExcludesPage", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] { return child_item(window, "backupExcludesEditPage") != nullptr; }, 200);
 
     const QStringList excl_objs = {
         QStringLiteral("addExcludeFolderButton"),
@@ -399,10 +425,10 @@ void scene_keyboard_nav(const Scene& s) {
     SMOKE_CHECK3("M2", 262, excl_area, window->activeFocusItem() != excl_area, excl_area->property("text").toString() == before_txt,
         "Tab trapped or inserted character inside excludesTextArea");
     // Leave excludes page clean and open Retention page
-    press_and_wait(window, Qt::Key_Escape, 150);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupExcludesEditPage"); }, 150);
 
     QMetaObject::invokeMethod(window, "openBackupRetentionPage", Q_ARG(QVariant, bid));
-    wait_ms(200);
+    wait_until([&] { return child_item(window, "backupRetentionPage") != nullptr; }, 200);
     const QStringList ret_objs = {
         QStringLiteral("retentionPresetCombo"),
         QStringLiteral("keepLastCheck"),
@@ -423,7 +449,7 @@ void scene_keyboard_nav(const Scene& s) {
     SMOKE_CHECK("M2", 265, wd_cb->property("checked").toBool() != wd0, "Return did not toggle withinDailyCheck");
     SMOKE_CHECK2("M2", 266, tab_to(window, "withinDailySpin", 10), tab_to(window, "withinDailyUnitCombo", 10),
         "Tab did not reach withinDailySpin / withinDailyUnitCombo after enabling withinDailyCheck");
-    press_and_wait(window, Qt::Key_Escape, 120);
+    send_key(window, Qt::Key_Escape);
     QObject* unsaved_ret = child_object(window, "unsavedRetentionDialog");
     SMOKE_CHECK_OPENED("M2", 267, unsaved_ret, "Escape on dirty BackupRetentionPage did not open unsavedRetentionDialog");
     smoke_finish("M2", warnings.get(), window, out_path);
@@ -449,7 +475,7 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     // (Kirigami.MessageType.Warning is 2).
     QQuickItem* cause = find_visual_item(window, QStringLiteral("runDetailErrorMessage"));
     SMOKE_CHECK_VISIBLE("M2", 275, cause, "cause of the run missing on the Exit 3 RunDetailPage");
-    SMOKE_CHECK("M2", 275, cause->property("type").toInt() == 2, "cause of a run with a warning must be shown as a warning");
+    SMOKE_CHECK("M2", 321, cause->property("type").toInt() == 2, "cause of a run with a warning must be shown as a warning");
 
     QQuickItem* add_btn = find_visual_item(window, QStringLiteral("addUnreadableExcludeButton"));
     SMOKE_CHECK_VISIBLE("M2", 271, add_btn, "addUnreadableExcludeButton missing or not visible on Exit 3 RunDetailPage");
@@ -459,7 +485,7 @@ void scene_exit3_unreadable_and_add_exclude(const Scene& s) {
     wait_until([&] { return dlg && dlg->property("visible").toBool(); }, 10000);
     QObject* confirm_act = child_object(window, "confirmAddExcludeAction");
     SMOKE_CHECK3("M2", 273, dlg, dlg->property("visible").toBool(), confirm_act, "addExcludePromptDialog did not open");
-    SMOKE_CHECK("M2", 10, save_screenshot(window, out_path), "could not save the screenshot");
+    SMOKE_CHECK("M2", 322, save_screenshot(window, out_path), "could not save the screenshot");
     trigger(confirm_act);
     // The dialog closes once the daemon has saved the rule.
     wait_until([&] { return is_closed(dlg); }, 10000);
@@ -500,7 +526,11 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
 
     // AC-M2-09-1: Unmounted drive backup disables Back Up Now & displays reason
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, drive_bid));
-    wait_ms(200);
+    wait_until([&] {
+        QQuickItem* reason = child_item(window, "backupDetailUnavailableReason");
+        return child_object(window, "detailBackupNowAction") && child_item(window, "backupDetailBackUpNowButton")
+            && reason && reason->isVisible();
+    }, 200);
     QObject* detail_act = child_object(window, "detailBackupNowAction");
     QQuickItem* detail_btn = child_item(window, "backupDetailBackUpNowButton");
     QQuickItem* reason_lbl = child_item(window, "backupDetailUnavailableReason");
@@ -533,12 +563,15 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
             ? QStringLiteral("Der Eintrag existiert nicht mehr.")
             : QStringLiteral("The item no longer exists.");
         SMOKE_CHECK2("M2", 289, request > 0, !removed, "removing an unknown backup must fail");
-        SMOKE_CHECK("M2", 289, not_found_text == expected_not_found, QStringLiteral("unexpected NotFound error text '%1'").arg(not_found_text));
+        SMOKE_CHECK("M2", 323, not_found_text == expected_not_found, QStringLiteral("unexpected NotFound error text '%1'").arg(not_found_text));
     }
 
     // AC-M2-10-1: Nested source warning visible on BackupDetailPage and BackupSourceEditPage
     QMetaObject::invokeMethod(window, "openBackupDetailById", Q_ARG(QVariant, nested_bid));
-    wait_ms(200);
+    wait_until([&] {
+        QQuickItem* banner = find_visual_item(window, QStringLiteral("nestedSourceWarningBanner"));
+        return banner && banner->isVisible();
+    }, 200);
     QQuickItem* nested_banner = find_visual_item(window, QStringLiteral("nestedSourceWarningBanner"));
     SMOKE_CHECK_VISIBLE("M2", 284, nested_banner, "nestedSourceWarningBanner not visible on BackupDetailPage");
     QMetaObject::invokeMethod(window, "openBackupSourcePage", Q_ARG(QVariant, nested_bid));
@@ -551,9 +584,12 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     SMOKE_CHECK_VISIBLE("M2", 285, src_nested_banner, "sourceNestedWarningBanner not visible on BackupSourceEditPage");
 
     // AC-M2-11-1 & AC-M2-11-2: Full Configuration page shows all details and NO plaintext secrets
-    press_and_wait(window, Qt::Key_Escape, 120);
+    press_until(window, Qt::Key_Escape, [&] { return !child_item(window, "backupSourceEditPage"); }, 120);
     QMetaObject::invokeMethod(window, "openBackupFullConfigPage", Q_ARG(QVariant, nested_bid));
-    wait_ms(200);
+    wait_until([&] {
+        return child_item(window, "backupFullConfigPage") && child_item(window, "fullConfigDestinationRow")
+            && child_item(window, "fullConfigExcludesRow") && child_item(window, "fullConfigRetentionRow");
+    }, 200);
     QQuickItem* full_page = child_item(window, "backupFullConfigPage");
     QQuickItem* dest_row = child_item(window, "fullConfigDestinationRow");
     QQuickItem* excl_row = child_item(window, "fullConfigExcludesRow");
@@ -564,8 +600,8 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     const QString ret_val = ret_row->property("rowValue").toString();
     SMOKE_CHECK("M2", 287, dest_val.contains(QStringLiteral("KWallet")),
         "Full Config page missing KWallet hint, expert rules, or retention summary");
-    SMOKE_CHECK("M2", 287, dest_val.contains(QStringLiteral("Secret Service")), "Full Config page missing Secret Service hint");
-    SMOKE_CHECK2("M2", 287, excl_val.contains(QStringLiteral("*.tmp")), !ret_val.isEmpty(),
+    SMOKE_CHECK("M2", 324, dest_val.contains(QStringLiteral("Secret Service")), "Full Config page missing Secret Service hint");
+    SMOKE_CHECK2("M2", 325, excl_val.contains(QStringLiteral("*.tmp")), !ret_val.isEmpty(),
         "Full Config page missing KWallet hint, expert rules, or retention summary");
     // Verify no plaintext password appears in any visible child label on Full Config page
     const QString repo_password = qEnvironmentVariable("KESTIC_SMOKE_REPO_PASSWORD");
@@ -573,11 +609,20 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     QList<QQuickItem*> full_items;
     collect_visual_descendants(full_page, full_items);
     for (QQuickItem* it : full_items) {
-        SMOKE_CHECK("M2", 288, !it->property("text").toString().contains(repo_password),
+        SMOKE_CHECK("M2", 326, !it->property("text").toString().contains(repo_password),
             "plaintext password leaked on BackupFullConfigPage");
     }
     smoke_finish("M2", warnings.get(), window, out_path);
 }
+
+const NamedScenario<void (*)(const Scene&)> kScenes[] = {
+    {"m2-excludes-simple-expert-lint", scene_excludes_simple_expert_lint},
+    {"m2-dry-run-preview", scene_dry_run_preview},
+    {"m2-retention-editor-preview-confirm", scene_retention_editor_preview_confirm},
+    {"m2-keyboard-nav", scene_keyboard_nav},
+    {"m2-exit3-unreadable-and-add-exclude", scene_exit3_unreadable_and_add_exclude},
+    {"m2-drive-unmounted-nested-and-full-config", scene_drive_unmounted_nested_and_full_config},
+};
 
 } // namespace
 
@@ -591,32 +636,10 @@ void run_m2_smoke_scenario(
     const QString& lang
 ) {
     (void)engine;
-    const Scene scene {window, backend, warnings, out_path, lang};
-    if (scen == QLatin1String("m2-excludes-simple-expert-lint")) {
-        scene_excludes_simple_expert_lint(scene);
+    if (auto run = find_scenario(kScenes, scen)) {
+        run(Scene {window, backend, warnings, out_path, lang});
         return;
     }
-    if (scen == QLatin1String("m2-dry-run-preview")) {
-        scene_dry_run_preview(scene);
-        return;
-    }
-    if (scen == QLatin1String("m2-retention-editor-preview-confirm")) {
-        scene_retention_editor_preview_confirm(scene);
-        return;
-    }
-    if (scen == QLatin1String("m2-keyboard-nav")) {
-        scene_keyboard_nav(scene);
-        return;
-    }
-    if (scen == QLatin1String("m2-exit3-unreadable-and-add-exclude")) {
-        scene_exit3_unreadable_and_add_exclude(scene);
-        return;
-    }
-    if (scen == QLatin1String("m2-drive-unmounted-nested-and-full-config")) {
-        scene_drive_unmounted_nested_and_full_config(scene);
-        return;
-    }
-
     smoke_fail("M2", 299, QStringLiteral("unknown m2 smoke scenario"));
 }
 

@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QVariant>
 #include <QWindow>
+#include <cstddef>
 #include <cstdio>
 #include <functional>
 #include <memory>
@@ -211,10 +212,10 @@ inline void press_tab(QWindow* window) {
     send_key(window, Qt::Key_Tab, Qt::NoModifier, QStringLiteral("\t"));
 }
 
-// Presses `key`, then waits `ms` for the UI to react.
-inline void press_and_wait(QWindow* window, int key, int ms) {
+// Presses `key`, then waits up to `timeout_ms` until `pred` holds; returns its last value.
+inline bool press_until(QWindow* window, int key, const std::function<bool()>& pred, int timeout_ms) {
     send_key(window, key);
-    wait_ms(ms);
+    return wait_until(pred, timeout_ms);
 }
 
 inline void trigger(QObject* action) {
@@ -268,6 +269,83 @@ inline void trigger(QObject* action) {
 // Types `text` into `field` or fails the smoke step.
 #define SMOKE_ENTER_TEXT(tag, code, window, field, text, label) \
     SMOKE_CHECK(tag, code, enter_text_field((window), (field), (text), label), QStringLiteral("entering text into '" label "' failed"))
+
+// Checks of a scenario that returns an int: 0 on success, `code` (unique across all smoke
+// sources) on the first failed check. Each prints `<file> check failed (<code>): ...` first.
+#define CHECK(code, cond, msg)                                                         \
+    do {                                                                               \
+        if (!(cond)) {                                                                 \
+            std::fprintf(stderr, "%s check failed (%d): %s [%s]\n", __FILE__, (code), (msg), #cond); \
+            return (code);                                                             \
+        }                                                                              \
+    } while (0)
+
+// N independent checks that share one message; each condition is checked (and named) on its own.
+#define CHECK2(code, c1, c2, msg) \
+    CHECK(code, c1, msg);         \
+    CHECK(code, c2, msg)
+#define CHECK3(code, c1, c2, c3, msg) \
+    CHECK2(code, c1, c2, msg);        \
+    CHECK(code, c3, msg)
+#define CHECK4(code, c1, c2, c3, c4, msg) \
+    CHECK3(code, c1, c2, c3, msg);        \
+    CHECK(code, c4, msg)
+
+// `actual` equals / starts with `expected` (both QString-convertible); prints both on failure.
+#define CHECK_EQ(code, actual, expected, what)                                         \
+    do {                                                                               \
+        const QString a_ = (actual);                                                   \
+        const QString e_ = (expected);                                                 \
+        if (a_ != e_) {                                                                \
+            std::fprintf(stderr, "%s check failed (%d): %s: expected '%s' got '%s'\n", \
+                __FILE__, (code), (what), qPrintable(e_), qPrintable(a_));             \
+            return (code);                                                             \
+        }                                                                              \
+    } while (0)
+
+#define CHECK_STARTS(code, actual, prefix, what)                                       \
+    do {                                                                               \
+        const QString a_ = (actual);                                                   \
+        const QString e_ = (prefix);                                                   \
+        if (!a_.startsWith(e_)) {                                                      \
+            std::fprintf(stderr, "%s check failed (%d): %s: expected prefix '%s' got '%s'\n", \
+                __FILE__, (code), (what), qPrintable(e_), qPrintable(a_));             \
+            return (code);                                                             \
+        }                                                                              \
+    } while (0)
+
+// One entry of a scenario table: the scenario name the test passes and the function that runs it.
+template <typename Fn>
+struct NamedScenario {
+    const char* name;
+    Fn run;
+};
+
+// The function of the scenario called `scen` in `table` (nullptr when the table has none).
+template <typename Fn, std::size_t N>
+Fn find_scenario(const NamedScenario<Fn> (&table)[N], const QString& scen) {
+    for (const auto& entry : table) {
+        if (scen == QLatin1String(entry.name)) {
+            return entry.run;
+        }
+    }
+    return nullptr;
+}
+
+// The function of the first table entry whose name is a prefix of `scen` (nullptr when none).
+template <typename Fn, std::size_t N>
+Fn find_scenario_by_prefix(const NamedScenario<Fn> (&table)[N], const QString& scen) {
+    for (const auto& entry : table) {
+        if (scen.startsWith(QLatin1String(entry.name))) {
+            return entry.run;
+        }
+    }
+    return nullptr;
+}
+
+// Ends a scenario that returned `rc`: exit `rc` when it failed, 3 when QML warned, else 0.
+// `rc` -1 means no table knew `scen` (exit code `unknown_code`).
+void exit_scenario(const char* tag, const QString& scen, int rc, int unknown_code, const QStringList& warnings);
 
 void run_m2_smoke_scenario(
     QQmlApplicationEngine& engine,

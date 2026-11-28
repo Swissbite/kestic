@@ -174,7 +174,7 @@ void repaint_whole_window(QQuickWindow* window) {
     window->resize(size.width(), size.height() + 1);
     (void)window->grabWindow();
     window->resize(size);
-    wait_ms(40);
+    wait_ms(40); // quiet window: the next frame repaints the whole window
 }
 
 } // namespace
@@ -201,7 +201,7 @@ bool save_screenshot(QQuickWindow* window, const QString& out_path) {
         if (window) {
             window->requestUpdate();
         }
-        wait_ms(40);
+        wait_ms(40); // quiet window: the requested frame is rendered
         img = window ? window->grabWindow() : QImage();
         if (!img.isNull() && img.width() > 0 && img.height() > 0) {
             break;
@@ -239,7 +239,7 @@ bool save_screenshot(QQuickWindow* window, const QString& out_path) {
         );
         return false;
     }
-    wait_ms(60);
+    wait_ms(60); // quiet window: the window draws its next frame after the grab
     return true;
 }
 
@@ -557,7 +557,7 @@ void send_key(QWindow* window, int key, Qt::KeyboardModifiers mods, const QStrin
     QTest::sendKeyEvent(QTest::Release, window, Qt::Key(key), text, mods);
     QCoreApplication::processEvents();
     if (key == Qt::Key_Return || key == Qt::Key_Enter) {
-        wait_ms(160);
+        wait_ms(160); // quiet window: Return starts actions whose effects the callers check
     }
 }
 
@@ -647,7 +647,7 @@ bool wait_until(const std::function<bool()>& pred, int timeout_ms) {
         if (pred()) {
             return true;
         }
-        wait_ms(40);
+        wait_ms(40); // quiet window: the poll interval
     }
     return pred();
 }
@@ -717,6 +717,27 @@ void smoke_fail(const char* tag, int code, const QString& msg) {
     g_smoke_failed = true;
     std::fprintf(stderr, "%s smoke failed (%d): %s\n", tag, code, qPrintable(msg));
     QCoreApplication::exit(code);
+}
+
+void exit_scenario(const char* tag, const QString& scen, int rc, int unknown_code, const QStringList& warnings) {
+    if (rc < 0) {
+        std::fprintf(stderr, "%s smoke failed (%d): unknown smoke scenario %s\n", tag, unknown_code, qPrintable(scen));
+        QCoreApplication::exit(unknown_code);
+        return;
+    }
+    if (rc != 0) {
+        std::fprintf(stderr, "%s smoke `%s` failed with code %d\n", tag, qPrintable(scen), rc);
+        QCoreApplication::exit(rc);
+        return;
+    }
+    if (!warnings.isEmpty()) {
+        for (const auto& w : warnings) {
+            std::fprintf(stderr, "%s QML warning: %s\n", tag, qPrintable(w));
+        }
+        QCoreApplication::exit(3);
+        return;
+    }
+    QCoreApplication::exit(0);
 }
 
 void smoke_finish(
