@@ -347,7 +347,8 @@ fn ac_m6_33_1_queries_and_previews_do_not_wait_for_a_slow_daemon() {
 /// (b) a dry run whose page closed before it started is cancelled; (c) a further page answered
 /// after the filter changed does not stop the folder list from loading more; (d) a search hit
 /// beyond the first page of its folder becomes the current row; (e) a hit the user left for a
-/// filter before its page arrived is no longer looked for.
+/// filter before its page arrived is no longer looked for; (f) a hit above the snapshot's top
+/// folder is still found after the page checked that folder.
 #[test]
 fn ac_m6_33_1_late_answers_do_not_count_after_the_window_moved_on() {
     run_isolated_test(
@@ -366,6 +367,9 @@ fn ac_m6_33_1_late_answers_do_not_count_after_the_window_moved_on() {
             for n in 0..250 {
                 fs::write(backup.source.path.join(format!("file-{n}")), b"x").expect("source file");
             }
+            let deeper = backup.source.path.join("sub/deeper");
+            fs::create_dir_all(&deeper).expect("subfolder");
+            fs::write(deeper.join("note"), b"x").expect("file in the subfolder");
             let client = rig.daemon.client.clone();
             client
                 .start_backup(backup.id.as_str())

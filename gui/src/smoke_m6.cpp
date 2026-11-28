@@ -11,6 +11,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlExpression>
 
 namespace kestic::smoke {
 
@@ -65,6 +66,11 @@ bool answered(QObject* answers, int request) {
     return map.contains(QString::number(request));
 }
 
+// `text` as a JavaScript string literal.
+QString js_text(const QString& text) {
+    return QString::fromUtf8(QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact)).mid(1).chopped(1);
+}
+
 bool can_fetch_more(QObject* model) {
     auto* listed = qobject_cast<QAbstractItemModel*>(model);
     return listed && listed->canFetchMore(QModelIndex());
@@ -82,7 +88,8 @@ int rows_of(QObject* model) {
 // dry run whose page closed before it started is cancelled (the test watches for the cancel);
 // (c) a further page answered after the filter changed does not stop the list from loading more;
 // (d) a search hit beyond the first page of its folder becomes the current row once its page
-// arrived; (e) a hit the user left for a filter before its page arrived is no longer looked for.
+// arrived; (e) a hit the user left for a filter before its page arrived is no longer looked for;
+// (f) a hit above the snapshot's top folder is still found after the page checked that folder.
 void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
@@ -107,6 +114,7 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             poll->stop();
             smoke_fail("M6", 121, *step == 4 ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
                 : *step == 5 ? QStringLiteral("(d) a search hit beyond the first page of its folder never became the current row")
+                : *step == 10 ? QStringLiteral("(f) a hit above the snapshot's top folder never became the current row")
                 : QStringLiteral("timed out at step %1").arg(*step));
             return;
         }
@@ -193,9 +201,32 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             QQuickItem* list = child_item(window, "browseListView");
             // The filtered list and the page the hit asked for are in.
             if (!list || list->property("count").toInt() >= 200 || settle->elapsed() < 12000) return;
-            poll->stop();
             SMOKE_CHECK("M6", 126, page->property("focusPath").toString().isEmpty(),
                 "(e) a hit the user left for a filter is still looked for");
+            QMetaObject::invokeMethod(window, "popSubPage");
+            break;
+        }
+        case 9: {
+            if (child_item(window, "restoreBrowsePage")) return;
+            // (f) The hit `sub` is a folder above the top folder `sub/deeper`: the page checks the
+            // top folder first, then shows the hit's folder (beyond its first page) with the hit.
+            QQmlExpression open(qmlContext(window), window, QStringLiteral(
+                "pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {destinationId: %1, snapshotId: %2,"
+                " startDir: %3, topDir: %4, focusPath: %5, focusIsDir: true, snapshotTitle: ''}), 3)")
+                .arg(js_text(dest), js_text(snapshot), js_text(source), js_text(source + QStringLiteral("/sub/deeper")),
+                    js_text(source + QStringLiteral("/sub"))));
+            open.evaluate();
+            SMOKE_CHECK("M6", 127, !open.hasError(), open.error().toString());
+            break;
+        }
+        case 10: {
+            QQuickItem* list = child_item(window, "browseListView");
+            const int row = list ? list->property("currentIndex").toInt() : -1;
+            if (row < 200) return;
+            poll->stop();
+            auto* rows = qobject_cast<QAbstractItemModel*>(list->property("model").value<QObject*>());
+            SMOKE_CHECK2("M6", 127, rows, rows->data(rows->index(row, 0), 0).toString() == source + QStringLiteral("/sub"),
+                "(f) the current row is not the hit above the snapshot's top folder");
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
         }

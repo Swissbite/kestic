@@ -71,8 +71,6 @@ Kirigami.ScrollablePage {
 
     // Lists `dir`; the filter starts empty in every folder, the selection stays.
     function openDir(dir) {
-        // Another folder than the hit's: the hit is no longer looked for.
-        if (dir !== page.startDir) page.dropFocusPath();
         filterField.resetFilter();
         page.appliedFilter = "";
         page.settingRow = true;
@@ -94,6 +92,12 @@ Kirigami.ScrollablePage {
         }
     }
 
+    // Opens the folder `dir` the user chose; the search hit is no longer looked for.
+    function goToDir(dir) {
+        page.dropFocusPath();
+        openDir(dir);
+    }
+
     // Stops looking for the search hit (the user moved on).
     function dropFocusPath() {
         page.focusPath = "";
@@ -105,7 +109,7 @@ Kirigami.ScrollablePage {
         var path = snapshotBrowseModel.data(snapshotBrowseModel.index(row, 0), 0);
         var isDir = snapshotBrowseModel.data(snapshotBrowseModel.index(row, 0), 2);
         if (isDir) {
-            openDir(path);
+            goToDir(path);
         } else {
             snapshotBrowseModel.toggleSelected(row);
         }
@@ -332,7 +336,7 @@ Kirigami.ScrollablePage {
                                     }
                                 }
                                 onClicked: {
-                                    if (!crumb.isCurrent) page.openDir(crumb.modelData);
+                                    if (!crumb.isCurrent) page.goToDir(crumb.modelData);
                                 }
                                 onActiveFocusChanged: if (activeFocus) pathFlick.ensureVisible(crumb)
                                 FocusRing { target: crumbButton }
@@ -520,7 +524,7 @@ Kirigami.ScrollablePage {
                     snapshotBrowseModel.toggleSelected(entryRow.index);
                     event.accepted = true;
                 } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                    if (entryRow.isDir) page.openDir(entryRow.path);
+                    if (entryRow.isDir) page.goToDir(entryRow.path);
                     event.accepted = true;
                 }
             }
