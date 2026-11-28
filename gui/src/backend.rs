@@ -79,7 +79,6 @@ pub mod qobject {
         #[qproperty(QString, selected_run_transparent_command)]
         #[qproperty(QString, selected_run_log_path)]
         #[qproperty(QString, selected_run_backup_id)]
-        #[qproperty(bool, has_unsaved_changes)]
         #[qproperty(QString, last_action_error)]
         #[qproperty(bool, show_about_on_start)]
         #[qproperty(bool, show_restore_on_start)]
@@ -761,7 +760,6 @@ pub struct KesticAppRust {
     selected_run_transparent_command: QString,
     selected_run_log_path: QString,
     selected_run_backup_id: QString,
-    has_unsaved_changes: bool,
     last_action_error: QString,
     show_about_on_start: bool,
     show_restore_on_start: bool,
@@ -794,8 +792,6 @@ pub(super) use crate::i18n::dbus_error_text;
 enum Finish {
     /// Only clear or show the error line.
     Plain,
-    /// The call saved an editor page: it has no unsaved changes any more.
-    Saved,
     /// A failure is also shown as a passive notification.
     NotifyOnError,
 }

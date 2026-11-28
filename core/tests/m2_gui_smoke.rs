@@ -57,6 +57,9 @@ fn count_repo_snapshots(restic: &Path, repo_dir: &Path, password: &str, cache_di
     snaps.as_array().expect("snapshots JSON array").len()
 }
 
+/// The exclude rules editor in simple and expert mode with the lint.
+/// Also AC-M6-34-2 (c) and AC-M6-34-4 (b): the editor, whose fields go through `core`, behaves
+/// as before, and the smoke fails on any QML warning.
 #[test]
 fn m2_gui_smoke_excludes_simple_expert_and_lint_wide_narrow_en_de() {
     let fx = SmokeFixture::new("excludes", common::latest_restic());
@@ -212,6 +215,9 @@ fn m2_gui_smoke_dry_run_preview_real_restic() {
     );
 }
 
+/// The retention editor with the preview before saving.
+/// Also AC-M6-34-2 (c) and AC-M6-34-4 (b): the editor, whose fields go through `core`, behaves
+/// as before, and the smoke fails on any QML warning.
 #[test]
 fn m2_gui_smoke_retention_editor_preview_confirm_en_de_narrow() {
     let fx = SmokeFixture::new("retention", common::latest_restic());

@@ -55,21 +55,23 @@ impl qobject::KesticApp {
         }
     }
 
-    /// The fields after loading `schedule_json` with its threshold over `form_json` (empty:
-    /// the editor's first fields).
+    /// The fields after loading `schedule_json` with its threshold over the current fields
+    /// `form_json`.
     pub fn schedule_form_json(
         &self,
         schedule_json: &QString,
         overdue_threshold: i32,
         form_json: &QString,
     ) -> QString {
-        let base = parsed::<ScheduleForm>(form_json).unwrap_or_default();
-        to_qml(&base.load(
-            &saved_schedule(schedule_json),
-            threshold(overdue_threshold),
-            &cached_today_iso_date(),
-            threshold(*self.default_overdue_threshold()),
-        ))
+        match parsed::<ScheduleForm>(form_json) {
+            Some(form) => to_qml(&form.load(
+                &saved_schedule(schedule_json),
+                threshold(overdue_threshold),
+                &cached_today_iso_date(),
+                threshold(*self.default_overdue_threshold()),
+            )),
+            None => QString::from("{}"),
+        }
     }
 
     pub fn schedule_form_state(

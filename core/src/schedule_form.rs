@@ -8,9 +8,6 @@ use crate::model::Weekday;
 use crate::retention::Schedule;
 use serde::{Deserialize, Serialize};
 
-/// The interval the editor offers for «every n days» before the user picks one.
-pub const DEFAULT_EVERY_N_DAYS: u32 = 3;
-
 /// How often the editor runs a backup. A weekly schedule is shown as one weekday.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -22,7 +19,7 @@ pub enum ScheduleFormKind {
 }
 
 /// The fields of the schedule editor. Fields the chosen kind does not use keep their value, so
-/// switching back shows them again.
+/// switching back shows them again; the page holds the values it starts with.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScheduleForm {
     pub kind: ScheduleFormKind,
@@ -57,22 +54,6 @@ pub struct ScheduleFormState {
     pub dirty: bool,
     /// The day the date picker opens on: the start date, or `today` when it is not a date.
     pub picker_date: PickerDate,
-}
-
-impl Default for ScheduleForm {
-    /// Daily at 12:00 with the global overdue threshold.
-    fn default() -> Self {
-        Self {
-            kind: ScheduleFormKind::Daily,
-            weekdays: vec![Weekday::Monday],
-            interval_days: DEFAULT_EVERY_N_DAYS,
-            start_date: String::new(),
-            hour: 12,
-            minute: 0,
-            use_global_overdue: true,
-            custom_overdue_threshold: 2,
-        }
-    }
 }
 
 /// The weekday of an ISO number; Monday for a number out of range.
@@ -112,10 +93,14 @@ fn normalized(schedule: &Schedule, today: &str) -> Schedule {
             hour,
             minute,
         } => {
-            let start = start_date.trim();
+            let start = if start_date.is_empty() {
+                today
+            } else {
+                start_date
+            };
             Schedule::EveryNDays {
                 interval_days: *interval_days,
-                start_date: if start.is_empty() { today } else { start }.to_string(),
+                start_date: start.trim().to_string(),
                 hour: *hour,
                 minute: *minute,
             }

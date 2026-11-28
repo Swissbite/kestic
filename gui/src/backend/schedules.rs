@@ -85,7 +85,7 @@ impl qobject::KesticApp {
             move |client| client.update_destination_maintenance(&dest_id, &maint),
             |app, result| {
                 (
-                    app.finish_daemon_action(result, Finish::Saved).is_some(),
+                    app.finish_daemon_action(result, Finish::Plain).is_some(),
                     String::new(),
                 )
             },

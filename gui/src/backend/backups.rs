@@ -298,7 +298,7 @@ impl qobject::KesticApp {
             },
             |app, result| {
                 (
-                    app.finish_checked(result, Finish::Saved).is_some(),
+                    app.finish_checked(result, Finish::Plain).is_some(),
                     String::new(),
                 )
             },

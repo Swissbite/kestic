@@ -134,7 +134,11 @@ EditorPage {
 
     dirty: initialData !== null && formState.dirty === true
 
-    Component.onCompleted: loadFromPolicyJson(savedPolicyJson)
+    Component.onCompleted: {
+        if (initialData) {
+            loadFromPolicyJson(savedPolicyJson);
+        }
+    }
 
     Component.onDestruction: {
         savePollTimer.stop();

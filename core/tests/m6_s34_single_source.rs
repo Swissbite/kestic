@@ -45,6 +45,17 @@ fn has_word(text: &str, word: &str) -> bool {
     })
 }
 
+/// Whether QML `text` reads `name`: an occurrence that is not the target of an assignment.
+fn read_in_qml(text: &str, name: &str) -> bool {
+    let is_ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let rest = &text[i + name.len()..];
+        let assigned = rest.trim_start().starts_with('=') && !rest.trim_start().starts_with("==");
+        !before.is_some_and(is_ident) && !rest.starts_with(is_ident) && !assigned
+    })
+}
+
 /// The names of the functions a QML file declares.
 fn qml_functions(text: &str) -> Vec<String> {
     text.lines()
@@ -203,7 +214,7 @@ fn ac_m6_34_4_every_qproperty_is_read() {
         .iter()
         .copied()
         .filter(|name| {
-            let in_qml = qml.iter().any(|(_, text)| has_word(text, name));
+            let in_qml = qml.iter().any(|(_, text)| read_in_qml(text, name));
             let in_cpp = cpp
                 .iter()
                 .any(|(_, text)| text.contains(&format!("\"{name}\"")));

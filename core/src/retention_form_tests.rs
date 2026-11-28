@@ -7,7 +7,7 @@ fn policy(json: &str) -> RetentionPolicy {
     serde_json::from_str(json).expect("policy json")
 }
 
-fn on(num: u32) -> CountRule {
+fn on(num: i64) -> CountRule {
     CountRule {
         on: true,
         all: false,
@@ -15,7 +15,7 @@ fn on(num: u32) -> CountRule {
     }
 }
 
-fn within_on(num: u32, unit: DurationUnit) -> WithinRule {
+fn within_on(num: i64, unit: DurationUnit) -> WithinRule {
     WithinRule {
         on: true,
         num,
@@ -158,6 +158,37 @@ fn ac_m6_34_1_retention_form_writes_policies_like_former_qml() {
             "(c) a preset survives the editor"
         );
     }
+}
+
+/// AC-M6-34-1 (c): a number the page's integer field holds out of range (a saved count above
+/// its range wraps to a negative number there) is written as 1, as the QML did.
+#[test]
+fn ac_m6_34_1_retention_form_takes_numbers_out_of_range() {
+    let form = RetentionForm {
+        keep_last: on(-1_294_967_296),
+        keep_within: within_on(5_000_000_000, DurationUnit::Days),
+        ..RetentionForm::default()
+    };
+    let form: RetentionForm =
+        serde_json::from_str(&serde_json::to_string(&form).expect("json")).expect("read back");
+    let state = form.state(&RetentionPolicy::empty());
+    assert!(state.has_rule, "(c) the rule stays on");
+    assert_eq!(
+        state.policy.keep_last,
+        Some(KeepCount::Count(1)),
+        "(c) a negative count is written as 1"
+    );
+    assert_eq!(
+        state.policy.keep_within.as_deref(),
+        Some("4294967295d"),
+        "(c) a number above the count range is capped"
+    );
+    let saved = policy(r#"{"keep_last":3000000000}"#);
+    assert_eq!(
+        RetentionForm::from_policy(&saved).keep_last,
+        on(3_000_000_000),
+        "(c) a large saved count is read as it is"
+    );
 }
 
 /// AC-M6-34-1 (a): the preset comes from `RetentionPolicy::preset()`, and the editor counts as

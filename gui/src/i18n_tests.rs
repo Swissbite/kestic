@@ -43,7 +43,7 @@ fn m5_203_gui_percent_number_comes_from_qlocale() {
     let output = std::process::Command::new(exe)
         .args([
             "--exact",
-            "state_cache::tests::m5_203_gui_percent_number_comes_from_qlocale",
+            "i18n::tests::m5_203_gui_percent_number_comes_from_qlocale",
             "--nocapture",
             "--test-threads=1",
         ])

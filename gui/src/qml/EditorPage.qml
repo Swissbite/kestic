@@ -27,8 +27,6 @@ Kirigami.ScrollablePage {
     signal unsavedSaveRequested()
     signal unsavedDiscardRequested()
 
-    onDirtyChanged: appBackend.has_unsaved_changes = dirty
-
     onBackRequested: function(event) {
         if (dirty) {
             event.accepted = true;
@@ -67,9 +65,6 @@ Kirigami.ScrollablePage {
         objectName: editor.unsavedObjectName
         subtitle: editor.unsavedSubtitle
         onSaveRequested: editor.unsavedSaveRequested()
-        onDiscardRequested: {
-            editor.appBackend.has_unsaved_changes = false;
-            editor.unsavedDiscardRequested();
-        }
+        onDiscardRequested: editor.unsavedDiscardRequested()
     }
 }

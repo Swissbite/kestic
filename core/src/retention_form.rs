@@ -7,12 +7,13 @@
 use crate::retention::{KeepCount, RetentionPolicy, RetentionPreset};
 use serde::{Deserialize, Serialize};
 
-/// One count rule of the editor (`--keep-daily 7`, or all with «unlimited»).
+/// One count rule of the editor (`--keep-daily 7`, or all with «unlimited»). The number may be
+/// out of range as the page's field holds it; writing the policy makes it at least 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CountRule {
     pub on: bool,
     pub all: bool,
-    pub num: u32,
+    pub num: i64,
 }
 
 /// The unit of a duration rule as restic writes it (`48h`, `30d`, `6m`, `5y`).
@@ -49,11 +50,12 @@ impl DurationUnit {
     }
 }
 
-/// One duration rule of the editor (`--keep-within-daily 14d`).
+/// One duration rule of the editor (`--keep-within-daily 14d`); the number as for
+/// [`CountRule`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WithinRule {
     pub on: bool,
-    pub num: u32,
+    pub num: i64,
     pub unit: DurationUnit,
 }
 
@@ -88,7 +90,7 @@ pub struct RetentionFormState {
     pub has_rule: bool,
 }
 
-const fn count_off(num: u32) -> CountRule {
+const fn count_off(num: i64) -> CountRule {
     CountRule {
         on: false,
         all: false,
@@ -96,7 +98,7 @@ const fn count_off(num: u32) -> CountRule {
     }
 }
 
-const fn within_off(num: u32, unit: DurationUnit) -> WithinRule {
+const fn within_off(num: i64, unit: DurationUnit) -> WithinRule {
     WithinRule {
         on: false,
         num,
@@ -135,7 +137,7 @@ fn count_rule(value: Option<KeepCount>, default: CountRule) -> CountRule {
         Some(KeepCount::Count(n)) if n > 0 => CountRule {
             on: true,
             all: false,
-            num: n,
+            num: i64::from(n),
         },
         _ => default,
     }
@@ -153,7 +155,7 @@ fn within_rule(value: Option<&str>, default: WithinRule) -> WithinRule {
     let digits = &raw[..raw.len() - letter.len_utf8()];
     let unit = DurationUnit::from_letter(letter);
     let num = (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-        .then(|| digits.parse::<u32>().ok())
+        .then(|| digits.parse::<i64>().ok())
         .flatten();
     match (num, unit) {
         (Some(num), Some(unit)) => WithinRule {
@@ -165,17 +167,22 @@ fn within_rule(value: Option<&str>, default: WithinRule) -> WithinRule {
     }
 }
 
+/// A number of the page as a count: at least 1, at most `u32::MAX`.
+fn at_least_one(num: i64) -> u32 {
+    u32::try_from(num.max(1)).unwrap_or(u32::MAX)
+}
+
 fn count_value(rule: CountRule) -> Option<KeepCount> {
     match rule {
         CountRule { on: false, .. } => None,
         CountRule { all: true, .. } => Some(KeepCount::Unlimited),
-        CountRule { num, .. } => Some(KeepCount::Count(num.max(1))),
+        CountRule { num, .. } => Some(KeepCount::Count(at_least_one(num))),
     }
 }
 
 fn within_value(rule: WithinRule) -> Option<String> {
     rule.on
-        .then(|| format!("{}{}", rule.num.max(1), rule.unit.letter()))
+        .then(|| format!("{}{}", at_least_one(rule.num), rule.unit.letter()))
 }
 
 impl RetentionForm {

@@ -20,16 +20,14 @@ EditorPage {
     property int savedOverdueThreshold: 0
     property bool hydrating: false
 
-    // The fields; the first load fills them with the values core offers.
-    property bool loaded: false
     property string scheduleKind: "daily"
-    property var selectedWeekdays: []
-    property int intervalDays: 0
+    property var selectedWeekdays: ["monday"]
+    property int intervalDays: 3
     property string startDate: ""
-    property int hour: 0
+    property int hour: 12
     property int minute: 0
     property bool useGlobalOverdue: true
-    property int customOverdueThreshold: 0
+    property int customOverdueThreshold: 2
     property var previewSlots: []
 
     readonly property var frequencyOptions: [
@@ -99,10 +97,9 @@ EditorPage {
 
     function loadFromSaved(schedJson, thresholdVal) {
         hydrating = true;
-        // Fields the saved schedule does not use keep their value, except on the first load.
+        // Fields the saved schedule does not use keep their value.
         var form = rootWindow.parseJsonOr(appBackend.scheduleFormJson(
-            schedJson, thresholdVal, loaded ? JSON.stringify(currentForm()) : ""), {});
-        loaded = true;
+            schedJson, thresholdVal, JSON.stringify(currentForm())), {});
         scheduleKind = form.kind;
         selectedWeekdays = form.weekdays;
         intervalDays = form.interval_days;

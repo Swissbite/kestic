@@ -82,7 +82,11 @@ EditorPage {
 
     dirty: initialData !== null && formState.dirty === true
 
-    Component.onCompleted: loadFromExcludesJson(savedExcludesJson)
+    Component.onCompleted: {
+        if (initialData) {
+            loadFromExcludesJson(savedExcludesJson);
+        }
+    }
 
     // The lint and the path test asked for last; an older answer is not shown.
     DaemonAnswer {

@@ -299,9 +299,6 @@ impl qobject::KesticApp {
     {
         let failure = match result {
             Ok(Ok(value)) => {
-                if how == Finish::Saved {
-                    self.as_mut().set_has_unsaved_changes(false);
-                }
                 self.as_mut().show_action_error("");
                 request_refresh();
                 return Some(value);

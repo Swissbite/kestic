@@ -46,7 +46,8 @@ pub struct ExcludeForm {
     pub exclude_caches: bool,
     pub exclude_trash: bool,
     pub size_limit_enabled: bool,
-    pub size_limit_num: u64,
+    /// May be out of range as the page's field holds it; the rules make it at least 1.
+    pub size_limit_num: i64,
     pub size_limit_unit: SizeUnit,
     pub ignore_case: bool,
     /// The marker files (`--exclude-if-present`), separated by commas.
@@ -65,7 +66,7 @@ pub struct ExcludeFormState {
 }
 
 /// The size limit as the editor shows it (`500M`, `2 gb`); `None` for one it cannot show.
-fn size_limit(raw: &str) -> Option<(u64, SizeUnit)> {
+fn size_limit(raw: &str) -> Option<(i64, SizeUnit)> {
     let raw = raw.trim();
     let raw = raw
         .strip_suffix(['B', 'b'])
@@ -77,17 +78,22 @@ fn size_limit(raw: &str) -> Option<(u64, SizeUnit)> {
     if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
-    Some((digits.parse::<u64>().ok()?.max(1), unit))
+    Some((digits.parse::<i64>().ok()?.max(1), unit))
 }
 
-/// The lines of `text`; an empty text has none.
+/// The lines of `text`, split at `\n` and `\r\n`; an empty text has none.
 fn split_lines(text: &str) -> Vec<String> {
     if text.is_empty() {
         return Vec::new();
     }
-    text.split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
-        .collect()
+    let mut lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+    let last = lines.len() - 1;
+    for line in &mut lines[..last] {
+        if line.ends_with('\r') {
+            line.pop();
+        }
+    }
+    lines
 }
 
 /// The marker files of a comma-separated text, trimmed, without empty ones.

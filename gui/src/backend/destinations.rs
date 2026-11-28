@@ -264,10 +264,7 @@ impl qobject::KesticApp {
                     return (false, String::new());
                 };
                 match update_refusal(result.outcome) {
-                    None => {
-                        app.as_mut().set_has_unsaved_changes(false);
-                        (true, String::new())
-                    }
+                    None => (true, String::new()),
                     Some(code) => {
                         // The edit page shows it like the connection test, with its action.
                         app.as_mut().show_action_error(&tr_text(&code.text("")));

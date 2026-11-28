@@ -33,7 +33,7 @@ fn ac_m6_34_2_exclude_form_loads_like_former_qml() {
         "(c) size limit"
     );
 
-    let table: [(&str, Option<(u64, SizeUnit)>); 10] = [
+    let table: [(&str, Option<(i64, SizeUnit)>); 10] = [
         ("500M", Some((500, SizeUnit::M))),
         (" 500 mb ", Some((500, SizeUnit::M))),
         ("1kB", Some((1, SizeUnit::K))),
@@ -98,6 +98,16 @@ fn ac_m6_34_2_exclude_form_writes_like_former_qml() {
     );
     assert_eq!(written.folders, vec!["/tmp".to_string()], "(c) folders");
     assert!(written.exclude_trash, "(c) trash");
+
+    let last_cr = ExcludeForm {
+        lines_text: "a\r".to_string(),
+        ..form.clone()
+    };
+    assert_eq!(
+        last_cr.to_rules().lines,
+        vec!["a\r".to_string()],
+        "(c) a carriage return without a line end stays"
+    );
 
     let empty = ExcludeForm::from_rules(&ExcludeRules::default());
     assert_eq!(empty.to_rules().lines, Vec::<String>::new(), "(c) no lines");
