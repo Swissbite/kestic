@@ -911,6 +911,9 @@ int scenario_revision_conflict(const Ctx& c) {
         role_value(model_named(w, "destinationsModel"), model_row(w, "destinationsModel", "destinationId", did), "name")
             .toString();
     M3_CHECK(6231, draft->property("repoPassword").toString().isEmpty(), "(c) the typed password must be cleared");
+    // The message after the refused save, for the UI review.
+    M3_CHECK(6234, save_screenshot(w, QString(c.out_path).replace(QStringLiteral(".png"), QStringLiteral("-conflict.png"))),
+        "conflict screenshot failed");
     M3_CHECK(6233, draft->property("name").toString() == daemon_name && daemon_name != typed_name,
         "(c) the form must show the name the destination got elsewhere");
 
