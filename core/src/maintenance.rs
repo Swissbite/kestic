@@ -70,6 +70,46 @@ pub struct PrunePreviewSummary {
     pub transparent_command: String,
 }
 
+impl PrunePreviewSummary {
+    /// The size restic names in its summary line (`3.4 MiB` of `to delete: 12 packs (3.4 MiB)`):
+    /// the first number with a binary unit. restic's line is English, so only this part is shown.
+    pub fn freed_size(&self) -> Option<String> {
+        let line = self.freed_summary.as_deref()?;
+        line.char_indices()
+            .filter(|(_, c)| c.is_ascii_digit())
+            .find_map(|(start, _)| size_at(&line[start..]))
+            .map(str::to_string)
+    }
+}
+
+/// The size at the start of `text`: digits, an optional fraction, at most one blank, and `B`,
+/// `KiB`, `MiB`, `GiB` or `TiB`.
+fn size_at(text: &str) -> Option<&str> {
+    let digits = |s: &str| s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+    let mut end = digits(text);
+    if end == 0 {
+        return None;
+    }
+    if let Some(fraction) = text[end..].strip_prefix('.') {
+        let n = digits(fraction);
+        if n > 0 {
+            end += 1 + n;
+        }
+    }
+    let mut rest = &text[end..];
+    if let Some(blank) = rest.chars().next().filter(|c| c.is_whitespace()) {
+        let after = &rest[blank.len_utf8()..];
+        if ["B", "KiB", "MiB", "GiB", "TiB"].iter().any(|u| after.starts_with(u)) {
+            end += blank.len_utf8();
+            rest = after;
+        }
+    }
+    let unit = ["B", "KiB", "MiB", "GiB", "TiB"]
+        .into_iter()
+        .find(|u| rest.starts_with(u))?;
+    Some(&text[..end + unit.len()])
+}
+
 /// Parses human-readable `restic prune --dry-run` output tolerantly.
 pub fn parse_prune_dry_run_output(
     lines: &[String],
