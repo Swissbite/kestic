@@ -25,28 +25,19 @@ use std::sync::atomic::{AtomicI32, Ordering};
 
 type Setter = fn(Pin<&mut qobject::KesticApp>, QString);
 
-/// The properties through which one kind of preview reports to QML.
+/// The property through which one kind of preview reports its error to QML.
 struct PreviewSlots {
-    id: Setter,
-    state: Setter,
-    result_json: Setter,
     error: Setter,
     /// Cancels a preview of this kind in the daemon.
     cancel: fn(&KesticClient, &str) -> zbus::Result<()>,
 }
 
 const DRY_RUN: PreviewSlots = PreviewSlots {
-    id: qobject::KesticApp::set_dry_run_preview_id,
-    state: qobject::KesticApp::set_dry_run_state,
-    result_json: qobject::KesticApp::set_dry_run_result_json,
     error: qobject::KesticApp::set_dry_run_error,
     cancel: |client, pid| client.cancel_backup_dry_run(pid).map(drop),
 };
 
 const RETENTION: PreviewSlots = PreviewSlots {
-    id: qobject::KesticApp::set_retention_preview_id,
-    state: qobject::KesticApp::set_retention_preview_state,
-    result_json: qobject::KesticApp::set_retention_preview_result_json,
     error: qobject::KesticApp::set_retention_preview_error,
     cancel: |client, pid| client.cancel_retention_preview(pid).map(drop),
 };
@@ -54,7 +45,6 @@ const RETENTION: PreviewSlots = PreviewSlots {
 impl qobject::KesticApp {
     /// Puts the preview into the error state with `text`.
     fn preview_failed(mut self: Pin<&mut Self>, slots: &PreviewSlots, text: &str) {
-        (slots.state)(self.as_mut(), QString::from("error"));
         (slots.error)(self.as_mut(), QString::from(text));
     }
 
@@ -66,16 +56,14 @@ impl qobject::KesticApp {
         lane: Lane,
         start: impl FnOnce(&KesticClient) -> zbus::Result<String> + Send + 'static,
     ) -> i32 {
-        (slots.result_json)(self.as_mut(), QString::from(""));
         (slots.error)(self.as_mut(), QString::from(""));
-        (slots.state)(self.as_mut(), QString::from("running"));
         let asked = Arc::new(AtomicI32::new(0));
         let asked_in_answer = Arc::clone(&asked);
         let request = self.request_daemon_with(
             lane,
             start,
             |_| false,
-            move |mut app, started| match started {
+            move |app, started| match started {
                 // The page that asked has gone: nobody follows the preview, so it stops.
                 Ok(Ok(preview_id)) if take_forgotten(asked_in_answer.load(Ordering::SeqCst)) => {
                     send_to_daemon(Lane::Alone, move |client| {
@@ -85,10 +73,7 @@ impl qobject::KesticApp {
                     });
                     (false, String::new())
                 }
-                Ok(Ok(preview_id)) => {
-                    (slots.id)(app.as_mut(), QString::from(&preview_id));
-                    (true, preview_id)
-                }
+                Ok(Ok(preview_id)) => (true, preview_id),
                 Ok(Err(err)) => {
                     app.preview_failed(slots, &dbus_error_text(&err));
                     (false, String::new())
@@ -135,10 +120,6 @@ impl qobject::KesticApp {
     ) -> (bool, String) {
         match status {
             Ok(Ok(status)) => {
-                (slots.state)(self.as_mut(), QString::from(&status.state));
-                if let Some(ref res) = status.result {
-                    (slots.result_json)(self.as_mut(), QString::from(&json_or(res, "{}")));
-                }
                 if let Some(kind) = status.error_kind {
                     let text = tr_text(&kind.text(status.error_detail.as_deref()));
                     (slots.error)(self.as_mut(), QString::from(&text));

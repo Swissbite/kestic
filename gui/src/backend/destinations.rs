@@ -372,13 +372,9 @@ impl qobject::KesticApp {
                     Ok(Err(err)) => (None, dbus_error_text(&err)),
                     Err(_) => (None, daemon_unavailable_text()),
                 };
-                let has_prev = dto
-                    .as_ref()
-                    .is_some_and(|d| !d.previous_destinations.is_empty());
                 shared_state().lock_unpoisoned().snapshots = dto;
                 app.as_mut().set_snapshots_loading(false);
                 app.as_mut().set_snapshots_error(QString::from(&error));
-                app.as_mut().set_snapshots_has_previous(has_prev);
                 app.as_mut().set_snapshots_backup_id(QString::from(&wanted));
                 app.as_mut().snapshots_updated();
             },

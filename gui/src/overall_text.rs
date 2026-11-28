@@ -29,17 +29,16 @@ pub fn overall_subtitle(state: &DaemonStateDto) -> String {
         .map_or_default(|m| tr(&m))
 }
 
-/// Number of backups «Back Up All Now» can start right now (source and destination
-/// available, no permanent error, run conditions met) and, when that is not every
-/// backup, the hint shown before the click.
-pub fn back_up_all_availability(state: &DaemonStateDto) -> (usize, String) {
+/// The hint shown before «Back Up All Now» when it cannot start every backup right now (source
+/// and destination available, no permanent error, run conditions met); empty when it can.
+pub fn back_up_all_hint(state: &DaemonStateDto) -> String {
     let total = state.backups.len();
     let startable = state
         .backups
         .iter()
         .filter(|b| b.availability.available && !b.has_error && !b.has_unmet_run_condition)
         .count();
-    let hint = if total > 0 && startable < total {
+    if total > 0 && startable < total {
         i18np(
             "Only %2 of %1 backup can start now.",
             "Only %2 of %1 backups can start now.",
@@ -48,8 +47,7 @@ pub fn back_up_all_availability(state: &DaemonStateDto) -> (usize, String) {
         )
     } else {
         String::new()
-    };
-    (startable, hint)
+    }
 }
 
 /// Maintenance state line of a destination (detail page): running, or why due maintenance

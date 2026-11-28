@@ -118,8 +118,6 @@ impl qobject::KesticApp {
         } else {
             let msg = localized_manual_block_message(&backup_name, reason_code);
             self.as_mut()
-                .set_manual_run_blocked_backup_id(QString::from(b_id));
-            self.as_mut()
                 .set_manual_run_blocked_message(QString::from(&msg));
         }
     }
@@ -185,8 +183,6 @@ impl qobject::KesticApp {
     pub fn dismiss_manual_run_blocked(mut self: Pin<&mut Self>) {
         self.as_mut()
             .set_manual_run_blocked_message(QString::from(""));
-        self.as_mut()
-            .set_manual_run_blocked_backup_id(QString::from(""));
     }
 
     pub fn add_backup(
