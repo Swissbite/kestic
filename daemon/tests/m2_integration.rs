@@ -83,12 +83,14 @@ fn update_backup_explicit(
     backup: &Backup,
 ) -> Result<(), zbus::Error> {
     let json = backup_to_explicit_json(backup);
+    let revision = common::revision::backup_revision(client, backup);
     let conn = client.connection().clone();
     let bus = bus_name.to_string();
     block_on(async move {
         let proxy =
             zbus::Proxy::new(&conn, bus.as_str(), KESTIC_OBJECT_PATH, KESTIC_INTERFACE_V1).await?;
-        proxy.call("UpdateBackup", &(json,)).await
+        let _new_revision: String = proxy.call("UpdateBackup", &(json, revision)).await?;
+        Ok(())
     })
 }
 
