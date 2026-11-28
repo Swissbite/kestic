@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::load_config;
+use kestic_test_support::config::load_config;
 
 use kestic_core::config::{
     AppConfig, CURRENT_CONFIG_VERSION, ConfigError, default_config_path, save_config,

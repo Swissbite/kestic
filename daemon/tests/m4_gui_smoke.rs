@@ -22,6 +22,7 @@ use common::{
 use kestic_core::query_list::QueryLimits;
 use kestic_core::scheduler::TimezoneSpec;
 use kestic_daemon::dbus_api::{KESTIC_BUS_NAME, KESTIC_INTERFACE_V1};
+use kestic_test_support::wait::try_poll_every;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -276,10 +277,11 @@ fn ac_m4_03_5_folder_list_loads_page_by_page_while_scrolling() {
 /// Releases a held `restic ls` once the smoke scene wrote the marker file `typed` (it typed
 /// into the window while the folder loaded), or after 60 s.
 fn release_ls_when_typed(hold_prefix: &Path, typed: &Path) {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    while !typed.exists() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // Released also when the scene never types; the scene then fails by itself.
+    try_poll_every(Duration::from_secs(60), Duration::from_millis(50), || {
+        typed.exists().then_some(())
+    })
+    .unwrap_or_default();
     let _ = std::fs::remove_file(typed);
     let _ = std::fs::remove_file(format!("{}.ls", hold_prefix.display()));
 }
@@ -327,10 +329,11 @@ fn m4_s03_leaving_a_loading_folder_stops_restic_ls() {
                 "en",
                 &smoke_artifact("restore-browse-leave", "wide", "en"),
             );
-            let deadline = Instant::now() + Duration::from_secs(15);
-            while rig.wrapper.of('T', "ls").is_empty() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(50));
-            }
+            // The assertion below reports a missing SIGTERM, after the hold is released.
+            try_poll_every(Duration::from_secs(15), Duration::from_millis(50), || {
+                (!rig.wrapper.of('T', "ls").is_empty()).then_some(())
+            })
+            .unwrap_or_default();
             rig.wrapper.release("ls");
             assert_eq!(rig.wrapper.of('T', "ls").len(), 1, "restic ls got SIGTERM");
             rig.daemon.stop();
@@ -470,10 +473,11 @@ fn m4_s04_cancelling_a_search_stops_restic_find() {
                 "en",
                 &smoke_artifact("restore-search-cancelled", "wide", "en"),
             );
-            let deadline = Instant::now() + Duration::from_secs(15);
-            while rig.wrapper.of('T', "find").is_empty() && Instant::now() < deadline {
-                std::thread::sleep(Duration::from_millis(50));
-            }
+            // The assertion below reports a missing SIGTERM, after the hold is released.
+            try_poll_every(Duration::from_secs(15), Duration::from_millis(50), || {
+                (!rig.wrapper.of('T', "find").is_empty()).then_some(())
+            })
+            .unwrap_or_default();
             rig.wrapper.release("find");
             assert_eq!(
                 rig.wrapper.of('T', "find").len(),
@@ -951,15 +955,18 @@ fn click_restore_files_when_marked(
     registered: &mpsc::Receiver<()>,
     marker: &Path,
 ) -> bool {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    if registered.recv_timeout(Duration::from_secs(60)).is_err() {
+    const LIMIT: Duration = Duration::from_secs(60);
+    let started = Instant::now();
+    if registered.recv_timeout(LIMIT).is_err() {
         return false;
     }
-    while !marker.exists() {
-        if Instant::now() > deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(50));
+    let marked = try_poll_every(
+        LIMIT.saturating_sub(started.elapsed()),
+        Duration::from_millis(50),
+        || marker.exists().then_some(()),
+    );
+    if marked.is_none() {
+        return false;
     }
     let conn = zbus::block_on(zbus::Connection::session()).expect("session conn");
     let entry = fetch_dbusmenu_items(&conn, sni)
@@ -1529,21 +1536,25 @@ fn ac_m4_05_29_restore_banner_shows_running_and_cancelled() {
                     // The daemon reads a 1 MiB line first; the 5 MiB line then comes at the same
                     // moment, which changes no speed, and the clock moves once it has been read.
                     scope.spawn(|| {
-                        let deadline = Instant::now() + Duration::from_secs(90);
+                        const LIMIT: Duration = Duration::from_secs(90);
+                        let started = Instant::now();
+                        // Without the progress the scene fails by itself; this thread then
+                        // only stops waiting.
                         let wait_for_bytes = |bytes: u64| {
-                            while Instant::now() < deadline {
-                                let read = rig
-                                    .daemon
-                                    .client
-                                    .get_state()
-                                    .ok()
-                                    .and_then(|state| state.overall.active_run_progress)
-                                    .is_some_and(|p| p.bytes_done == bytes);
-                                if read {
-                                    return;
-                                }
-                                std::thread::sleep(Duration::from_millis(100));
-                            }
+                            try_poll_every(
+                                LIMIT.saturating_sub(started.elapsed()),
+                                Duration::from_millis(100),
+                                || {
+                                    rig.daemon
+                                        .client
+                                        .get_state()
+                                        .ok()
+                                        .and_then(|state| state.overall.active_run_progress)
+                                        .is_some_and(|p| p.bytes_done == bytes)
+                                        .then_some(())
+                                },
+                            )
+                            .unwrap_or_default();
                         };
                         wait_for_bytes(MIB);
                         std::fs::write(

@@ -15,10 +15,11 @@ use kestic_daemon::dbus_api::{
     RunDetailDto, SnapshotQueryPage, SnapshotQueryRequest, SnapshotQueryResultDto,
     SnapshotQueryStatusDto,
 };
+use kestic_test_support::wait::wait_for_value;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 
 pub struct RestoreFixture {
@@ -186,23 +187,18 @@ impl RestoreFixture {
 
     /// Waits until run `run_id` has ended and returns its detail.
     pub fn wait_run(&self, run_id: &str) -> RunDetailDto {
-        let deadline = Instant::now() + Duration::from_secs(90);
-        loop {
-            let detail = self
-                .rig
-                .daemon
-                .client
-                .get_run_detail(run_id)
-                .expect("GetRunDetail");
-            if !matches!(detail.run.status, RunStatus::Running | RunStatus::Pending) {
-                return detail;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "restore still running: {detail:?}"
-            );
-            std::thread::sleep(Duration::from_millis(50));
-        }
+        wait_for_value(
+            Duration::from_secs(90),
+            &format!("restore {run_id} to end"),
+            || {
+                self.rig
+                    .daemon
+                    .client
+                    .get_run_detail(run_id)
+                    .expect("GetRunDetail")
+            },
+            |detail| !matches!(detail.run.status, RunStatus::Running | RunStatus::Pending),
+        )
     }
 
     /// Arguments of every `restic restore` call so far, as the wrapper logged them.

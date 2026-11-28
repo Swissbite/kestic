@@ -11,12 +11,13 @@ use kestic_core::backup::{
 use kestic_core::model::{Backup, Destination, ExcludeRules, RunStatus, Source};
 use kestic_core::restic::{CancelHandle, ResticRuntime};
 use kestic_test_support::tools::find_lock_file;
+use kestic_test_support::wait::try_poll_every;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use time::macros::datetime;
 
@@ -257,15 +258,13 @@ fn ac_m1_10_1_and_10_3_cancel_sends_sigterm_and_releases_restic_lock() {
     // Cancel as soon as restic holds its lock, so AC-M1-10-3 checks a lock that really existed.
     let locks_dir = repo_dir.join("locks");
     let trigger_handle = thread::spawn(move || {
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while Instant::now() < deadline {
-            if find_lock_file(&locks_dir).is_some() {
-                cancel_trigger.cancel();
-                return true;
-            }
-            thread::sleep(Duration::from_millis(2));
+        let lock = try_poll_every(Duration::from_secs(30), Duration::from_millis(2), || {
+            find_lock_file(&locks_dir)
+        });
+        if lock.is_some() {
+            cancel_trigger.cancel();
         }
-        false
+        lock.is_some()
     });
 
     let res = execute_backup(

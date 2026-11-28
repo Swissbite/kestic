@@ -29,7 +29,7 @@ fn start_rig(
     let rig = M3Rig::start(root, variant, base, start, |_| {});
     let fx = rig.add_backup("Docs", configure);
     // One tick so scheduler baselines (backup and maintenance) are recorded before pausing.
-    std::thread::sleep(Duration::from_millis(1300));
+    rig.clock.wait_ticks(2);
     (rig, fx)
 }
 

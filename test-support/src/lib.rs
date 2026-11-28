@@ -8,16 +8,19 @@
 //! dev-dependency; never part of a shipped binary.
 
 pub mod bus;
+pub mod config;
 pub mod delayed_daemon;
 pub mod gui;
 pub mod keyring;
 pub mod metainfo;
 pub mod password;
 pub mod po;
+pub mod process;
 mod random;
 pub mod release_mock;
 pub mod repo_template;
 pub mod s3_server;
 pub mod sftp_server;
 pub mod tools;
+pub mod wait;
 pub mod workspace;

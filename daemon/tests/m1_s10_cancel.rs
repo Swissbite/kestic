@@ -13,11 +13,13 @@ use kestic_core::history::RunHistory;
 use kestic_core::model::{Backup, Destination, DestinationKind, Run, RunStatus, Source};
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH};
 use kestic_daemon::service::{DaemonCore, DaemonRunConfig, run_daemon};
+use kestic_test_support::bus::test_bus_name;
+use kestic_test_support::wait::try_poll_every;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     let sub = root.join(label);
@@ -27,10 +29,7 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
     fs::create_dir_all(&repo_dir).expect("mkdir repo");
     write_incompressible_dataset(&src_dir, 96, 4 * 1024 * 1024);
 
-    let bus_name = format!(
-        "net.daester.Kestic.CancelTest_{}",
-        label.replace(['.', '-'], "_")
-    );
+    let bus_name = test_bus_name("CancelTest_", label);
     let daemon = spawn_m3_daemon(root, M3DaemonOpts::on_request(label, &bus_name, restic_bin));
     let client = &daemon.client;
 
@@ -55,18 +54,19 @@ fn run_cancel_check_for_restic(root: &Path, label: &str, restic_bin: &Path) {
 
     let run_id = client.start_backup(&backup_id).expect("StartBackup");
 
-    // Wait briefly for restic progress (or at most 250ms so we catch it mid-flight on fast NVMe).
-    let wait_deadline = Instant::now() + Duration::from_millis(250);
-    while Instant::now() < wait_deadline {
-        if signals
-            .snapshot()
-            .iter()
-            .any(|s| matches!(s, CapturedKesticSignal::RunProgress(p) if p.run_id == run_id))
-        {
-            break;
-        }
-        thread::sleep(Duration::from_millis(15));
-    }
+    // Waits briefly for restic progress (at most 250ms, so the cancel catches it mid-flight on
+    // fast NVMe); the cancel follows either way.
+    try_poll_every(
+        Duration::from_millis(250),
+        Duration::from_millis(15),
+        || {
+            signals
+                .snapshot()
+                .iter()
+                .any(|s| matches!(s, CapturedKesticSignal::RunProgress(p) if p.run_id == run_id))
+                .then_some(())
+        },
+    );
 
     // AC-M1-10-1: CancelRun sends SIGTERM and run finishes as Cancelled.
     client.cancel_run(&run_id).expect("CancelRun");

@@ -5,7 +5,8 @@
 
 mod common;
 
-use common::{execute_backup, load_config};
+use common::execute_backup;
+use kestic_test_support::config::load_config;
 
 use kestic_core::config::{AppConfig, save_config};
 use kestic_core::history::RunHistory;

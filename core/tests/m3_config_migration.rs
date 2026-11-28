@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::load_config;
+use kestic_test_support::config::load_config;
 
 use kestic_core::config::{CURRENT_CONFIG_VERSION, ConfigError, save_config};
 use kestic_core::model::{KeepCount, ModelError, RetentionPolicy};

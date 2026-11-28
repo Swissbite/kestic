@@ -9,11 +9,13 @@ mod common;
 use common::m3::{M3Rig, StdFakes, latest_variant};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_daemon::dbus_api::KESTIC_INTERFACE_V1;
-use std::process::{Child, Command, Stdio};
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::wait::{try_poll_every, wait_until_within};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use time::macros::datetime;
 use zbus::export::ordered_stream::OrderedStreamExt;
 
@@ -23,16 +25,6 @@ const BUS: &str = "net.daester.KesticIdlePolling";
 const IDLE_WINDOW: Duration = Duration::from_secs(3);
 /// `GetState` calls tolerated in the quiet window (window activation and the like).
 const MAX_CALLS_WHILE_IDLE: usize = 3;
-
-/// Kills and reaps the GUI process when the test ends.
-struct GuiProcess(Child);
-
-impl Drop for GuiProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// Counts `GetState` method calls on the session bus with a monitor connection.
 fn count_get_state_calls() -> Arc<AtomicUsize> {
@@ -72,11 +64,9 @@ fn count_get_state_calls() -> Arc<AtomicUsize> {
             });
         });
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while !*ready.lock().expect("ready flag") {
-        assert!(Instant::now() < deadline, "monitor connection ready");
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_until_within(Duration::from_secs(5), "monitor connection ready", || {
+        *ready.lock().expect("ready flag")
+    });
     calls
 }
 
@@ -100,37 +90,34 @@ fn idle_gui_does_not_poll_daemon_state() {
             );
             let calls = count_get_state_calls();
 
-            let _gui = GuiProcess(
+            let gui = KillOnDrop::spawn(
                 Command::new(find_kestic_binary())
                     .args(["--bus-name", BUS, "--no-autostart"])
                     .env("QT_QPA_PLATFORM", "offscreen")
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .spawn()
-                    .expect("start GUI"),
+                    .stderr(Stdio::null()),
+                "GUI",
             );
 
             // (a) the GUI loads the state once it is up.
-            let deadline = Instant::now() + Duration::from_secs(30);
-            while calls.load(Ordering::SeqCst) == 0 {
-                assert!(
-                    Instant::now() < deadline,
-                    "(a) GUI called GetState after start"
-                );
-                thread::sleep(Duration::from_millis(50));
-            }
+            try_poll_every(Duration::from_secs(30), Duration::from_millis(50), || {
+                (calls.load(Ordering::SeqCst) > 0).then_some(())
+            })
+            .expect("(a) GUI called GetState after start");
+            // quiet window: lets the calls of the start-up end before the measured window
             thread::sleep(Duration::from_secs(2));
 
-            // (b) quiet window: no state change, so (almost) no further GetState calls.
+            // (b) no state change, so (almost) no further GetState calls.
             let before = calls.load(Ordering::SeqCst);
+            // quiet window: GetState must not be called while nothing changes
             thread::sleep(IDLE_WINDOW);
             let during = calls.load(Ordering::SeqCst) - before;
             assert!(
                 during <= MAX_CALLS_WHILE_IDLE,
                 "(b) idle GUI called GetState {during} times in {IDLE_WINDOW:?}"
             );
-            drop(_gui);
+            drop(gui);
             rig.daemon.stop();
         },
     );

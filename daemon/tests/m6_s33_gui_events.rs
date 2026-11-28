@@ -6,18 +6,20 @@
 
 mod common;
 
-use common::m3::{M3Rig, StdFakes, latest_variant, wait_until_within};
+use common::m3::{M3Rig, StdFakes, latest_variant};
 use common::{find_kestic_binary, run_isolated_test};
 use kestic_core::model::Backup;
 use kestic_daemon::dbus_api::{KESTIC_INTERFACE_V1, KESTIC_OBJECT_PATH, KesticClient};
 use kestic_test_support::bus::PrivateDbusGuard;
 use kestic_test_support::delayed_daemon::DelayedDaemon;
 use kestic_test_support::gui::{IsolatedEnv, SmokeContext};
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::wait::wait_until_within;
 use kestic_test_support::workspace::workspace_root;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -34,16 +36,6 @@ const IDLE_WINDOW: Duration = Duration::from_secs(10);
 const MAX_GET_STATE_WHILE_IDLE: usize = 2;
 /// How long a held `restic version` blocks before the test releases it (`AC-M6-33-5`).
 const VERSION_HOLD: Duration = Duration::from_secs(8);
-
-/// Kills and reaps the GUI process when the test ends.
-struct GuiProcess(Child);
-
-impl Drop for GuiProcess {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
 
 /// One `Kestic1` method call seen on the bus.
 #[derive(Clone, Debug)]
@@ -123,17 +115,16 @@ fn calls_of(seen: &Mutex<Vec<Call>>, member: &str, except: &str) -> Vec<Call> {
 
 /// Starts the GUI offscreen on `bus` of the session bus at `address`, without starting a daemon
 /// of its own.
-fn start_gui(bus: &str, address: &str) -> GuiProcess {
-    GuiProcess(
+fn start_gui(bus: &str, address: &str) -> KillOnDrop {
+    KillOnDrop::spawn(
         Command::new(find_kestic_binary())
             .args(["--bus-name", bus, "--no-autostart"])
             .env("QT_QPA_PLATFORM", "offscreen")
             .env("DBUS_SESSION_BUS_ADDRESS", address)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start GUI"),
+            .stderr(Stdio::null()),
+        "GUI",
     )
 }
 
@@ -802,6 +793,7 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
                         && !calls_of(&seen, "GetState", &me).is_empty()
                 },
             );
+            // quiet window: lets the calls of the GUI's start-up end before the measured change
             thread::sleep(Duration::from_secs(2));
 
             let before = calls_of(&seen, "GetState", &me).len();
@@ -819,8 +811,10 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
                 "(a) the change reached the GUI after {took:?}, not within {CHANGE_WITHIN:?}"
             );
 
+            // quiet window: lets the calls after the change end before the idle window
             thread::sleep(Duration::from_secs(2));
             let idle_start = calls_of(&seen, "GetState", &me).len();
+            // quiet window: an idle GUI must not call GetState while nothing changes
             thread::sleep(IDLE_WINDOW);
             let idle_calls = calls_of(&seen, "GetState", &me).len() - idle_start;
             assert!(
@@ -878,19 +872,18 @@ fn ac_m6_33_4_changes_arrive_by_signal_without_polling() {
 
 /// Starts `kestic daemon` as a process of its own on `bus` of the session bus that `conn` is
 /// connected to (at `address`) and waits until it owns the name.
-fn start_daemon_process(conn: &zbus::Connection, bus: &str, address: &str) -> GuiProcess {
-    let daemon = GuiProcess(
+fn start_daemon_process(conn: &zbus::Connection, bus: &str, address: &str) -> KillOnDrop {
+    let daemon = KillOnDrop::spawn(
         Command::new(find_kestic_binary())
             .args(["daemon", "--bus-name", bus])
             .env("DBUS_SESSION_BUS_ADDRESS", address)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("start daemon"),
+            .stderr(Stdio::null()),
+        "daemon",
     );
     wait_until_within(Duration::from_secs(20), "daemon owns its bus name", || {
-        owner_pid(conn, bus) == Some(daemon.0.id())
+        owner_pid(conn, bus) == Some(daemon.id())
     });
     daemon
 }
@@ -914,10 +907,11 @@ fn idle_gui_follows_a_replaced_daemon() {
                 "precondition: the GUI registered with the first daemon",
                 || !calls_of(&seen, "RegisterGui", "").is_empty(),
             );
+            // quiet window: the GUI settles and is idle when the daemon dies
             thread::sleep(Duration::from_secs(1));
 
-            first.0.kill().expect("SIGKILL the first daemon");
-            first.0.wait().expect("reap the first daemon");
+            first.kill().expect("SIGKILL the first daemon");
+            first.wait().expect("reap the first daemon");
             wait_until_within(Duration::from_secs(10), "bus name released", || {
                 owner_pid(&fakes.sni_conn, bus).is_none()
             });
@@ -936,6 +930,7 @@ fn idle_gui_follows_a_replaced_daemon() {
                 .unique_name()
                 .expect("test client name")
                 .to_string();
+            // quiet window: the GUI's own calls after registering end before the measured change
             thread::sleep(Duration::from_secs(1));
             let before = calls_of(&seen, "GetState", &me).len();
             client.set_expert_mode(true).expect("SetExpertMode");
@@ -1042,6 +1037,8 @@ fn ac_m6_33_5_shown_command_does_not_run_restic_in_main_thread() {
                 let releaser = {
                     let marker = format!("{}.version", rig.wrapper.hold.display());
                     thread::spawn(move || {
+                        // quiet window: `restic version` stays held while the scene runs, which
+                        // must not wait for it
                         thread::sleep(VERSION_HOLD);
                         let _ = fs::remove_file(marker);
                     })

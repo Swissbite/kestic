@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Private session bus for tests: a `dbus-daemon` without service activation and a wait for a
-//! bus name to get an owner.
+//! Private session bus for tests: a `dbus-daemon` without service activation, bus names for
+//! test daemons and a wait for a bus name to get an owner.
 
+use crate::wait::wait_until_within;
 use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Configuration of the private session bus (no service activation, so nothing on the host is
 /// started on demand).
@@ -96,18 +96,21 @@ fn name_has_owner(address: &str, name: &str) -> zbus::Result<bool> {
 /// Waits until `name` has an owner on the bus at `address`; panics when `owner` exits first or
 /// `timeout` passes.
 pub fn wait_for_name_owner(address: &str, name: &str, owner: &mut Child, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    loop {
+    wait_until_within(timeout, &format!("D-Bus owner `{name}`"), || {
         if let Some(status) = owner.try_wait().expect("try_wait bus name owner") {
             panic!("process expected to own `{name}` exited early with {status}");
         }
-        if matches!(name_has_owner(address, name), Ok(true)) {
-            return;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for D-Bus owner `{name}`"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+        matches!(name_has_owner(address, name), Ok(true))
+    });
+}
+
+/// The well-known bus name `net.daester.Kestic.<base><suffix>` of a test daemon, so daemons of
+/// one test (one per restic version, say) never collide. Characters a bus name element does not
+/// allow in `suffix` become `_`.
+pub fn test_bus_name(base: &str, suffix: &str) -> String {
+    let suffix: String = suffix
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("net.daester.Kestic.{base}{suffix}")
 }

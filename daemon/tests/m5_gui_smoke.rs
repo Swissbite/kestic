@@ -515,7 +515,8 @@ fn ac_m5_05_7_gui_other_repository_message_and_add_as_new() {
                     ],
                 );
             }
-            let config = common::load_config(&rig.daemon.config_path).expect("config");
+            let config =
+                kestic_test_support::config::load_config(&rig.daemon.config_path).expect("config");
             assert_eq!(
                 config.destination(&dest.id).map(|d| &d.kind),
                 Some(&dest.kind),

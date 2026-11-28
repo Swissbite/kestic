@@ -6,7 +6,9 @@
 mod common;
 
 use kestic_test_support::password::{s3_key, strong_password};
-use kestic_test_support::tools::{dev_tools_bin_dir, short_tempdir};
+use kestic_test_support::process::KillOnDrop;
+use kestic_test_support::tools::{dev_tools_bin_dir, free_loopback_port, short_tempdir};
+use kestic_test_support::wait::try_poll_every;
 use kestic_test_support::workspace::workspace_root;
 
 use std::collections::HashMap;
@@ -15,49 +17,17 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::{Duration, Instant};
-
-struct ChildGuard {
-    child: Option<Child>,
-}
-
-impl ChildGuard {
-    fn new(child: Child) -> Self {
-        Self { child: Some(child) }
-    }
-
-    fn id(&self) -> u32 {
-        self.child.as_ref().expect("child alive").id()
-    }
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
-}
-
-fn allocate_random_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    listener.local_addr().expect("local addr").port()
-}
+use std::time::Duration;
 
 fn wait_for_tcp(port: u16, timeout: Duration) {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            return;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    panic!("timed out waiting for TCP port {port}");
+    try_poll_every(timeout, Duration::from_millis(50), || {
+        TcpStream::connect(("127.0.0.1", port)).ok()
+    })
+    .unwrap_or_else(|| panic!("timed out waiting for TCP port {port}"));
 }
 
 fn isolated_env(cmd: &mut Command, root: &Path) {
@@ -327,7 +297,7 @@ fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
     let s3_temp = short_tempdir("kestic-ac-m0-02-4-s3");
     let s3_root = s3_temp.path().join("s3-root");
     fs::create_dir_all(s3_root.join("testbucket")).expect("create s3 bucket dir");
-    let s3_port = allocate_random_port();
+    let s3_port = free_loopback_port();
     let access_key = s3_key(20);
     let secret_key = s3_key(20);
     let repo_password = strong_password();
@@ -350,7 +320,7 @@ fn verify_s3_server_unprivileged(rclone: &Path, restic_versions: &[PathBuf]) {
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
-    let rclone_guard = ChildGuard::new(rclone_cmd.spawn().expect("spawn rclone serve s3"));
+    let rclone_guard = KillOnDrop::new(rclone_cmd.spawn().expect("spawn rclone serve s3"));
     let rclone_pid = rclone_guard.id();
     wait_for_tcp(s3_port, Duration::from_secs(5));
 
@@ -407,7 +377,7 @@ fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
 
     let host_pub = fs::read_to_string(sftp_temp.path().join("ssh_host_ed25519_key.pub"))
         .expect("read host pubkey");
-    let sftp_port = allocate_random_port();
+    let sftp_port = free_loopback_port();
     let known_hosts = sftp_temp.path().join("known_hosts");
     fs::write(&known_hosts, format!("[127.0.0.1]:{sftp_port} {host_pub}"))
         .expect("write known_hosts");
@@ -455,7 +425,7 @@ fn verify_sftp_server_unprivileged(restic_versions: &[PathBuf]) {
     )
     .expect("write ssh_client_config");
 
-    let sshd_guard = ChildGuard::new(
+    let sshd_guard = KillOnDrop::new(
         Command::new("/usr/sbin/sshd")
             .args(["-D", "-e", "-f"])
             .arg(&sshd_config)

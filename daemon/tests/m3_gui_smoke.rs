@@ -15,7 +15,6 @@ mod common;
 
 use common::revision::UpdateNow;
 
-use common::load_config;
 use common::m3::{
     FakeSetup, M3Rig, StdFakes, backup_summary, connect_local_repo, connect_rest_repo,
     latest_variant, wait_for_state,
@@ -29,6 +28,7 @@ use kestic_core::model::{
     Schedule, Source,
 };
 use kestic_daemon::dbus_api::{BackendSecrets, KESTIC_BUS_NAME, RunProgressPhase};
+use kestic_test_support::config::load_config;
 use kestic_test_support::tools::RestServerGuard;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -1078,7 +1078,8 @@ fn finding4_destination_page_resets_maintenance_running_after_the_run() {
             let _fakes = gui_fakes(false, &["HomeWifi"]);
             let rig = start_rig(root, friday, true);
             let dest = rig.add_destination("Status Vault", |_| {});
-            std::thread::sleep(Duration::from_millis(1300));
+            // One whole scheduler tick records the maintenance baseline.
+            rig.clock.wait_ticks(2);
             rig.wrapper.hold("prune");
             rig.clock.set(sunday_1200);
             wait_for_state(

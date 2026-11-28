@@ -5,9 +5,11 @@
 
 mod common;
 
-use common::load_config;
+use kestic_test_support::config::load_config;
 
+use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::tools::{assert_has_flag_pair, find_lock_file};
+use kestic_test_support::wait::wait_until_within;
 
 use kestic_core::backup::{
     build_forget_ids_command_spec, build_forget_plan_command_spec, execute_forget_dry_run_with,
@@ -24,8 +26,8 @@ use semver::Version;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{ChildStdin, Command, Stdio};
+use std::time::Duration;
 use tempfile::TempDir;
 use time::OffsetDateTime;
 use time::format_description::FormatItem;
@@ -122,17 +124,11 @@ fn list_snapshots_by_tag(
     serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).expect("parse snapshots")
 }
 
+/// A restic process holding a lock; its stdin closes before the process is killed (fields drop
+/// in declaration order).
 struct LockHolderGuard {
-    stdin: Option<ChildStdin>,
-    child: Child,
-}
-
-impl Drop for LockHolderGuard {
-    fn drop(&mut self) {
-        drop(self.stdin.take());
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
+    _stdin: ChildStdin,
+    child: KillOnDrop,
 }
 
 #[test]
@@ -842,23 +838,24 @@ fn spawn_non_exclusive_lock_holder(
     pw: &str,
     cache_dir: &Path,
 ) -> LockHolderGuard {
-    let mut child = Command::new(restic_bin)
-        .args([
-            "-r",
-            &repo_dir.to_string_lossy(),
-            "backup",
-            "--stdin",
-            "--stdin-filename",
-            "slow-input.txt",
-        ])
-        .env("RESTIC_PASSWORD", pw)
-        .env("RESTIC_CACHE_DIR", cache_dir)
-        .env("RESTIC_HOST", "other-active-backup")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn restic backup --stdin");
+    let mut child = KillOnDrop::spawn(
+        Command::new(restic_bin)
+            .args([
+                "-r",
+                &repo_dir.to_string_lossy(),
+                "backup",
+                "--stdin",
+                "--stdin-filename",
+                "slow-input.txt",
+            ])
+            .env("RESTIC_PASSWORD", pw)
+            .env("RESTIC_CACHE_DIR", cache_dir)
+            .env("RESTIC_HOST", "other-active-backup")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null()),
+        "restic backup --stdin",
+    );
 
     let mut stdin = child.stdin.take().expect("piped stdin");
     stdin
@@ -867,23 +864,21 @@ fn spawn_non_exclusive_lock_holder(
     stdin.flush().expect("flush stdin");
 
     let mut guard = LockHolderGuard {
-        stdin: Some(stdin),
+        _stdin: stdin,
         child,
     };
 
     let locks_dir = repo_dir.join("locks");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while find_lock_file(&locks_dir).is_none() {
-        if let Some(status) = guard.child.try_wait().expect("try_wait lock holder") {
-            panic!("{label}: restic backup --stdin exited early with {status}");
-        }
-        assert!(
-            Instant::now() < deadline,
-            "{label}: timed out waiting for non-exclusive lock in {}",
-            locks_dir.display()
-        );
-        std::thread::sleep(Duration::from_millis(25));
-    }
+    wait_until_within(
+        Duration::from_secs(10),
+        &format!("{label}: non-exclusive lock in {}", locks_dir.display()),
+        || {
+            if let Some(status) = guard.child.try_wait().expect("try_wait lock holder") {
+                panic!("{label}: restic backup --stdin exited early with {status}");
+            }
+            find_lock_file(&locks_dir).is_some()
+        },
+    );
     guard
 }
 

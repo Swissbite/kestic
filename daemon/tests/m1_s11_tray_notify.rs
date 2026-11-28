@@ -22,13 +22,15 @@ use kestic_daemon::dbus_api::{
 use kestic_daemon::notifications::KESTIC_DESKTOP_ENTRY;
 use kestic_daemon::service::{DaemonRunConfig, run_daemon};
 use kestic_daemon::tray::{KesticTrayState, TrayHandle, TrayStatus};
+use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::tools::write_executable;
+use kestic_test_support::wait::wait_for_value;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use zbus::{Connection, block_on};
 
 fn assert_sni_matches(
@@ -38,24 +40,22 @@ fn assert_sni_matches(
     expected_overlay: &str,
     label: &str,
 ) {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let status = read_sni_string_prop(client_conn, sni_service, "Status");
-        let overlay = read_sni_string_prop(client_conn, sni_service, "OverlayIconName");
-        if status == expected_status && overlay == expected_overlay {
-            let (title, desc) = read_sni_tooltip(client_conn, sni_service);
-            assert_eq!(title, "Kestic", "[{label}] ToolTip title");
-            assert!(!desc.is_empty(), "[{label}] ToolTip description empty");
-            return;
-        }
-        if Instant::now() >= deadline {
-            panic!(
-                "[{label}] SNI mismatch: expected (status={expected_status:?}, overlay={expected_overlay:?}), \
-                 got (status={status:?}, overlay={overlay:?})"
-            );
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
+    let (status, overlay) = wait_for_value(
+        Duration::from_secs(3),
+        &format!("[{label}] SNI (status={expected_status:?}, overlay={expected_overlay:?})"),
+        || {
+            (
+                read_sni_string_prop(client_conn, sni_service, "Status"),
+                read_sni_string_prop(client_conn, sni_service, "OverlayIconName"),
+            )
+        },
+        |(status, overlay)| status == expected_status && overlay == expected_overlay,
+    );
+    assert_eq!(status, expected_status, "[{label}] SNI Status");
+    assert_eq!(overlay, expected_overlay, "[{label}] SNI OverlayIconName");
+    let (title, desc) = read_sni_tooltip(client_conn, sni_service);
+    assert_eq!(title, "Kestic", "[{label}] ToolTip title");
+    assert!(!desc.is_empty(), "[{label}] ToolTip description empty");
 }
 
 struct SniTestCtx<'a> {
@@ -200,26 +200,27 @@ fn assert_simulated_sni_matrix(ctx: &mut SniTestCtx<'_>) {
         )
         .expect("save sim config");
 
-        let child = Command::new(ctx.kestic_bin)
-            .args([
-                "daemon",
-                "--require-sni",
-                "--no-job-view",
-                "--no-portal-inhibit",
-                "--suppress-ui-spawn",
-                "--simulate-status",
-                sim_arg,
-                "--config-path",
-            ])
-            .arg(&cfg_path)
-            .args(["--state-dir"])
-            .arg(&state_dir)
-            .args(["--ready-file"])
-            .arg(&ready_file)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn simulated kestic daemon");
+        let mut child = KillOnDrop::spawn(
+            Command::new(ctx.kestic_bin)
+                .args([
+                    "daemon",
+                    "--require-sni",
+                    "--no-job-view",
+                    "--no-portal-inhibit",
+                    "--suppress-ui-spawn",
+                    "--simulate-status",
+                    sim_arg,
+                    "--config-path",
+                ])
+                .arg(&cfg_path)
+                .args(["--state-dir"])
+                .arg(&state_dir)
+                .args(["--ready-file"])
+                .arg(&ready_file)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped()),
+            "simulated kestic daemon",
+        );
 
         wait_for_file(&ready_file, common::DAEMON_READY_TIMEOUT);
         let sni_svc =
@@ -236,11 +237,10 @@ fn assert_simulated_sni_matrix(ctx: &mut SniTestCtx<'_>) {
 
         let client = common::connect_default_client().expect("connect client");
         client.confirm_quit().expect("confirm quit");
-        let out = child.wait_with_output().expect("wait simulated daemon");
+        let (status, stderr) = child.wait_with_stderr();
         assert!(
-            out.status.success(),
-            "simulated daemon ({sim_arg}) failed: {}",
-            String::from_utf8_lossy(&out.stderr)
+            status.success(),
+            "simulated daemon ({sim_arg}) failed: {stderr}"
         );
         wait_for_bus_name_released(ctx.client_conn, KESTIC_BUS_NAME, Duration::from_secs(3));
     }
@@ -689,19 +689,18 @@ fn fake_gui_logging_starts(root: &Path) -> (PathBuf, PathBuf) {
 
 /// The lines of the start log of [`fake_gui_logging_starts`] once it has at least `expected`.
 fn wait_for_gui_starts(log: &Path, expected: usize) -> Vec<String> {
-    let deadline = Instant::now() + Duration::from_secs(3);
-    loop {
-        let content = fs::read_to_string(log).unwrap_or_default();
-        let lines: Vec<String> = content.lines().map(ToOwned::to_owned).collect();
-        if lines.len() >= expected {
-            return lines;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "timed out waiting for {expected} fake GUI spawn(s), saw {lines:?}"
-        );
-        thread::sleep(Duration::from_millis(20));
-    }
+    wait_for_value(
+        Duration::from_secs(3),
+        &format!("{expected} fake GUI spawn(s)"),
+        || {
+            fs::read_to_string(log)
+                .unwrap_or_default()
+                .lines()
+                .map(ToOwned::to_owned)
+                .collect::<Vec<String>>()
+        },
+        |lines| lines.len() >= expected,
+    )
 }
 
 #[test]

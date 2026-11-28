@@ -8,12 +8,13 @@ use std::env;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 pub use crate::bus::PrivateDbusGuard;
 use crate::keyring::{HeadlessKeyring, KeyringDirs};
+use crate::process::KillOnDrop;
+use crate::wait::wait_until_within;
 pub use crate::workspace::{find_kestic_binary, workspace_root};
 
 /// Isolated `HOME` and `XDG_*` tree plus a `PATH` directory that may hold a `restic` symlink.
@@ -122,7 +123,7 @@ impl IsolatedEnv {
 
 /// A running `kestic daemon`, killed on drop.
 pub struct DaemonProcessGuard {
-    child: Child,
+    _child: KillOnDrop,
 }
 
 impl DaemonProcessGuard {
@@ -147,12 +148,8 @@ impl DaemonProcessGuard {
         .stderr(Stdio::piped());
         iso.apply_env(&mut cmd, dbus_addr, lang);
 
-        let mut child = cmd.spawn().expect("spawn kestic daemon");
-        let deadline = Instant::now() + Duration::from_secs(8);
-        while Instant::now() < deadline {
-            if ready_file.is_file() {
-                return Self { child };
-            }
+        let mut child = KillOnDrop::spawn(&mut cmd, "kestic daemon");
+        wait_until_within(Duration::from_secs(8), "kestic daemon ready file", || {
             if let Some(status) = child.try_wait().expect("try_wait daemon") {
                 let mut err_buf = String::new();
                 if let Some(mut se) = child.stderr.take() {
@@ -161,18 +158,9 @@ impl DaemonProcessGuard {
                 }
                 panic!("kestic daemon exited early ({status}): {err_buf}");
             }
-            thread::sleep(Duration::from_millis(25));
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        panic!("timed out waiting for kestic daemon ready file");
-    }
-}
-
-impl Drop for DaemonProcessGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+            ready_file.is_file()
+        });
+        Self { _child: child }
     }
 }
 

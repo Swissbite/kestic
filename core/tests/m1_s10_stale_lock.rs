@@ -7,14 +7,16 @@ mod common;
 
 use common::execute_backup;
 
+use kestic_test_support::process::KillOnDrop;
 use kestic_test_support::tools::find_lock_file;
+use kestic_test_support::wait::try_poll_every;
 
 use kestic_core::model::{Backup, RunStatus, Source};
 use kestic_core::restic::{RecoveryAction, ResticCommandSpec, ResticFailureKind, run_restic};
 use std::fs;
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tempfile::TempDir;
 use time::macros::datetime;
 
@@ -55,35 +57,36 @@ fn ac_m1_10_4_stale_exclusive_lock_blocks_backup_with_exit_11() {
 
         // Spawn `restic check --read-data` (acquires an exclusive lock) and SIGKILL it once
         // the lock file is written, leaving a genuine encrypted stale exclusive lock.
-        let mut check_child = Command::new(&rig.resolved.binary)
-            .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
-            .env("RESTIC_PASSWORD", &repo_pw)
-            .env("RESTIC_CACHE_DIR", &cache_dir)
-            .env("RESTIC_HOST", "stale-other-host")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn restic check --read-data");
+        let mut check_child = KillOnDrop::spawn(
+            Command::new(&rig.resolved.binary)
+                .args(["-r", &repo_dir.to_string_lossy(), "check", "--read-data"])
+                .env("RESTIC_PASSWORD", &repo_pw)
+                .env("RESTIC_CACHE_DIR", &cache_dir)
+                .env("RESTIC_HOST", "stale-other-host")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null()),
+            "restic check --read-data",
+        );
 
         let locks_dir = repo_dir.join("locks");
-        let deadline = Instant::now() + Duration::from_secs(10);
-        let lock_file = loop {
+        let lock_file = try_poll_every(Duration::from_secs(10), Duration::from_millis(2), || {
             if let Some(found) = find_lock_file(&locks_dir) {
-                break found;
+                return Some(found);
             }
             if let Some(status) = check_child.try_wait().expect("try_wait") {
                 panic!(
                     "{label}: restic check exited prematurely with {status} before lock was observed"
                 );
             }
-            assert!(
-                Instant::now() < deadline,
+            None
+        })
+        .unwrap_or_else(|| {
+            panic!(
                 "{label}: timed out waiting for exclusive lock file in {}",
                 locks_dir.display()
-            );
-            thread::sleep(Duration::from_millis(2));
-        };
+            )
+        });
 
         // Brief pause to ensure the lock file write is flushed, then SIGKILL.
         thread::sleep(Duration::from_millis(10));

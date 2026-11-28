@@ -3,7 +3,7 @@
 
 mod common;
 
-use common::load_config;
+use kestic_test_support::config::load_config;
 
 use kestic_test_support::tools::write_executable;
 

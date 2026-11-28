@@ -94,8 +94,8 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
                     check_cmd(&rig, &fx, &["check", "--read-data"]),
                     &fx.repo_dir,
                 );
-                send_signal(term.0.id(), "TERM");
-                term.0.wait().expect("check ends after SIGTERM");
+                send_signal(term.id(), "TERM");
+                term.wait().expect("check ends after SIGTERM");
                 assert!(
                     find_lock_file(&locks).is_none(),
                     "{}: (d) SIGTERM leaves no lock behind",
@@ -115,8 +115,8 @@ fn ac_m3_06_1_stale_own_host_lock_is_recognised_and_unlock_offered() {
                     check_cmd(&rig, &fx, &["check", "--read-data"]),
                     &fx.repo_dir,
                 );
-                killed.0.kill().expect("SIGKILL check");
-                killed.0.wait().expect("reap check");
+                killed.kill().expect("SIGKILL check");
+                killed.wait().expect("reap check");
                 assert!(
                     find_lock_file(&locks).is_some(),
                     "{}: stale exclusive lock remains",
@@ -231,10 +231,10 @@ fn ac_m3_06_2_lock_of_running_backup_is_not_stale_and_not_unlocked() {
                     "{}: (a) live lock untouched",
                     variant.label
                 );
-                if let Some(mut stdin) = holder.0.stdin.take() {
+                if let Some(mut stdin) = holder.stdin.take() {
                     let _ = stdin.write_all(b"done");
                 }
-                holder.0.wait().expect("foreign backup finishes");
+                holder.wait().expect("foreign backup finishes");
                 rig.daemon.stop();
             }
         },
