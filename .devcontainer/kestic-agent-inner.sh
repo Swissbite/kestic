@@ -221,6 +221,12 @@ case "${1:-}" in
         shift
         [[ $# -gt 0 ]] || die "usage: kestic-agent nudge <text…>"
         tmux has-session -t "$SESSION" 2>/dev/null || die "no running session '$SESSION'"
+        # Advance the turn timestamp when waking an idle session (including one
+        # that went idle via STALE_AFTER without firing a Stop hook), so the
+        # watcher does not nudge twice for the same maintainer event.
+        if [[ "$(session_state)" != busy ]]; then
+            mark_turn
+        fi
         if declare -F agent_nudge >/dev/null; then
             agent_nudge "$*"
         else

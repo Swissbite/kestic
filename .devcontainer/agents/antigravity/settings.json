@@ -6,6 +6,9 @@
   "notifications": false,
   "showTips": false,
   "showFeedbackSurvey": false,
+  "trustedWorkspaces": [
+    "/home/kesticci/kestic"
+  ],
   "permissions": {
     "deny": [
       "command(git push --force)",

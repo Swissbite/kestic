@@ -54,14 +54,16 @@ or `kestic-agent-watch.sh`:
      (`<name>-<volume_suffix>`, `[a-z0-9._-]+`).
    - `volume_mount=` mount path inside `/home/kesticci/` (e.g.
      `/home/kesticci/.codex`, no `..`).
-   - `version_arg=` optional build-arg name forwarded from the host environment
-     (e.g. `CLAUDE_CODE_VERSION`, `AGY_VERSION`); `AGENT_VERSION` is always
-     forwarded when set.
+   - `version_arg=` optional host environment variable name (e.g.
+     `CLAUDE_CODE_VERSION`, `AGY_VERSION`, `CODEX_VERSION`) mapped onto the
+     generic `AGENT_VERSION` build-arg so `install.sh` receives `$AGENT_VERSION`
+     without modifying `Containerfile`.
    - Optional `leitstand_*_pattern=` keys documenting console patterns for
      `.agents/skills/leitstand/watch.sh` (empty disables a check).
 
 2. **`install.sh`** (runs as `root` during `podman build`):
-   - Installs the agent binary into `/usr/local/bin/` with checksum verification.
+   - Installs the agent binary into `/usr/local/bin/` with checksum verification,
+     reading optional `$AGENT_VERSION`.
    - Creates `volume_mount` owned by `kesticci:kesticci` so a new Podman volume
      inherits the right ownership.
 

@@ -24,8 +24,10 @@ if [[ -n "$wanted" && "$wanted" != latest && "$version" != "$wanted" ]]; then
     echo "antigravity/install.sh: manifest version $version does not match requested $wanted" >&2
     exit 1
 fi
-[[ "$url" =~ ^https:// ]] || { echo "antigravity/install.sh: unexpected download URL: $url" >&2; exit 1; }
-[[ "$sha512" =~ ^[0-9a-f]{128}$ ]] || { echo "antigravity/install.sh: invalid sha512 in manifest" >&2; exit 1; }
+[[ "$url" =~ ^https://storage\.googleapis\.com/[^[:space:]]+$ ]] \
+    || { echo "antigravity/install.sh: unexpected download URL: $url" >&2; exit 1; }
+[[ "$sha512" =~ ^[0-9a-f]{128}$ ]] \
+    || { echo "antigravity/install.sh: invalid sha512 in manifest" >&2; exit 1; }
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -36,13 +38,13 @@ echo "$sha512  $payload" | sha512sum -c -
 
 case "$url" in
     *.tar.gz*)
-        tar -xzf "$payload" -C "$tmp"
-        if [[ -f "$tmp/antigravity" ]]; then
+        tar --no-same-owner --no-same-permissions -xzf "$payload" -C "$tmp"
+        if [[ -f "$tmp/antigravity" && ! -L "$tmp/antigravity" ]]; then
             install -m 0755 "$tmp/antigravity" /usr/local/bin/agy
-        elif [[ -f "$tmp/agy" ]]; then
+        elif [[ -f "$tmp/agy" && ! -L "$tmp/agy" ]]; then
             install -m 0755 "$tmp/agy" /usr/local/bin/agy
         else
-            echo "antigravity/install.sh: no binary found in archive" >&2
+            echo "antigravity/install.sh: no regular binary found in archive" >&2
             exit 1
         fi
         ;;

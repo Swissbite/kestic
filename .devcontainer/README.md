@@ -480,10 +480,13 @@ KESTIC_AGENT_NAME=kestic-agent-2 KESTIC_AGENT_BACKEND=antigravity \
   (`/home/kesticci/.claude`), domains `anthropic.com`, `claude.ai`, `claude.com`.
 - **Antigravity CLI (`antigravity`):** volume `<name>-gemini`
   (`/home/kesticci/.gemini`, with `~/.config/antigravity` symlinked inside it so
-  file-based OAuth tokens survive a home-volume wipe), domains
-  `antigravity.google`, `googleapis.com`, `google.com`, `gstatic.com`,
-  `altScreenMode=never` for tmux scrollback, `artifactReviewPolicy=always-proceed`,
-  and `PreInvocation`/`Stop` hooks for turn/idle tracking.
+  file-based OAuth tokens survive a home-volume wipe), explicit subdomains for
+  OAuth, model backend and Remote Control in `agents/antigravity/allowed-domains.txt`
+  (blocking unrelated Google storage/consumer domains), `altScreenMode=never` for
+  tmux scrollback, `artifactReviewPolicy=always-proceed`, and
+  `PreInvocation`/`Stop` hooks for turn/idle tracking. Put runtime overrides
+  (`KESTIC_AGENT_BACKEND`, `KESTIC_AGENT_MODEL`, `KESTIC_AGENT_EFFORT`) into
+  `~/.config/kestic-agent/watch-<name>.env` so watcher resumes keep them.
 - **Additional agents (e.g. Codex CLI):** add a new backend directory following
   [agents/README.md](agents/README.md).
   Tested by [test-kestic-agent-backends.sh](test-kestic-agent-backends.sh) in

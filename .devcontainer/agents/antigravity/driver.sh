@@ -14,20 +14,28 @@ agent_setup() {
 
     # Keep file-based OAuth credentials inside the persistent agent volume
     # (~/.gemini), so recreating the home volume keeps the login intact.
-    if [[ ! -e "$HOME/.config/antigravity" && ! -L "$HOME/.config/antigravity" ]]; then
-        ln -s "$HOME/.gemini/antigravity-auth" "$HOME/.config/antigravity"
+    local auth_link="$HOME/.config/antigravity"
+    local auth_target="$HOME/.gemini/antigravity-auth"
+    if [[ -d "$auth_link" && ! -L "$auth_link" ]]; then
+        rmdir "$auth_link" 2>/dev/null || true
+    fi
+    if [[ ! -e "$auth_link" && ! -L "$auth_link" ]]; then
+        ln -s "$auth_target" "$auth_link"
+    elif [[ ! -L "$auth_link" || "$(readlink "$auth_link")" != "$auth_target" ]]; then
+        echo "kestic-agent: warning: $auth_link does not point to $auth_target; credentials may live in the home volume" >&2
     fi
 
     # Pre-trust the cloned repository so autonomous runs do not stop at a
     # workspace trust prompt.
-    local settings="$HOME/.gemini/antigravity-cli/settings.json"
+    local settings="$HOME/.gemini/antigravity-cli/settings.json" tmp
     if [[ ! -s "$settings" ]]; then
         echo '{}' > "$settings"
     fi
+    tmp="$(mktemp "$HOME/.gemini/antigravity-cli/settings.json.XXXXXX")"
     jq --arg dir "$REPO_DIR" \
         '.trustedWorkspaces = ((.trustedWorkspaces // []) | if index($dir) then . else . + [$dir] end)' \
-        "$settings" > "$settings.tmp"
-    mv "$settings.tmp" "$settings"
+        "$settings" > "$tmp"
+    mv "$tmp" "$settings"
 
     # Register the kestic-agent lifecycle hooks in ~/.gemini/config/hooks.json
     # (Antigravity CLI loads hooks from hooks.json, not from settings.json).
@@ -35,8 +43,9 @@ agent_setup() {
     if [[ ! -s "$hooks" ]]; then
         echo '{}' > "$hooks"
     fi
-    jq -s '.[0] * .[1]' "$hooks" "$AGENT_DIR/hooks.json" > "$hooks.tmp"
-    mv "$hooks.tmp" "$hooks"
+    tmp="$(mktemp "$HOME/.gemini/config/hooks.json.XXXXXX")"
+    jq -s '.[0] * .[1]' "$hooks" "$AGENT_DIR/hooks.json" > "$tmp"
+    mv "$tmp" "$hooks"
 }
 
 agent_login() {

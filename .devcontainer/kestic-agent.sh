@@ -43,16 +43,24 @@
 
 set -euo pipefail
 
+# Resolve a relative KESTIC_AGENT_BACKENDS_DIR against the caller's cwd before
+# switching to the repository root.
+CALLER_PWD="$PWD"
+if [[ -n "${KESTIC_AGENT_BACKENDS_DIR:-}" && "${KESTIC_AGENT_BACKENDS_DIR}" != /* ]]; then
+    BACKENDS_DIR="$(realpath -m "$CALLER_PWD/$KESTIC_AGENT_BACKENDS_DIR")"
+else
+    BACKENDS_DIR="${KESTIC_AGENT_BACKENDS_DIR:-}"
+fi
+
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
+BACKENDS_DIR="${BACKENDS_DIR:-.devcontainer/agents}"
 
 NAME="${KESTIC_AGENT_NAME:-kestic-agent}"
 APP_KEY_SECRET="${KESTIC_AGENT_APP_KEY_SECRET:-kestic-agent-app-key}"
 REPO="${KESTIC_AGENT_REPO:-Swissbite/kestic}"
 CONF=.devcontainer/agent.conf
-BACKENDS_DIR="${KESTIC_AGENT_BACKENDS_DIR:-.devcontainer/agents}"
 # Installation tokens live 60 minutes; renew well before.
 TOKEN_MAX_AGE=2400
-VOL_HOME="$NAME-home"
 DROP=(/usr/local/lib/kestic-agent/entrypoint.sh --drop)
 
 die() {
@@ -60,8 +68,15 @@ die() {
     exit 1
 }
 
+[[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "invalid container name: $NAME"
+VOL_HOME="$NAME-home"
+
 running() {
     [[ "$(podman container inspect --format '{{.State.Running}}' "$NAME" 2>/dev/null)" == true ]]
+}
+
+container_label() {
+    podman container inspect --format "{{index .Config.Labels \"$1\"}}" "$NAME" 2>/dev/null || true
 }
 
 # conf <key>: KESTIC_AGENT_<KEY> from the environment, else <key>= from agent.conf.
@@ -99,9 +114,12 @@ load_backend() {
     VOL_MOUNT="$(backend_conf "$bconf" volume_mount)"
     VERSION_ARG="$(backend_conf "$bconf" version_arg)"
     [[ "$VOL_SUFFIX" =~ ^[a-z0-9][a-z0-9._-]*$ ]] || die "backend '$BACKEND': invalid volume_suffix '$VOL_SUFFIX'"
-    [[ "$VOL_MOUNT" =~ ^/home/kesticci/[A-Za-z0-9._/-]+$ && "$VOL_MOUNT" != *..* ]] \
+    [[ "$VOL_MOUNT" =~ ^/home/kesticci/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$ ]] \
+        && [[ "$VOL_MOUNT" != */. && "$VOL_MOUNT" != */.. && "$VOL_MOUNT" != */./* && "$VOL_MOUNT" != */../* ]] \
+        && [[ "$VOL_MOUNT" != /home/kesticci/kestic && "$VOL_MOUNT" != /home/kesticci/kestic/* ]] \
+        && [[ "$VOL_MOUNT" != /home/kesticci/.kestic-agent && "$VOL_MOUNT" != /home/kesticci/.kestic-agent/* ]] \
         || die "backend '$BACKEND': invalid volume_mount '$VOL_MOUNT'"
-    [[ -z "$VERSION_ARG" || "$VERSION_ARG" =~ ^[A-Z0-9_]+$ ]] \
+    [[ -z "$VERSION_ARG" || "$VERSION_ARG" =~ ^[A-Z_][A-Z0-9_]*$ ]] \
         || die "backend '$BACKEND': invalid version_arg '$VERSION_ARG'"
     VOL_AGENT="$NAME-$VOL_SUFFIX"
 }
@@ -174,6 +192,14 @@ ensure_token() {
 
 ensure_running() {
     if running; then
+        local running_backend
+        running_backend="$(container_label kestic.agent.backend)"
+        if [[ -n "$running_backend" && "$running_backend" != "$BACKEND" ]]; then
+            die "container $NAME is running backend '$running_backend', not '$BACKEND' (stop it first or set KESTIC_AGENT_BACKEND=$running_backend)"
+        fi
+        if [[ -z "$running_backend" && "$BACKEND" != claude ]]; then
+            die "container $NAME has no backend label (legacy claude container); stop it first before running '$BACKEND'"
+        fi
         ensure_token
         return 0
     fi
@@ -261,11 +287,15 @@ case "$cmd" in
             --build-arg "CI_IMAGE=ghcr.io/swissbite/kestic-ci:$tag"
             --build-arg "AGENT_BACKEND=$BACKEND"
         )
-        if [[ -n "$VERSION_ARG" && -n "${!VERSION_ARG:-}" ]]; then
-            build_args+=(--build-arg "$VERSION_ARG=${!VERSION_ARG}")
+        # Map any backend-specific version env var (version_arg in backend.conf)
+        # onto the generic AGENT_VERSION build-arg so third-party backends never
+        # need to declare a new ARG in Containerfile.
+        effective_version="${AGENT_VERSION:-}"
+        if [[ -z "$effective_version" && -n "$VERSION_ARG" && -n "${!VERSION_ARG:-}" ]]; then
+            effective_version="${!VERSION_ARG}"
         fi
-        if [[ -n "${AGENT_VERSION:-}" ]]; then
-            build_args+=(--build-arg "AGENT_VERSION=$AGENT_VERSION")
+        if [[ -n "$effective_version" ]]; then
+            build_args+=(--build-arg "AGENT_VERSION=$effective_version")
         fi
         context=.devcontainer
         stage=""
@@ -274,8 +304,9 @@ case "$cmd" in
             trap 'rm -rf "$stage"' EXIT
             cp -a .devcontainer/. "$stage/"
             rm -rf "$stage/agents/$BACKEND"
-            mkdir -p "$stage/agents"
-            cp -a "$BACKEND_DIR" "$stage/agents/$BACKEND"
+            mkdir -p "$stage/agents/$BACKEND"
+            # Dereference symlinks so out-of-tree backends with symlinked files build cleanly.
+            cp -RL "$BACKEND_DIR/." "$stage/agents/$BACKEND/"
             context="$stage"
         fi
         podman build --pull=newer "${build_args[@]}" \
@@ -347,9 +378,8 @@ case "$cmd" in
         podman exec "$NAME" /usr/bin/tail -n "${1:-50}" /var/log/kestic-agent/dns.log | cat -v
         ;;
     stop)
-        kept_vol=""
+        kept_vol="$(container_label kestic.agent.volume)"
         if running; then
-            kept_vol="$(podman container inspect --format '{{index .Config.Labels "kestic.agent.volume"}}' "$NAME" 2>/dev/null || true)"
             # The token would stay valid for up to an hour; revoke it with itself.
             token="$(podman exec "$NAME" "${DROP[@]}" kestic-agent show-token 2>/dev/null || true)"
             if [[ -n "$token" ]]; then
@@ -367,8 +397,13 @@ case "$cmd" in
         ;;
     clean)
         load_backend
-        [[ "${1:-}" == --yes ]] || die "removes container, image ($IMAGE) and volumes incl. the login; confirm with: $0 clean --yes"
-        labelled_vol="$(podman container inspect --format '{{index .Config.Labels "kestic.agent.volume"}}' "$NAME" 2>/dev/null || true)"
+        labelled_vol="$(container_label kestic.agent.volume)"
+        labelled_backend="$(container_label kestic.agent.backend)"
+        target_image="$IMAGE"
+        if [[ -n "$labelled_backend" && -z "${KESTIC_AGENT_BACKEND:-}" ]]; then
+            target_image="localhost/kestic-agent:$labelled_backend"
+        fi
+        [[ "${1:-}" == --yes ]] || die "removes container, image ($target_image) and volumes incl. the login; confirm with: $0 clean --yes"
         podman rm --force --ignore "$NAME" >/dev/null
         volumes=("$VOL_HOME" "$VOL_AGENT")
         if [[ -n "$labelled_vol" && "$labelled_vol" != "$VOL_AGENT" ]]; then
@@ -379,7 +414,10 @@ case "$cmd" in
                 podman volume rm --force "$volume" >/dev/null
             fi
         done
-        podman rmi --ignore "$IMAGE" >/dev/null
+        podman rmi --ignore "$target_image" >/dev/null
+        if [[ "$target_image" == localhost/kestic-agent:claude ]]; then
+            podman rmi --ignore localhost/kestic-agent:latest >/dev/null
+        fi
         echo "removed; the secret $APP_KEY_SECRET stays (podman secret rm $APP_KEY_SECRET)"
         ;;
     *)

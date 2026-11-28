@@ -13,12 +13,13 @@ AGENT_DISPLAY_NAME="Claude Code"
 agent_setup() {
     mkdir -p "$CLAUDE_CONFIG_DIR"
     # Bypass mode is the point of this sandbox; skip its one-time confirmation.
-    local settings="$CLAUDE_CONFIG_DIR/settings.json"
+    local settings="$CLAUDE_CONFIG_DIR/settings.json" tmp
     if [[ ! -s "$settings" ]]; then
         echo '{}' > "$settings"
     fi
-    jq '.skipDangerousModePermissionPrompt = true' "$settings" > "$settings.tmp"
-    mv "$settings.tmp" "$settings"
+    tmp="$(mktemp "$CLAUDE_CONFIG_DIR/settings.json.XXXXXX")"
+    jq '.skipDangerousModePermissionPrompt = true' "$settings" > "$tmp"
+    mv "$tmp" "$settings"
 }
 
 agent_login() {

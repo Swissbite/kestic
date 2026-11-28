@@ -1,8 +1,16 @@
 # SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Antigravity CLI: OAuth login, model backend and Remote Control
+# Antigravity CLI: OAuth login, model backend and Remote Control.
+# Listed by specific subdomain rather than apex `google.com` / `googleapis.com`
+# so arbitrary storage/consumer services (GCS, Drive, Apps Script) stay blocked.
 antigravity.google
-googleapis.com
-google.com
-gstatic.com
+antigravity.google.com
+accounts.google.com
+oauth2.googleapis.com
+www.googleapis.com
+aicode.googleapis.com
+cloudcode-pa.googleapis.com
+daily-cloudcode-pa.googleapis.com
+jetski-webchannel.googleapis.com
+generativelanguage.googleapis.com

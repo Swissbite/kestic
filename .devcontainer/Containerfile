@@ -30,10 +30,6 @@ ARG CI_IMAGE=ghcr.io/swissbite/kestic-ci:7bb64b1d72c42a28
 FROM ${CI_IMAGE}
 
 ARG CI_IMAGE
-ARG AGENT_BACKEND=claude
-ARG CLAUDE_CODE_VERSION=stable
-ARG AGY_VERSION=latest
-ARG AGENT_VERSION=
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update \
@@ -64,10 +60,21 @@ COPY --chmod=755 gh-wrapper.sh /usr/local/bin/gh
 COPY --chmod=755 git-hooks/ /usr/local/lib/kestic-agent/git-hooks/
 COPY --chmod=644 allowed-domains.txt /usr/local/lib/kestic-agent/
 COPY --chmod=644 tmux.conf /etc/tmux.conf
+
+# Declared after shared layers so switching backends or agent versions reuses
+# the cached apt and core script layers.
+ARG AGENT_BACKEND=claude
+ARG AGENT_VERSION=
+ARG CLAUDE_CODE_VERSION=stable
+ARG AGY_VERSION=latest
+
 COPY agents/${AGENT_BACKEND}/ /usr/local/lib/kestic-agent/agent/
 
 RUN set -eu; \
-    echo "$AGENT_BACKEND" | grep -Eq '^[a-z0-9][a-z0-9._-]*$'; \
+    case "$AGENT_BACKEND" in '' | .* | *[!a-z0-9._-]*) echo "invalid AGENT_BACKEND: $AGENT_BACKEND" >&2; exit 1 ;; esac; \
+    test ! -e /usr/local/lib/kestic-agent/agent/Containerfile; \
+    chown -R root:root /usr/local/lib/kestic-agent/agent; \
+    chmod -R a+rX,go-w /usr/local/lib/kestic-agent/agent; \
     chmod 755 /usr/local/lib/kestic-agent/agent/install.sh; \
     if [ -f /usr/local/lib/kestic-agent/agent/hook.sh ]; then \
         chmod 755 /usr/local/lib/kestic-agent/agent/hook.sh; \

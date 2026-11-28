@@ -18,14 +18,19 @@ version="${AGENT_VERSION:-${CLAUDE_CODE_VERSION:-stable}}"
 case "$version" in
     stable | latest) version="$(curl -fsSL "$base/$version")" ;;
 esac
-echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+[[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || { echo "claude/install.sh: invalid version '$version'" >&2; exit 1; }
 
 checksum="$(curl -fsSL "$base/$version/manifest.json" | jq -r --arg p "$platform" '.platforms[$p].checksum')"
-echo "$checksum" | grep -Eq '^[0-9a-f]{64}$'
+[[ "$checksum" =~ ^[0-9a-f]{64}$ ]] \
+    || { echo "claude/install.sh: invalid sha256 checksum" >&2; exit 1; }
 
-curl -fsSL -o /usr/local/bin/claude "$base/$version/$platform/claude"
-echo "$checksum  /usr/local/bin/claude" | sha256sum -c -
-chmod 755 /usr/local/bin/claude
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+curl -fsSL -o "$tmp/claude" "$base/$version/$platform/claude"
+echo "$checksum  $tmp/claude" | sha256sum -c -
+install -m 0755 "$tmp/claude" /usr/local/bin/claude
 
 mkdir -p /home/kesticci/.claude
 chown -R kesticci:kesticci /home/kesticci/.claude
