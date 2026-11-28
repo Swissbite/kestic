@@ -71,6 +71,15 @@ QString js_text(const QString& text) {
     return QString::fromUtf8(QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact)).mid(1).chopped(1);
 }
 
+// The row of the search hit at `path` on the search page, -1 while it is not listed.
+int search_hit_row(QQuickWindow* window, const QString& path) {
+    auto* hits = qobject_cast<QAbstractItemModel*>(child_object(window, "snapshotSearchModel"));
+    for (int row = 0; hits && row < hits->rowCount(); ++row) {
+        if (hits->data(hits->index(row, 0), 0).toString() == path) return row;
+    }
+    return -1;
+}
+
 bool can_fetch_more(QObject* model) {
     auto* listed = qobject_cast<QAbstractItemModel*>(model);
     return listed && listed->canFetchMore(QModelIndex());
@@ -113,8 +122,8 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
         if (waited->elapsed() > 240000) {
             poll->stop();
             smoke_fail("M6", 121, *step == 4 ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
-                : *step == 5 ? QStringLiteral("(d) a search hit beyond the first page of its folder never became the current row")
-                : *step == 10 ? QStringLiteral("(f) a hit above the snapshot's top folder never became the current row")
+                : *step == 6 ? QStringLiteral("(d) a search hit beyond the first page of its folder never became the current row")
+                : *step == 11 ? QStringLiteral("(f) a hit above the snapshot's top folder never became the current row")
                 : QStringLiteral("timed out at step %1").arg(*step));
             return;
         }
@@ -155,7 +164,11 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             break;
         }
         case 3:
-            if (rows_of(browse) < 200 || draft->property("testing").toBool() || !answered(answers, *dry_run)) return;
+            // The old connection test has answered (its request is no longer waited for).
+            if (rows_of(browse) < 200 || draft->property("testAnswer").value<QObject*>()->property("waiting").toBool()
+                || !answered(answers, *dry_run)) {
+                return;
+            }
             SMOKE_CHECK("M6", 123, !draft->property("connectionVerified").toBool(),
                 "(a) a connection test answered for the old location marks the changed form as tested");
             SMOKE_CHECK("M6", 124, answer_of(answers, *dry_run).isEmpty(),
@@ -165,33 +178,41 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
         case 4:
             // The timeout fails the scene when no further page arrives.
             if (rows_of(browse) <= 200) return;
-            // (d) A search hit beyond the first page of its folder.
-            QMetaObject::invokeMethod(window, "openSearchHit", Q_ARG(QVariant, dest), Q_ARG(QVariant, snapshot),
-                Q_ARG(QVariant, source), Q_ARG(QVariant, source + QStringLiteral("/file-99")), Q_ARG(QVariant, false),
-                Q_ARG(QVariant, QString()));
+            // (d) The way a user gets to a hit: the restore area, the backup's snapshots, a
+            // search, then [Show] on the hit beyond the first page of its folder.
+            QMetaObject::invokeMethod(window, "openRestoreSnapshots", Q_ARG(QVariant, bid));
+            QMetaObject::invokeMethod(window, "openSnapshotSearch", Q_ARG(QVariant, bid),
+                Q_ARG(QVariant, QStringLiteral("file-9")));
             break;
         case 5: {
+            const int hit = search_hit_row(window, source + QStringLiteral("/file-99"));
+            if (hit < 0) return;
+            QMetaObject::invokeMethod(child_object(window, "restoreSearchPage"), "showHit", Q_ARG(QVariant, hit));
+            break;
+        }
+        case 6: {
             QQuickItem* list = child_item(window, "browseListView");
             if (!list || list->property("currentIndex").toInt() < 200) return;
             auto* rows = qobject_cast<QAbstractItemModel*>(list->property("model").value<QObject*>());
             SMOKE_CHECK2("M6", 125, rows, rows->data(rows->index(list->property("currentIndex").toInt(), 0), 0).toString()
                     == source + QStringLiteral("/file-99"),
-                QStringLiteral("(d) the current row %1 of %2 (model %3) is '%4', not the search hit")
+                QStringLiteral("(d) the current row %1 is '%2', not the search hit")
                     .arg(list->property("currentIndex").toInt())
-                    .arg(list->property("count").toInt())
-                    .arg(rows ? rows->rowCount() : -1)
                     .arg(rows ? rows->data(rows->index(list->property("currentIndex").toInt(), 0), 0).toString() : QString()));
+            SMOKE_CHECK("M6", 125, !child_item(window, "restoreBrowsePage")->property("title").toString().isEmpty(),
+                "the snapshot browser has no title for its breadcrumb");
             // (e) The next hit, left for a filter before its page arrived.
             QMetaObject::invokeMethod(window, "popSubPage");
             break;
         }
-        case 6:
-            if (child_item(window, "restoreBrowsePage")) return;
-            QMetaObject::invokeMethod(window, "openSearchHit", Q_ARG(QVariant, dest), Q_ARG(QVariant, snapshot),
-                Q_ARG(QVariant, source), Q_ARG(QVariant, source + QStringLiteral("/file-98")), Q_ARG(QVariant, false),
-                Q_ARG(QVariant, QString()));
-            break;
         case 7: {
+            if (child_item(window, "restoreBrowsePage")) return;
+            const int hit = search_hit_row(window, source + QStringLiteral("/file-98"));
+            SMOKE_CHECK("M6", 126, hit >= 0, "precondition: the hit file-98");
+            QMetaObject::invokeMethod(child_object(window, "restoreSearchPage"), "showHit", Q_ARG(QVariant, hit));
+            break;
+        }
+        case 8: {
             QQuickItem* page = child_item(window, "restoreBrowsePage");
             if (!page || page->property("focusPages").toInt() == 0) return;
             QMetaObject::invokeMethod(child_object(window, "browseFilterField"), "filterRequested",
@@ -199,7 +220,7 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             settle->start();
             break;
         }
-        case 8: {
+        case 9: {
             QQuickItem* page = child_item(window, "restoreBrowsePage");
             QQuickItem* list = child_item(window, "browseListView");
             // The filtered list and the page the hit asked for are in.
@@ -209,20 +230,26 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             QMetaObject::invokeMethod(window, "popSubPage");
             break;
         }
-        case 9: {
+        case 10: {
             if (child_item(window, "restoreBrowsePage")) return;
-            // (f) The hit `sub` is a folder above the top folder `sub/deeper`: the page checks the
-            // top folder first, then shows the hit's folder (beyond its first page) with the hit.
+            // (f) A hit that is a folder above the top folder. In the app the top folder is the
+            // snapshot's start folder, and the folders above it hold one entry each, so the scene
+            // opens the browser as [Show] does but names a deeper top folder (`sub/deeper`): the
+            // hit `sub` is then beyond the first page of the start folder.
+            auto* hits = qobject_cast<QAbstractItemModel*>(child_object(window, "snapshotSearchModel"));
+            const int any = search_hit_row(window, source + QStringLiteral("/file-99"));
+            SMOKE_CHECK2("M6", 127, hits, any >= 0, "precondition: a hit with its snapshot text");
+            const QString snapshot_text = hits->data(hits->index(any, 0), 2).toString();
             QQmlExpression open(qmlContext(window), window, QStringLiteral(
                 "pushSubPageAtDepth(restoreBrowseComponent.createObject(pageStack, {destinationId: %1, snapshotId: %2,"
-                " startDir: %3, topDir: %4, focusPath: %5, focusIsDir: true, snapshotTitle: ''}), 3)")
+                " startDir: %3, topDir: %4, focusPath: %5, focusIsDir: true, snapshotTitle: %6}), 3)")
                 .arg(js_text(dest), js_text(snapshot), js_text(source), js_text(source + QStringLiteral("/sub/deeper")),
-                    js_text(source + QStringLiteral("/sub"))));
+                    js_text(source + QStringLiteral("/sub")), js_text(snapshot_text)));
             open.evaluate();
             SMOKE_CHECK("M6", 127, !open.hasError(), open.error().toString());
             break;
         }
-        case 10: {
+        case 11: {
             QQuickItem* list = child_item(window, "browseListView");
             const int row = list ? list->property("currentIndex").toInt() : -1;
             if (row < 200) return;
@@ -230,6 +257,8 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
             auto* rows = qobject_cast<QAbstractItemModel*>(list->property("model").value<QObject*>());
             SMOKE_CHECK2("M6", 127, rows, rows->data(rows->index(row, 0), 0).toString() == source + QStringLiteral("/sub"),
                 "(f) the current row is not the hit above the snapshot's top folder");
+            SMOKE_CHECK("M6", 127, !child_item(window, "restoreBrowsePage")->property("title").toString().isEmpty(),
+                "the snapshot browser has no title for its breadcrumb");
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
         }
