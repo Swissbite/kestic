@@ -131,7 +131,8 @@ impl JobViewHandle {
         };
 
         let stop_bg = stop.clone();
-        // The stop request wakes the wait, so the thread sleeps until a message or the stop.
+        // The stop request wakes the wait: the thread waits for a message or the stop, whichever
+        // comes first.
         let handle = std::thread::spawn(move || {
             match block_on(stop_bg.until_stopped(stream.next())) {
                 Some(Some(_)) => on_cancel(),
