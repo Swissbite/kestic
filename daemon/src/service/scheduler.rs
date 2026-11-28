@@ -164,7 +164,7 @@ pub fn tick_scheduler_async(shared: &Arc<Mutex<DaemonCore>>) {
 
     let plan = {
         let mut guard = shared.lock_unpoisoned();
-        if guard.sleep_in_progress {
+        if guard.sleep_in_progress || guard.stopping() {
             return;
         }
         plan_scheduler_tick(&mut guard)

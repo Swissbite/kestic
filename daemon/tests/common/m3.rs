@@ -105,6 +105,8 @@ pub struct M3DaemonOpts<'a> {
     pub set_restic_provider: bool,
     /// Memory limits for the lists of snapshot queries.
     pub query_limits: QueryLimits,
+    /// The flag a `SIGTERM` handler of the test process sets (`install_stop_signal`).
+    pub stop_signal: Option<Arc<AtomicBool>>,
 }
 
 impl<'a> M3DaemonOpts<'a> {
@@ -131,6 +133,7 @@ impl<'a> M3DaemonOpts<'a> {
             program_search_path: None,
             set_restic_provider: true,
             query_limits: QueryLimits::default(),
+            stop_signal: None,
         }
     }
 
@@ -171,6 +174,16 @@ impl M3Daemon {
     }
 }
 
+impl M3Daemon {
+    /// Waits at most `limit` for the daemon thread to end by itself (after `SIGTERM`) and
+    /// returns its outcome.
+    pub fn wait_stopped(mut self, limit: Duration) -> Result<DaemonOutcome, String> {
+        let handle = self.handle.take().expect("daemon handle");
+        wait_until_within(limit, "the daemon thread ends", || handle.is_finished());
+        handle.join().expect("join daemon thread")
+    }
+}
+
 /// Starts the daemon in-process (existing `config.toml` and history in the sandbox are honoured).
 pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
     let (config_path, state_dir) = daemon_paths(root, opts.sub_name);
@@ -204,6 +217,7 @@ pub fn spawn_m3_daemon(root: &Path, opts: M3DaemonOpts<'_>) -> M3Daemon {
         enable_scheduler: opts.enable_scheduler,
         program_search_path: opts.program_search_path,
         query_limits: opts.query_limits,
+        stop_signal: opts.stop_signal,
         ..Default::default()
     };
 
@@ -849,6 +863,24 @@ if [ -n "$sub" ] && [ -f "$FAIL.$sub" ]; then
   echo "E $(now) $sub $code" >> "$LOG"
   exit "$code"
 fi
+# A lingering call (see `hold_lingering`) logs its pid (`P`), may start a child that ignores
+# SIGTERM and keeps stdout open (`C` with its pid), creates its lock marker and waits; on SIGTERM
+# it logs `T`, then ends after the linger time (removing the marker) or never.
+if [ -n "$sub" ] && [ -f "$HOLD.$sub.linger" ]; then
+  linger=$(cat "$HOLD.$sub.linger")
+  echo "P $(now) $sub $$" >> "$LOG"
+  if [ -f "$HOLD.$sub.child" ]; then
+    sh -c 'trap "" TERM; while :; do sleep 0.1; done' &
+    echo "C $(now) $sub $!" >> "$LOG"
+  fi
+  touch "$HOLD.$sub.lockmark"
+  if [ "$linger" = forever ]; then
+    trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"' TERM INT
+  else
+    trap 'echo "T $(now) $sub SIGTERM" >> "$LOG"; sleep "$linger"; rm -f "$HOLD.$sub.lockmark"; echo "E $(now) $sub 143" >> "$LOG"; exit 143' TERM INT
+  fi
+  while :; do sleep 0.1; done
+fi
 # A held call prints the repeated output, else the one-off output, else (backup) one progress line;
 # a SIGTERM while it prints or waits is logged like one during the real call. A call held with
 # its lock starts the real restic instead (below).
@@ -975,12 +1007,40 @@ exit $code
         self.hold(sub);
     }
 
+    /// Makes every subsequent call of restic subcommand `sub` wait without running restic. On
+    /// `SIGTERM` it logs `T` and ends `linger` later (removing its lock marker,
+    /// [`Self::lock_marker`]), or never with `None`; `with_child` starts a child first that
+    /// ignores `SIGTERM` and keeps the call's stdout open. The call logs its pid as `P` and the
+    /// child's as `C`.
+    pub fn hold_lingering(&self, sub: &str, linger: Option<Duration>, with_child: bool) {
+        let linger = linger.map_or_else(|| "forever".to_string(), |d| d.as_secs_f32().to_string());
+        let marker = |kind: &str| PathBuf::from(format!("{}.{sub}.{kind}", self.hold.display()));
+        if with_child {
+            fs::write(marker("child"), b"1").expect("write child marker");
+        }
+        fs::write(marker("linger"), linger).expect("write linger marker");
+    }
+
+    /// The lock marker a lingering call of `sub` holds until it ends by itself.
+    pub fn lock_marker(&self, sub: &str) -> PathBuf {
+        PathBuf::from(format!("{}.{sub}.lockmark", self.hold.display()))
+    }
+
+    /// The pids a lingering call of `sub` logged: its own (`P`) and its child's (`C`).
+    pub fn lingering_pids(&self, sub: &str) -> Vec<u32> {
+        self.entries()
+            .iter()
+            .filter(|e| (e.kind == 'P' || e.kind == 'C') && e.sub == sub)
+            .filter_map(|e| e.detail.trim().parse().ok())
+            .collect()
+    }
+
     /// Lets held (and future) calls of restic subcommand `sub` run on and drops the output
     /// set by [`Self::hold_with_output`] or [`Self::hold_with_repeated_output`] and the hold of
     /// [`Self::hold_with_lock`].
     pub fn release(&self, sub: &str) {
         let _ = fs::remove_file(self.hold_marker(sub));
-        for kind in ["status", "repeat", "locked"] {
+        for kind in ["status", "repeat", "locked", "linger", "child"] {
             let _ = fs::remove_file(PathBuf::from(format!(
                 "{}.{sub}.{kind}",
                 self.hold.display()

@@ -6,11 +6,14 @@
 //! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart;
 //! plus the `Suggests` of M5-S04, of M5-S06 the `gpgv` dependency and the trust anchor that only
 //! test builds can replace, of M6-S22 the `.deb` without an exact Qt version, and of M6-S23 the
-//! AppStream metainfo (`m6_s23_appstream`).
+//! AppStream metainfo (`m6_s23_appstream`) and of M6-S36 Qt Test only in the test harness
+//! (`m6_s36_qt_test`).
 
 mod common;
 #[path = "m0_s05_deb_packaging/m6_s23_appstream.rs"]
 mod m6_s23_appstream;
+#[path = "m0_s05_deb_packaging/m6_s36_qt_test.rs"]
+mod m6_s36_qt_test;
 
 use kestic_test_support::tools::short_tempdir;
 use kestic_test_support::workspace::{
@@ -39,7 +42,8 @@ fn find_deb_package() -> PathBuf {
                 .is_some_and(|n| n.starts_with("kestic_") && n.ends_with(".deb"))
         })
         .collect();
-    debs.sort();
+    // The newest package: version strings do not sort as text (`~m6.9` after `~m6.10`).
+    debs.sort_by_key(|p| fs::metadata(p).and_then(|m| m.modified()).ok());
     debs.pop().unwrap_or_else(|| {
         panic!(
             "no kestic_*.deb found in {}; run `just deb` or `just verify` first",

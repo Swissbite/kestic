@@ -7,7 +7,7 @@
 //! ([`ResticBinaryGate`]).
 
 use super::error::KesticServiceErr;
-use super::state::{DaemonCore, refresh_probe_unlocked};
+use super::state::{DaemonCore, STOPPING, refresh_probe_unlocked};
 use crate::dbus_api::ResticInstallStatusDto;
 use kestic_core::clock::Clock;
 use kestic_core::config::default_data_dir;
@@ -253,6 +253,17 @@ impl DaemonCore {
             .map(|(id, _)| id.clone())
     }
 
+    /// Cancels every running installation, as `CancelResticInstall` would (the daemon stops).
+    pub(super) fn cancel_running_restic_installs(&mut self) {
+        let now = self.clock.now_utc();
+        for progress in self.restic_installs.values() {
+            let mut progress = progress.lock_unpoisoned();
+            if progress.state == InstallState::Running {
+                progress.cancel(now);
+            }
+        }
+    }
+
     pub fn cancel_restic_install(&mut self, install_id: &str) -> Result<(), KesticServiceErr> {
         let progress = self.install(install_id)?;
         let now = self.clock.now_utc();
@@ -282,6 +293,9 @@ pub fn start_restic_install_async(
         guard
             .install_leftovers
             .run_once(default_data_dir().as_deref());
+        if guard.stopping() {
+            return Err(KesticServiceErr::Internal(STOPPING.to_string()));
+        }
         let running = guard
             .restic_installs
             .values()

@@ -227,6 +227,10 @@ fn install_daemon_ki18n() {
 }
 
 fn run_daemon_subcommand(args: &[String]) -> ExitCode {
+    // First, so a `SIGTERM` during the start ends the daemon cleanly instead of killing it.
+    let stop_signal = kestic_daemon::service::install_stop_signal()
+        .inspect_err(|err| eprintln!("daemon: cannot handle SIGTERM: {err}"))
+        .ok();
     let autostart = args.iter().any(|a| a == "--autostart");
     let config_path = flag_value(args, "--config-path").map(PathBuf::from);
     if autostart && !has_kestic_config(config_path.as_ref()) {
@@ -283,6 +287,7 @@ fn run_daemon_subcommand(args: &[String]) -> ExitCode {
         enable_scheduler: !args.iter().any(|a| a == "--no-scheduler"),
         enable_binary_watch: !args.iter().any(|a| a == "--no-binary-watch"),
         simulated_status,
+        stop_signal,
         ..Default::default()
     };
 

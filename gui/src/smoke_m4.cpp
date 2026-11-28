@@ -2184,12 +2184,12 @@ int scenario_snapshot_right_click(const Ctx& c) {
     QQuickItem* first = row_at(w, 0);
     M4_CHECK(7107, first != nullptr, "first row created");
     const QPointF at = first->mapToScene(QPointF(first->width() * 0.4, first->height() * 0.5));
-    send_mouse(w, at, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 20);
-    send_mouse(w, at, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
+    send_mouse(w, at, Qt::NoButton, QEvent::MouseMove, 20);
+    send_mouse(w, at, Qt::RightButton, QEvent::MouseButtonPress, 20);
     M4_CHECK(7108, wait_until([&] { return is_open(menu); }, 2000),
         "(a) the menu opens on the press, while the button is still down");
     wait_ms(1000);
-    send_mouse(w, at, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 1200);
+    send_mouse(w, at, Qt::RightButton, QEvent::MouseButtonRelease, 1200);
     wait_ms(200);
     M4_CHECK(7109, is_open(menu), "(a) the menu stays open after a long press");
     M4_CHECK_EQ(7110, snapshot_of_menu(), role_value(snaps, 0, "snapshotId").toString(),
@@ -2209,10 +2209,10 @@ int scenario_snapshot_right_click(const Ctx& c) {
     M4_CHECK(7114, second != nullptr, "second row created");
     const QPointF from = second->mapToScene(QPointF(second->width() * 0.3, second->height() * 0.3));
     const QPointF to = from + QPointF(14.0, 12.0);
-    send_mouse(w, from, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 20);
-    send_mouse(w, from, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
-    send_mouse(w, to, Qt::RightButton, Qt::NoButton, QEvent::MouseMove, 40);
-    send_mouse(w, to, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 40);
+    send_mouse(w, from, Qt::NoButton, QEvent::MouseMove, 20);
+    send_mouse(w, from, Qt::RightButton, QEvent::MouseButtonPress, 20);
+    send_mouse(w, to, Qt::NoButton, QEvent::MouseMove, 40);
+    send_mouse(w, to, Qt::RightButton, QEvent::MouseButtonRelease, 40);
     M4_CHECK(7115, wait_until([&] { return is_open(menu); }, 2000), "(a) the menu opens when the pointer moves");
     M4_CHECK_EQ(7116, snapshot_of_menu(), role_value(snaps, 1, "snapshotId").toString(),
         "(a) the menu belongs to the second row");
@@ -2225,9 +2225,9 @@ int scenario_snapshot_right_click(const Ctx& c) {
             QQuickItem* row = row_at(w, r);
             M4_CHECK(7118, row != nullptr, "row created");
             const QPointF p = row->mapToScene(QPointF(row->width() * 0.6, row->height() * 0.5));
-            send_mouse(w, p, Qt::NoButton, Qt::NoButton, QEvent::MouseMove, 300);
-            send_mouse(w, p, Qt::RightButton, Qt::RightButton, QEvent::MouseButtonPress, 20);
-            send_mouse(w, p, Qt::NoButton, Qt::RightButton, QEvent::MouseButtonRelease, 60);
+            send_mouse(w, p, Qt::NoButton, QEvent::MouseMove, 300);
+            send_mouse(w, p, Qt::RightButton, QEvent::MouseButtonPress, 20);
+            send_mouse(w, p, Qt::RightButton, QEvent::MouseButtonRelease, 60);
             M4_CHECK(7119, wait_until([&] { return is_open(menu); }, 2000),
                 qPrintable(QStringLiteral("(c) the menu opens on row %1, round %2").arg(r).arg(round)));
             M4_CHECK_EQ(7120, snapshot_of_menu(), role_value(snaps, r, "snapshotId").toString(),

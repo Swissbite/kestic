@@ -123,6 +123,10 @@ msgstr "%1 wird gesichert"
 msgid "Interrupted by system sleep"
 msgstr "Vom Ruhezustand unterbrochen"
 
+#: i18n/src/messages.rs
+msgid "Interrupted because Kestic was stopped"
+msgstr "Unterbrochen, weil Kestic beendet wurde"
+
 #: daemon/src/service/backup_runner.rs:997
 msgid "Backed up; destination was locked, retention runs later"
 msgstr "Gesichert; Ziel war gesperrt, Aufbewahrung läuft später"

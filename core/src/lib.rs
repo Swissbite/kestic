@@ -11,6 +11,7 @@ pub mod backup_progress;
 mod bounded_command;
 pub mod build_info;
 mod child_guard;
+pub mod child_registry;
 pub mod clock;
 pub mod config;
 pub mod destination;

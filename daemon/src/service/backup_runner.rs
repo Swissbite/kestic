@@ -14,7 +14,7 @@ use super::error::{
 };
 use super::restore_runner::start_pending_restores;
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
-use super::state::{DaemonCore, ResticDeps, probe_before_run};
+use super::state::{DaemonCore, Interruption, ResticDeps, STOPPING, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::DestinationAvailabilityDto;
@@ -52,7 +52,7 @@ use kestic_core::scheduler::{
 use kestic_core::secrets::{SecretStore, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{BlockedReason, ErrorKind, RunKindCode, RunProgressPhase};
-use kestic_i18n::messages::{ActiveRunInfo, active_run_message, interrupted_by_sleep_message};
+use kestic_i18n::messages::{ActiveRunInfo, active_run_message};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -260,6 +260,11 @@ fn launch_backup_run_record(
     backup: &Backup,
     dest: &Destination,
 ) -> Result<LaunchedBackupRun, KesticServiceErr> {
+    // The checks before the start may take seconds; the daemon may have begun to stop meanwhile.
+    if guard.stopping() {
+        guard.release_claim(&dest.id, claim_guard);
+        return Err(KesticServiceErr::Internal(STOPPING.to_string()));
+    }
     let _ = guard.delete_pending_runs_cached(&backup.id);
     guard.sleep_interrupted_backups.remove(&backup.id);
     guard.queued_backups.retain(|id| id != &backup.id);
@@ -553,14 +558,12 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         });
     supervision.stop_cancel_watcher();
 
-    let sleep_interrupted = shared_worker
-        .lock_unpoisoned()
-        .run_sleep_interrupted(&run_id);
+    let interruption = shared_worker.lock_unpoisoned().run_interruption(&run_id);
 
     let secrets_owned = load_dest_secrets(&ctx.dest, ctx.deps.secret_store.as_ref());
     let secret_strs = secret_strs(&secrets_owned);
 
-    let outcome = process_backup_exec_result(
+    let mut outcome = process_backup_exec_result(
         BackupExecContext {
             shared_worker: &shared_worker,
             backup: &ctx.backup,
@@ -568,13 +571,22 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
             runtime: &runtime,
             pending_other_backups: &pending_other_backups,
             cancel: &cancel,
-            sleep_interrupted,
+            interruption,
             is_scheduled,
             secret_strs: &secret_strs,
         },
         &mut run,
         exec_res,
     );
+    // The daemon may have been stopped during the backup's `forget`, after the check above. A
+    // backup that finished with its `forget` keeps its result.
+    let stopped =
+        shared_worker.lock_unpoisoned().run_interruption(&run_id) == Some(Interruption::Stop);
+    let completed = matches!(outcome.final_status, RunStatus::Ok | RunStatus::Warning)
+        && outcome.primary_forget_state == Some(false);
+    if stopped && !completed {
+        mark_stopped(&mut outcome, &mut run);
+    }
 
     run.finish(
         ctx.deps.clock.as_ref(),
@@ -627,11 +639,28 @@ fn process_backup_exec_result(
         Err(err) => process_backup_error_result(
             run,
             err,
-            ctx.sleep_interrupted,
+            ctx.interruption,
             ctx.is_scheduled,
             ctx.secret_strs,
         ),
     }
+}
+
+/// A backup the daemon stopped on `SIGTERM` ends as interrupted: no backoff and no handled
+/// slot, so it runs again after the next start; a snapshot it already wrote keeps its `forget`
+/// pending for the next maintenance.
+fn mark_stopped(outcome: &mut BackupPostExecOutcome, run: &mut Run) {
+    let summary = Interruption::Stop.summary();
+    outcome.final_status = RunStatus::Interrupted;
+    outcome.transient_backoff_kind = None;
+    outcome.raw_detail = Some(summary.clone());
+    outcome.jv_code = 1;
+    outcome.jv_msg.clone_from(&summary);
+    if matches!(outcome.exit_code, Some(0 | 3)) && outcome.primary_forget_state != Some(false) {
+        outcome.primary_forget_state = Some(true);
+    }
+    run.pending_reason = None;
+    run.summary_message = Some(summary);
 }
 
 struct BackupExecContext<'a> {
@@ -641,7 +670,7 @@ struct BackupExecContext<'a> {
     runtime: &'a ResticRuntime<'a>,
     pending_other_backups: &'a [Backup],
     cancel: &'a CancelHandle,
-    sleep_interrupted: bool,
+    interruption: Option<Interruption>,
     is_scheduled: bool,
     secret_strs: &'a [&'a str],
 }
@@ -658,10 +687,11 @@ fn process_backup_success_result(
         runtime,
         pending_other_backups,
         cancel,
-        sleep_interrupted,
+        interruption,
         is_scheduled,
         secret_strs,
     } = ctx;
+    let sleep_interrupted = interruption.is_some();
     let mut primary_forget_state: Option<bool> = None;
     let mut cleared_other_pending: Vec<BackupId> = Vec::new();
     let mut detected_stale_locks: Option<usize> = None;
@@ -677,8 +707,8 @@ fn process_backup_success_result(
     run.commands = vec![res.command_record];
     run.stats = res.stats;
 
-    let mut summary = if sleep_interrupted {
-        Some(tr(&interrupted_by_sleep_message()))
+    let mut summary = if let Some(cause) = interruption {
+        Some(cause.summary())
     } else if matches!(status, RunStatus::Error | RunStatus::Warning) {
         let base = localized_failure_summary(&res.presentation.kind);
         let raw = res
@@ -799,17 +829,13 @@ fn process_backup_success_result(
 fn process_backup_error_result(
     run: &mut Run,
     err: BackupRunError,
-    sleep_interrupted: bool,
+    interruption: Option<Interruption>,
     is_scheduled: bool,
     secret_strs: &[&str],
 ) -> BackupPostExecOutcome {
     let mut transient_backoff_kind: Option<BackoffKind> = None;
-    let (status, exit_code, msg) = if sleep_interrupted {
-        (
-            RunStatus::Interrupted,
-            None,
-            tr(&interrupted_by_sleep_message()),
-        )
+    let (status, exit_code, msg) = if let Some(cause) = interruption {
+        (RunStatus::Interrupted, None, cause.summary())
     } else if is_scheduled
         && matches!(
             err,
