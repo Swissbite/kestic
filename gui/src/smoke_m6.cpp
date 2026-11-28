@@ -538,8 +538,8 @@ int rest_login_checks(QQuickWindow* w, const QString& lang, const QString& out_p
     const QString dest_id = qEnvironmentVariable("KESTIC_SMOKE_DEST_ID");
     M3_CHECK(1800, !login_url.isEmpty() && !plain_url.isEmpty() && !dest_id.isEmpty(), "KESTIC_SMOKE_* not set");
     const QString message = loc(lang,
-        "The address must not contain a user name or password. Enter them in the fields 'Username' and 'Server password'.",
-        "Die Adresse darf keinen Benutzernamen und kein Passwort enthalten. Tragen Sie diese in den Feldern «Benutzername» und «Server-Passwort» ein.");
+        "The address must not contain a user name or password. Enter them in the ‘Username’ and ‘Server password’ fields.",
+        "Benutzername und Passwort gehören nicht in die Adresse, sondern in die Felder «Benutzername» und «Server-Passwort».");
 
     QMetaObject::invokeMethod(w, "openAddDestinationWizard", Q_ARG(QVariant, QVariant()), Q_ARG(QVariant, QStringLiteral("init")));
     QQuickItem* card = nullptr;

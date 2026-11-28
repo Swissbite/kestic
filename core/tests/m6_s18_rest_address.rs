@@ -47,8 +47,8 @@ fn ac_m6_18_1_login_in_rest_address_fails_the_input_rules() {
         assert_eq!(err.to_string(), REST_ADDRESS_WITH_LOGIN, "(a) message");
     }
     assert!(
-        REST_ADDRESS_WITH_LOGIN.contains("'Username'")
-            && REST_ADDRESS_WITH_LOGIN.contains("'Server password'"),
+        REST_ADDRESS_WITH_LOGIN.contains("‘Username’")
+            && REST_ADDRESS_WITH_LOGIN.contains("‘Server password’"),
         "(a) the message names both fields"
     );
 }
