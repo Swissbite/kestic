@@ -111,7 +111,9 @@ ListView {
         if (pendingRow < 0) return;
         var target = pendingRow;
         if (loadRowsUpTo(target, pendingStep)) {
+            userMove = true;
             moveCurrentTo(Math.min(target, count - 1), pendingStep);
+            userMove = false;
         }
     }
 
@@ -126,6 +128,16 @@ ListView {
 
     Keys.onPressed: function(event) {
         if (event.modifiers !== Qt.NoModifier && event.modifiers !== Qt.KeypadModifier) return;
+        list.userMove = true;
+        list.moveForKey(event);
+        list.userMove = false;
+    }
+
+    // While true the current row changes because the user pressed a key (also once the rows a
+    // key waited for have arrived); a page can tell such a move from one of its own.
+    property bool userMove: false
+
+    function moveForKey(event) {
         // Another key than one that waits for rows drops a move still waiting for them.
         if (event.key !== Qt.Key_Down && event.key !== Qt.Key_End && event.key !== Qt.Key_PageDown) {
             list.pendingRow = -1;

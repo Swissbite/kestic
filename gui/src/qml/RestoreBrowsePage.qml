@@ -71,9 +71,33 @@ Kirigami.ScrollablePage {
 
     // Lists `dir`; the filter starts empty in every folder, the selection stays.
     function openDir(dir) {
+        // Another folder than the hit's: the hit is no longer looked for.
+        if (dir !== page.startDir) page.dropFocusPath();
         filterField.resetFilter();
+        page.appliedFilter = "";
+        page.settingRow = true;
         browseListView.currentIndex = -1;
+        page.settingRow = false;
         snapshotBrowseModel.open(destinationId, snapshotId, dir);
+    }
+
+    // The filter the list shows; opening a folder clears it.
+    property string appliedFilter: ""
+
+    // The page sets the current row itself; a key that moves it (or a click on a row) means the
+    // user moved on, so the hit is no longer looked for.
+    property bool settingRow: false
+    Connections {
+        target: browseListView
+        function onCurrentIndexChanged() {
+            if (browseListView.userMove && !page.settingRow) page.dropFocusPath();
+        }
+    }
+
+    // Stops looking for the search hit (the user moved on).
+    function dropFocusPath() {
+        page.focusPath = "";
+        page.focusPages = 0;
     }
 
     // Opens the folder at `row`, or marks the file there.
@@ -130,9 +154,10 @@ Kirigami.ScrollablePage {
                 page.focusOnPath();
             }
         }
-        // A page asked for to find the entry to focus has arrived.
+        // A page asked for to find the entry to focus has arrived; the list takes in the new rows
+        // first, so the row it is told to show is the hit.
         function onRowsInserted() {
-            if (page.focusPath !== "" && page.focusPages > 0) page.focusOnPath();
+            if (page.focusPath !== "" && page.focusPages > 0) Qt.callLater(page.focusOnPath);
         }
     }
 
@@ -143,6 +168,7 @@ Kirigami.ScrollablePage {
     // Makes the entry at `focusPath` the current row once it is loaded, loading further pages
     // (at most `maxFocusPages`) until it is; gives up when the folder does not list it.
     function focusOnPath() {
+        if (page.focusPath === "" || snapshotBrowseModel.dir !== page.startDir) return;
         var row = snapshotBrowseModel.rowOfPath(page.focusPath);
         if (row < 0) {
             var root = snapshotBrowseModel.index(-1, 0);
@@ -155,7 +181,9 @@ Kirigami.ScrollablePage {
             return;
         }
         page.focusPath = "";
+        page.settingRow = true;
         browseListView.currentIndex = row;
+        page.settingRow = false;
         browseListView.positionViewAtIndex(row, ListView.Center);
     }
     Component.onDestruction: snapshotBrowseModel.cancel()
@@ -322,7 +350,12 @@ Kirigami.ScrollablePage {
                     id: filterField
                     objectName: "browseFilterField"
                     Layout.fillWidth: true
-                    onFilterRequested: function(text) { snapshotBrowseModel.setFilter(text); }
+                    onFilterRequested: function(text) {
+                        // A new filter: the hit is no longer looked for.
+                        if (text !== page.appliedFilter) page.dropFocusPath();
+                        page.appliedFilter = text;
+                        snapshotBrowseModel.setFilter(text);
+                    }
                 }
                 Controls.Label {
                     objectName: "browseCountLabel"
@@ -477,6 +510,7 @@ Kirigami.ScrollablePage {
             Accessible.description: selected ? i18n("Marked for restore") : ""
 
             onClicked: {
+                page.dropFocusPath();
                 ListView.view.currentIndex = index;
                 page.activateRow(index);
             }

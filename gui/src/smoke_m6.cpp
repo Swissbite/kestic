@@ -82,7 +82,7 @@ int rows_of(QObject* model) {
 // dry run whose page closed before it started is cancelled (the test watches for the cancel);
 // (c) a further page answered after the filter changed does not stop the list from loading more;
 // (d) a search hit beyond the first page of its folder becomes the current row once its page
-// arrived.
+// arrived; (e) a hit the user left for a filter before its page arrived is no longer looked for.
 void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     const std::shared_ptr<QStringList>& warnings, const QString& out_path) {
     const QString bid = qEnvironmentVariable("KESTIC_TEST_BACKUP");
@@ -98,11 +98,12 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
     SMOKE_CHECK3("M6", 120, answers, draft, browse, "precondition: the QML helpers");
     auto step = std::make_shared<int>(-1);
     auto dry_run = std::make_shared<int>(0);
+    auto settle = std::make_shared<QElapsedTimer>();
     auto waited = std::make_shared<QElapsedTimer>();
     waited->start();
     auto* poll = new QTimer(window);
     QObject::connect(poll, &QTimer::timeout, window, [=]() {
-        if (waited->elapsed() > 180000) {
+        if (waited->elapsed() > 240000) {
             poll->stop();
             smoke_fail("M6", 121, *step == 4 ? QStringLiteral("(c) the list loads no further pages after a further page arrived for an old filter")
                 : *step == 5 ? QStringLiteral("(d) a search hit beyond the first page of its folder never became the current row")
@@ -161,7 +162,40 @@ void run_slow_stale_scene(QQuickWindow* window, QObject* backend,
         case 5: {
             QQuickItem* list = child_item(window, "browseListView");
             if (!list || list->property("currentIndex").toInt() < 200) return;
+            auto* rows = qobject_cast<QAbstractItemModel*>(list->property("model").value<QObject*>());
+            SMOKE_CHECK2("M6", 125, rows, rows->data(rows->index(list->property("currentIndex").toInt(), 0), 0).toString()
+                    == source + QStringLiteral("/file-99"),
+                QStringLiteral("(d) the current row %1 of %2 (model %3) is '%4', not the search hit")
+                    .arg(list->property("currentIndex").toInt())
+                    .arg(list->property("count").toInt())
+                    .arg(rows ? rows->rowCount() : -1)
+                    .arg(rows ? rows->data(rows->index(list->property("currentIndex").toInt(), 0), 0).toString() : QString()));
+            // (e) The next hit, left for a filter before its page arrived.
+            QMetaObject::invokeMethod(window, "popSubPage");
+            break;
+        }
+        case 6:
+            if (child_item(window, "restoreBrowsePage")) return;
+            QMetaObject::invokeMethod(window, "openSearchHit", Q_ARG(QVariant, dest), Q_ARG(QVariant, snapshot),
+                Q_ARG(QVariant, source), Q_ARG(QVariant, source + QStringLiteral("/file-98")), Q_ARG(QVariant, false),
+                Q_ARG(QVariant, QString()));
+            break;
+        case 7: {
+            QQuickItem* page = child_item(window, "restoreBrowsePage");
+            if (!page || page->property("focusPages").toInt() == 0) return;
+            QMetaObject::invokeMethod(child_object(window, "browseFilterField"), "filterRequested",
+                Q_ARG(QString, QStringLiteral("file-1")));
+            settle->start();
+            break;
+        }
+        case 8: {
+            QQuickItem* page = child_item(window, "restoreBrowsePage");
+            QQuickItem* list = child_item(window, "browseListView");
+            // The filtered list and the page the hit asked for are in.
+            if (!list || list->property("count").toInt() >= 200 || settle->elapsed() < 12000) return;
             poll->stop();
+            SMOKE_CHECK("M6", 126, page->property("focusPath").toString().isEmpty(),
+                "(e) a hit the user left for a filter is still looked for");
             smoke_finish("M6", warnings.get(), window, out_path);
             return;
         }
