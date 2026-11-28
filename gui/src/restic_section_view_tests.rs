@@ -291,7 +291,7 @@ fn remove_failure_texts() {
     );
     assert_eq!(
         remove_failure_text(ServiceErrorCode::Internal),
-        crate::state_cache::tr(&ServiceErrorCode::Internal.message())
+        crate::i18n::tr(&ServiceErrorCode::Internal.message())
     );
 }
 

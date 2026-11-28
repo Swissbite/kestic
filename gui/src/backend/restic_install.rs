@@ -7,11 +7,11 @@
 
 use super::daemon_call::{Lane, send_to_daemon};
 use super::{dbus_error_text, qobject};
+use crate::i18n::daemon_unavailable_text;
 use crate::restic_install_view::{
     InstallView, OfferInput, failed_poll_view, install_view, restic_offer, start_failure_text,
 };
 use crate::restic_section_view::{ResticSectionView, needs_install_first, remove_failure_text};
-use crate::state_cache::daemon_unavailable_text;
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::QString;
 use kestic_core::model::ResticProvider;

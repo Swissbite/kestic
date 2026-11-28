@@ -25,7 +25,6 @@ use crate::dbus_server::{emit_run_updated, emit_status_changed};
 use crate::i18n::{i18n, tr, tr_text};
 use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification};
-use crate::tray::TrayHandle;
 use kestic_core::backup::{BackupRunError, execute_retention, is_forget_lock_failure};
 use kestic_core::clock::Clock;
 use kestic_core::destination::{DestinationError, preflight_check_with_restic};
@@ -126,7 +125,6 @@ struct LaunchedMaintenanceRun {
     run: Run,
     cancel: CancelHandle,
     conn_opt: Option<Connection>,
-    tray_opt: Option<Arc<TrayHandle>>,
 }
 
 fn launch_maintenance_run_record(
@@ -159,11 +157,7 @@ fn launch_maintenance_run_record(
         .upsert_run_cached(&run, &[])
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
 
-    let ActivatedRun {
-        cancel,
-        conn_opt,
-        tray_opt,
-    } = guard.activate_run(
+    let ActivatedRun { cancel, conn_opt } = guard.activate_run(
         NewActiveRun {
             run: &run,
             backup_id: None,
@@ -177,7 +171,6 @@ fn launch_maintenance_run_record(
         run,
         cancel,
         conn_opt,
-        tray_opt,
     })
 }
 
@@ -263,7 +256,6 @@ fn run_destination_maintenance_internal(
             is_scheduled,
             host_key_failure,
             conn_opt: launched.conn_opt,
-            tray_opt: launched.tray_opt,
         });
     });
 
@@ -284,7 +276,6 @@ struct MaintenanceWorkerArgs {
     /// restic.
     host_key_failure: Option<String>,
     conn_opt: Option<Connection>,
-    tray_opt: Option<Arc<TrayHandle>>,
 }
 
 struct MaintenanceOpOutcome {
@@ -333,7 +324,6 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
         is_scheduled,
         host_key_failure,
         conn_opt,
-        tray_opt,
     } = args;
 
     let mut supervision = RunSupervision::start(
@@ -422,7 +412,6 @@ fn execute_maintenance_worker(args: MaintenanceWorkerArgs) {
         secret_strs: &secret_strs,
         logind_sleep_guard: supervision.logind.as_mut(),
         conn_opt: conn_opt.as_ref(),
-        tray_opt: tray_opt.as_ref(),
     });
 }
 
@@ -578,7 +567,6 @@ struct MaintenanceFinalizeInput<'a> {
     secret_strs: &'a [&'a str],
     logind_sleep_guard: Option<&'a mut LogindSleepInhibitor>,
     conn_opt: Option<&'a Connection>,
-    tray_opt: Option<&'a Arc<TrayHandle>>,
 }
 
 fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
@@ -592,7 +580,6 @@ fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
         secret_strs,
         logind_sleep_guard,
         conn_opt,
-        tray_opt,
     } = input;
     let run_id = run.id.clone();
     let (state_dto, notif_settings, maint_backoff_attempt) = {
@@ -614,12 +601,8 @@ fn finalize_maintenance_run_state(input: MaintenanceFinalizeInput<'_>) {
         if let Err(err) = guard.upsert_run_cached(&run, secret_strs) {
             eprintln!("kestic-daemon: failed to record maintenance run {run_id} in history: {err}");
         }
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
         (
-            state_dto,
+            guard.push_tray_state(),
             guard.config.notifications.clone(),
             recorded_attempt,
         )

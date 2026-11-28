@@ -5,8 +5,11 @@
 
 mod backend;
 mod build_info;
+mod daemon_client;
 mod daemon_events;
 mod destination_input;
+mod dto_builders;
+mod i18n;
 mod models;
 mod overall_text;
 mod qt_bridge;
@@ -17,6 +20,8 @@ mod run_texts;
 #[cfg(feature = "test-harness")]
 mod smoke;
 mod state_cache;
+mod status_texts;
+mod summary_texts;
 mod time_texts;
 mod ui_texts;
 

@@ -107,7 +107,7 @@ fn ac_m6_33_2b_daemon_calls_go_through_generated_proxy() {
         .collect();
     assert_eq!(
         session_opens,
-        vec!["gui/src/state_cache.rs".to_string()],
+        vec!["gui/src/daemon_client.rs".to_string()],
         "(a) the GUI opens its session-bus connection in one place"
     );
 
@@ -134,10 +134,10 @@ const BLOCKING_DAEMON_CALLS: [&str; 5] = [
     "block_on(",
 ];
 
-/// The modules that call the daemon off the Qt thread: the state cache and its background
+/// The modules that call the daemon off the Qt thread: the daemon client and its background
 /// threads, and the worker for the window's actions.
 const DAEMON_MODULES: [&str; 3] = [
-    "gui/src/state_cache.rs",
+    "gui/src/daemon_client.rs",
     "gui/src/daemon_events.rs",
     "gui/src/backend/daemon_call.rs",
 ];

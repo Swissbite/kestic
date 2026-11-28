@@ -12,10 +12,8 @@ use super::error::{
 };
 use super::host_keys::SftpSetupGuard;
 use super::state::{DaemonCore, ResticDeps};
-use crate::dbus_api::{
-    BackendSecrets, ConnectionTestResultDto, DaemonStateDto, DestinationUpdateResultDto,
-};
-use crate::tray::KesticTrayState;
+use super::state_summary::StatePublication;
+use crate::dbus_api::{BackendSecrets, ConnectionTestResultDto, DestinationUpdateResultDto};
 use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::destination::{
     DestinationError, DestinationSetupMode, check_existing_repository, prepare_repository,
@@ -32,7 +30,6 @@ use kestic_core::secrets::{InMemorySecretStore, SecretError, SecretValue};
 use kestic_core::sync::LockUnpoisoned;
 use kestic_i18n::codes::{ConnectionTestCode, DestinationUpdateOutcome};
 use std::sync::{Arc, Mutex};
-use zbus::Connection;
 
 /// Why an edited connection could not be checked.
 pub(super) enum EditError {
@@ -296,20 +293,12 @@ fn store_repository_id(guard: &DaemonCore, dest: &Destination, id: &RepositoryId
     }
 }
 
-type UpdateReply = (
-    DestinationUpdateResultDto,
-    Option<Connection>,
-    DaemonStateDto,
-    KesticTrayState,
-);
+type UpdateReply = (DestinationUpdateResultDto, StatePublication);
 
 fn reply(guard: &DaemonCore, outcome: DestinationUpdateOutcome, revision: String) -> UpdateReply {
-    let (state_dto, tray_state) = guard.build_state_and_tray();
     (
         DestinationUpdateResultDto { outcome, revision },
-        guard.conn.clone(),
-        state_dto,
-        tray_state,
+        guard.state_publication(),
     )
 }
 

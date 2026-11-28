@@ -18,8 +18,7 @@ use crate::binary_watch::{BinaryIdentity, BinaryStatus};
 use crate::dbus_api::{DestinationAvailabilityDto, KESTIC_BUS_NAME};
 use crate::dbus_server::{
     close_after_pending_replies, emit_quit_confirmation_requested, emit_show_about_requested,
-    emit_show_restore_requested, emit_show_window_requested, emit_status_changed,
-    start_dbus_server,
+    emit_show_restore_requested, emit_show_window_requested, start_dbus_server,
 };
 use crate::i18n::{i18n, tr_text};
 use crate::monitors::{SystemMonitorEvent, SystemMonitorHandle, read_system_environment};
@@ -135,7 +134,6 @@ pub fn run_daemon(config: &DaemonRunConfig) -> Result<DaemonOutcome, String> {
     let loop_exit = run_daemon_event_loop(DaemonLoopContext {
         core: &core,
         conn: &conn,
-        tray: &tray,
         config,
         action_rx: &action_rx,
         quit_rx: &quit_rx,
@@ -178,7 +176,6 @@ enum LoopExit {
 struct DaemonLoopContext<'a> {
     core: &'a Arc<Mutex<DaemonCore>>,
     conn: &'a Connection,
-    tray: &'a Arc<TrayHandle>,
     config: &'a DaemonRunConfig,
     action_rx: &'a mpsc::Receiver<TrayAction>,
     quit_rx: &'a mpsc::Receiver<()>,
@@ -197,7 +194,6 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> LoopExit {
     let DaemonLoopContext {
         core,
         conn,
-        tray,
         config,
         action_rx,
         quit_rx,
@@ -225,8 +221,6 @@ fn run_daemon_event_loop(ctx: DaemonLoopContext<'_>) -> LoopExit {
             while let Ok(ev) = mon_rx.try_recv() {
                 handle_system_monitor_event(
                     core,
-                    conn,
-                    tray,
                     config,
                     ev,
                     &mut state.last_network_reconnect_probe,
@@ -342,41 +336,30 @@ fn shutdown_daemon_and_maybe_reexec(
 
 fn handle_system_monitor_event(
     core: &Arc<Mutex<DaemonCore>>,
-    conn: &Connection,
-    tray: &Arc<TrayHandle>,
     config: &DaemonRunConfig,
     ev: SystemMonitorEvent,
     last_network_reconnect_probe: &mut Option<time::OffsetDateTime>,
 ) {
     match ev {
         SystemMonitorEvent::EnvironmentChanged(new_env) => {
-            handle_environment_changed(
-                core,
-                conn,
-                tray,
-                config,
-                new_env,
-                last_network_reconnect_probe,
-            );
+            handle_environment_changed(core, config, new_env, last_network_reconnect_probe);
         }
         SystemMonitorEvent::MountChanged => {
-            handle_mount_changed(core, conn, tray, config);
+            handle_mount_changed(core, config);
         }
         SystemMonitorEvent::PrepareForSleep(going_to_sleep) => {
-            handle_prepare_for_sleep(core, conn, tray, config, going_to_sleep);
+            handle_prepare_for_sleep(core, config, going_to_sleep);
         }
     }
 }
 
 fn handle_environment_changed(
     core: &Arc<Mutex<DaemonCore>>,
-    conn: &Connection,
-    tray: &Arc<TrayHandle>,
     config: &DaemonRunConfig,
     new_env: SystemEnvironment,
     last_network_reconnect_probe: &mut Option<time::OffsetDateTime>,
 ) {
-    let ((state_dto, tray_state), network_changed, force_probe) = {
+    let (publication, network_changed, force_probe) = {
         let mut guard = core.lock_unpoisoned();
         let old_env = guard.system_env.clone();
         let network_changed = old_env.network_connected != new_env.network_connected
@@ -399,19 +382,16 @@ fn handle_environment_changed(
         } else {
             false
         };
-        (guard.build_state_and_tray(), network_changed, force_probe)
+        (guard.state_publication(), network_changed, force_probe)
     };
-    tray.set_full_state(tray_state);
-    emit_status_changed(conn, &state_dto);
+    publication.publish();
 
     if network_changed {
         let core_bg = Arc::clone(core);
-        let conn_bg = conn.clone();
-        let tray_bg = Arc::clone(tray);
         let enable_scheduler = config.enable_scheduler;
         thread::spawn(move || {
             let _ = refresh_availability_unlocked(&core_bg, force_probe);
-            let (state_dto, tray_state) = {
+            let publication = {
                 let mut guard = core_bg.lock_unpoisoned();
                 for backup in guard.config.backups.clone() {
                     let dest_ok = guard
@@ -429,10 +409,9 @@ fn handle_environment_changed(
                         let _ = guard.store_backup_runtime_state(&backup.id, &rs);
                     }
                 }
-                guard.build_state_and_tray()
+                guard.state_publication()
             };
-            tray_bg.set_full_state(tray_state);
-            emit_status_changed(&conn_bg, &state_dto);
+            publication.publish();
             if enable_scheduler {
                 tick_scheduler_async(&core_bg);
             }
@@ -442,15 +421,8 @@ fn handle_environment_changed(
     }
 }
 
-fn handle_mount_changed(
-    core: &Arc<Mutex<DaemonCore>>,
-    conn: &Connection,
-    tray: &Arc<TrayHandle>,
-    config: &DaemonRunConfig,
-) {
+fn handle_mount_changed(core: &Arc<Mutex<DaemonCore>>, config: &DaemonRunConfig) {
     let core_bg = Arc::clone(core);
-    let conn_bg = conn.clone();
-    let tray_bg = Arc::clone(tray);
     let enable_scheduler = config.enable_scheduler;
     thread::spawn(move || {
         let (backups, destinations, mount_inspector, clock) = {
@@ -478,7 +450,7 @@ fn handle_mount_changed(
                 dest_updates.push((dest.id.clone(), dto));
             }
         }
-        let (state_dto, tray_state) = {
+        let publication = {
             let mut guard = core_bg.lock_unpoisoned();
             for (id, status) in source_updates {
                 guard.source_availability.insert(id, status);
@@ -486,10 +458,9 @@ fn handle_mount_changed(
             for (id, dto) in dest_updates {
                 guard.dest_availability.insert(id, dto);
             }
-            guard.build_state_and_tray()
+            guard.state_publication()
         };
-        tray_bg.set_full_state(tray_state);
-        emit_status_changed(&conn_bg, &state_dto);
+        publication.publish();
         if enable_scheduler {
             tick_scheduler_async(&core_bg);
         }
@@ -498,14 +469,12 @@ fn handle_mount_changed(
 
 fn handle_prepare_for_sleep(
     core: &Arc<Mutex<DaemonCore>>,
-    conn: &Connection,
-    tray: &Arc<TrayHandle>,
     config: &DaemonRunConfig,
     going_to_sleep: bool,
 ) {
     if going_to_sleep {
         // interrupt running jobs cleanly, lock scheduler until wake, and mark for resume.
-        let (state_dto, tray_state) = {
+        let publication = {
             let mut guard = core.lock_unpoisoned();
             guard.sleep_in_progress = true;
             let running_ids: Vec<BackupId> = guard
@@ -521,15 +490,12 @@ fn handle_prepare_for_sleep(
                 guard.sleep_interrupted_backups.insert(bid);
             }
             guard.cancel_any_active_run();
-            guard.build_state_and_tray()
+            guard.state_publication()
         };
-        tray.set_full_state(tray_state);
-        emit_status_changed(conn, &state_dto);
+        publication.publish();
     } else {
         // re-read environment, refresh availability, unlock, and catch up.
         let core_bg = Arc::clone(core);
-        let conn_bg = conn.clone();
-        let tray_bg = Arc::clone(tray);
         let enable_monitors = config.enable_system_monitors;
         let monitor_bus = config.monitor_bus.clone();
         let enable_scheduler = config.enable_scheduler;
@@ -540,14 +506,13 @@ fn handle_prepare_for_sleep(
                 SystemEnvironment::desktop_connected()
             };
             let _ = refresh_availability_unlocked(&core_bg, true);
-            let (state_dto, tray_state) = {
+            let publication = {
                 let mut guard = core_bg.lock_unpoisoned();
                 guard.system_env = new_env;
                 guard.sleep_in_progress = false;
-                guard.build_state_and_tray()
+                guard.state_publication()
             };
-            tray_bg.set_full_state(tray_state);
-            emit_status_changed(&conn_bg, &state_dto);
+            publication.publish();
             drain_queued_backups_async(&core_bg);
             super::restore_runner::start_all_pending_restores(&core_bg);
             if enable_scheduler {
@@ -697,36 +662,28 @@ fn handle_tray_action(
         }
         TrayAction::PauseGlobal(duration) => {
             if let Ok(dur_json) = serde_json::to_string(&duration) {
-                let mut pair = None;
-                let tray_opt = {
+                let publication = {
                     let mut guard = core.lock_unpoisoned();
-                    if guard.pause_global(&dur_json).is_ok() {
-                        pair = Some(guard.build_state_and_tray());
-                    }
-                    guard.tray.clone()
+                    guard
+                        .pause_global(&dur_json)
+                        .is_ok()
+                        .then(|| guard.state_publication())
                 };
-                if let Some((dto, ts)) = pair {
-                    if let Some(tray) = tray_opt {
-                        tray.set_full_state(ts);
-                    }
-                    emit_status_changed(conn, &dto);
+                if let Some(publication) = publication {
+                    publication.publish();
                 }
             }
         }
         TrayAction::ResumeGlobal => {
-            let mut pair = None;
-            let tray_opt = {
+            let publication = {
                 let mut guard = core.lock_unpoisoned();
-                if guard.resume_global().is_ok() {
-                    pair = Some(guard.build_state_and_tray());
-                }
-                guard.tray.clone()
+                guard
+                    .resume_global()
+                    .is_ok()
+                    .then(|| guard.state_publication())
             };
-            if let Some((dto, ts)) = pair {
-                if let Some(tray) = tray_opt {
-                    tray.set_full_state(ts);
-                }
-                emit_status_changed(conn, &dto);
+            if let Some(publication) = publication {
+                publication.publish();
             }
             let core_bg = Arc::clone(core);
             thread::spawn(move || {

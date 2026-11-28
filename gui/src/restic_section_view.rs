@@ -4,7 +4,7 @@
 //! What the restic section of the settings shows about the restic source and the programs
 //! Kestic found (`ResticStatusDto`).
 
-use crate::state_cache::{i18n, tr};
+use crate::i18n::{i18n, tr};
 use crate::ui_texts::GuiText;
 use kestic_core::provider::{
     MIN_RESTIC_VERSION, TESTED_RESTIC_VERSION, is_outdated_text, same_binary,

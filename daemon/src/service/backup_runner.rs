@@ -14,18 +14,16 @@ use super::error::{
 };
 use super::restore_runner::start_pending_restores;
 use super::run_errors::{run_blocks_schedule, unreadable_items_from_lines};
+use super::run_progress::publish_run_progress;
 use super::state::{DaemonCore, Interruption, ResticDeps, STOPPING, probe_before_run};
 use super::state_summary::{ActivatedRun, NewActiveRun};
 use super::supervision::{RunSupervision, SupervisionConfig};
 use crate::dbus_api::DestinationAvailabilityDto;
-use crate::dbus_server::{
-    emit_manual_run_blocked, emit_run_progress, emit_run_updated, emit_status_changed,
-};
+use crate::dbus_server::{emit_manual_run_blocked, emit_run_updated, emit_status_changed};
 use crate::i18n::{i18n, tr};
 use crate::job_view::{JobProgress, JobViewHandle};
 use crate::monitors::LogindSleepInhibitor;
 use crate::notifications::{KesticEvent, send_configured_notification, send_event_notification};
-use crate::tray::TrayHandle;
 use kestic_core::backup::{
     BackupExecutionContext, BackupRunError, RetentionRun, execute_backup_with_inspector,
     execute_retention, is_forget_lock_failure,
@@ -251,7 +249,6 @@ struct LaunchedBackupRun {
     run: Run,
     cancel: CancelHandle,
     conn_opt: Option<Connection>,
-    tray_opt: Option<Arc<TrayHandle>>,
 }
 
 fn launch_backup_run_record(
@@ -287,11 +284,7 @@ fn launch_backup_run_record(
         .upsert_run_cached(&run, &[])
         .map_err(|e| KesticServiceErr::Internal(e.to_string()))?;
 
-    let ActivatedRun {
-        cancel,
-        conn_opt,
-        tray_opt,
-    } = guard.activate_run(
+    let ActivatedRun { cancel, conn_opt } = guard.activate_run(
         NewActiveRun {
             run: &run,
             backup_id: Some(&backup.id),
@@ -305,7 +298,6 @@ fn launch_backup_run_record(
         run,
         cancel,
         conn_opt,
-        tray_opt,
     })
 }
 
@@ -410,7 +402,6 @@ fn start_backup_internal(
             cancel: launched.cancel,
             is_scheduled,
             conn_opt: launched.conn_opt,
-            tray_opt: launched.tray_opt,
         });
     });
 
@@ -426,7 +417,6 @@ struct BackupWorkerArgs {
     cancel: CancelHandle,
     is_scheduled: bool,
     conn_opt: Option<Connection>,
-    tray_opt: Option<Arc<TrayHandle>>,
 }
 
 struct BackupProgressReporter<'a> {
@@ -436,7 +426,6 @@ struct BackupProgressReporter<'a> {
     job_view: Option<&'a JobViewHandle>,
     shared_worker: &'a Arc<Mutex<DaemonCore>>,
     run_id: &'a RunId,
-    tray_opt: Option<&'a Arc<TrayHandle>>,
     conn_opt: Option<&'a Connection>,
     /// Phase and highest percentage shown so far (no jumping percentage).
     tracker: BackupProgressTracker,
@@ -470,27 +459,15 @@ impl BackupProgressReporter<'_> {
             });
         }
 
-        let mut guard = self.shared_worker.lock_unpoisoned();
-        let mut progress = None;
-        if let Some(entry) = guard.active_runs.get_mut(self.run_id) {
-            entry.progress.phase = p.phase;
-            entry.progress.percent_done = p.percent_done;
-            entry.progress.bytes_done = p.bytes_done;
-            entry.progress.total_bytes = p.total_bytes;
-            entry.progress.files_done = p.files_done;
-            entry.progress.speed_bps = p.speed_bps;
-            entry.progress.seconds_remaining = p.seconds_remaining.unwrap_or(0);
-            progress = Some(entry.progress.clone());
-        }
-        let (_, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = self.tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        drop(guard);
-
-        if let (Some(conn), Some(progress)) = (self.conn_opt, progress) {
-            emit_run_progress(conn, &progress);
-        }
+        publish_run_progress(self.shared_worker, self.run_id, self.conn_opt, |progress| {
+            progress.phase = p.phase;
+            progress.percent_done = p.percent_done;
+            progress.bytes_done = p.bytes_done;
+            progress.total_bytes = p.total_bytes;
+            progress.files_done = p.files_done;
+            progress.speed_bps = p.speed_bps;
+            progress.seconds_remaining = p.seconds_remaining.unwrap_or(0);
+        });
     }
 }
 
@@ -518,7 +495,6 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         cancel,
         is_scheduled,
         conn_opt,
-        tray_opt,
     } = args;
 
     let mut supervision = RunSupervision::start(
@@ -546,7 +522,6 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         job_view: supervision.job_view.as_ref(),
         shared_worker: &shared_worker,
         run_id: &run_id,
-        tray_opt: tray_opt.as_ref(),
         conn_opt: conn_opt.as_ref(),
         tracker: BackupProgressTracker::new(),
     };
@@ -604,7 +579,7 @@ fn execute_backup_worker(args: BackupWorkerArgs) {
         outcome,
         &secret_strs,
         supervision.logind.as_mut(),
-        (conn_opt.as_ref(), tray_opt.as_ref()),
+        conn_opt.as_ref(),
     );
 }
 
@@ -977,9 +952,8 @@ fn finalize_backup_run_state(
     outcome: BackupPostExecOutcome,
     secret_strs: &[&str],
     logind_sleep_guard: Option<&mut LogindSleepInhibitor>,
-    handles: (Option<&Connection>, Option<&Arc<TrayHandle>>),
+    conn_opt: Option<&Connection>,
 ) {
-    let (conn_opt, tray_opt) = handles;
     let run_id = run.id.clone();
     let (state_dto, notif_settings) = {
         let mut guard = shared_worker.lock_unpoisoned();
@@ -1055,11 +1029,7 @@ fn finalize_backup_run_state(
                 ctx.backup.id
             );
         }
-        let (state_dto, tray_state) = guard.build_state_and_tray();
-        if let Some(tray) = tray_opt {
-            tray.set_full_state(tray_state);
-        }
-        (state_dto, guard.config.notifications.clone())
+        (guard.push_tray_state(), guard.config.notifications.clone())
     };
 
     if let Some(inh) = logind_sleep_guard {

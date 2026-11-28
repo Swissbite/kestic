@@ -3,8 +3,8 @@
 
 //! Plasma progress notification client via `org.kde.JobViewServerV2` / `org.kde.JobViewV3`.
 
+use crate::monitors::StopSignal;
 use std::collections::HashMap;
-use std::time::Duration;
 use zbus::export::ordered_stream::OrderedStreamExt;
 use zbus::{Connection, OwnedObjectPath, Proxy, Variant, block_on};
 
@@ -114,7 +114,7 @@ impl JobViewHandle {
     where
         F: Fn() + Send + 'static,
     {
-        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop = StopSignal::default();
         let conn = self.conn.clone();
         let dest = self.dest.clone();
         let path = self.view_path.clone();
@@ -130,22 +130,18 @@ impl JobViewHandle {
             }
         };
 
-        let stop_bg = std::sync::Arc::clone(&stop);
+        let stop_bg = stop.clone();
+        // The stop request wakes the wait: the thread waits for a message or the stop, whichever
+        // comes first.
         let handle = std::thread::spawn(move || {
-            while !stop_bg.load(std::sync::atomic::Ordering::SeqCst) {
-                match block_on(next_message_within(stream.next(), CANCEL_POLL_INTERVAL)) {
-                    Some(Some(_)) => {
-                        on_cancel();
-                        break;
-                    }
-                    Some(None) => {
-                        eprintln!(
-                            "kestic-daemon: the Plasma progress view stopped sending cancel requests"
-                        );
-                        break;
-                    }
-                    None => {}
+            match block_on(stop_bg.until_stopped(stream.next())) {
+                Some(Some(_)) => on_cancel(),
+                Some(None) => {
+                    eprintln!(
+                        "kestic-daemon: the Plasma progress view stopped sending cancel requests"
+                    );
                 }
+                None => {}
             }
         });
 
@@ -179,13 +175,13 @@ impl JobViewHandle {
 
 /// Guard for stopping the background `JobViewV3.cancelRequested` listener.
 pub struct JobViewCancelGuard {
-    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stop: StopSignal,
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl JobViewCancelGuard {
     pub fn stop(mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.stop.stop();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -194,37 +190,11 @@ impl JobViewCancelGuard {
 
 impl Drop for JobViewCancelGuard {
     fn drop(&mut self) {
-        self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.stop.stop();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
     }
-}
-
-/// How often the cancel watcher checks whether it was stopped.
-const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(120);
-
-/// Polls `fut` (sleeping briefly between polls) until it is ready or `timeout` passes:
-/// `Some(item)` when ready (`Some(None)` = the stream ended), `None` on timeout.
-async fn next_message_within<F>(fut: F, timeout: Duration) -> Option<Option<zbus::Message>>
-where
-    F: std::future::Future<Output = Option<zbus::Message>>,
-{
-    use std::pin::pin;
-    let mut fut = pin!(fut);
-    let start = std::time::Instant::now();
-    std::future::poll_fn(|cx| {
-        if let std::task::Poll::Ready(item) = fut.as_mut().poll(cx) {
-            return std::task::Poll::Ready(Some(item));
-        }
-        if start.elapsed() >= timeout {
-            return std::task::Poll::Ready(None);
-        }
-        std::thread::sleep(Duration::from_millis(10));
-        cx.waker().wake_by_ref();
-        std::task::Poll::Pending
-    })
-    .await
 }
 
 impl Drop for JobViewHandle {

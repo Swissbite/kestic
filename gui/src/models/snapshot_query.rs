@@ -8,7 +8,7 @@
 
 use super::rows::row_count;
 use crate::backend::{Lane, call_daemon_on, send_to_daemon};
-use crate::state_cache::{daemon_unavailable_text, dbus_error_text, i18n, i18np, tr_text};
+use crate::i18n::{daemon_unavailable_text, dbus_error_text, i18n, i18np, tr_text};
 use cxx_qt::Threading;
 use cxx_qt_lib::{QModelIndex, QString};
 use kestic_core::query_list::{DEFAULT_PAGE_LIMIT, PageFilter, QueryState};

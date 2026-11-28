@@ -13,9 +13,9 @@ use super::snapshot_query::{
     too_large_text,
 };
 use crate::backend::{Lane, call_daemon_on, send_to_daemon};
-use crate::state_cache::{
-    daemon_unavailable_text, dbus_error_text, format_bytes, i18n, i18np, shared_state, tr,
-};
+use crate::i18n::{daemon_unavailable_text, dbus_error_text, i18n, i18np, tr};
+use crate::state_cache::shared_state;
+use crate::summary_texts::format_bytes;
 use crate::ui_texts::GuiText;
 use cxx_qt::{CxxQtType, Threading};
 use cxx_qt_lib::{QString, QStringList};

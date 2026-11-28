@@ -6,6 +6,10 @@
 use crate::model::{ModelError, Weekday};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
+use std::ops::RangeInclusive;
+
+/// The intervals «every n days» allows, in days.
+pub const EVERY_N_DAYS_RANGE: RangeInclusive<u32> = 2..=365;
 
 /// Schedule definition (glossary: `Schedule`).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,9 +79,11 @@ impl Schedule {
                 hour,
                 minute,
             } => {
-                if !(2..=365).contains(interval_days) {
+                if !EVERY_N_DAYS_RANGE.contains(interval_days) {
                     return Err(ModelError::InvalidBackup(format!(
-                        "interval_days must be between 2 and 365, got {interval_days}"
+                        "interval_days must be between {} and {}, got {interval_days}",
+                        EVERY_N_DAYS_RANGE.start(),
+                        EVERY_N_DAYS_RANGE.end()
                     )));
                 }
                 start_date.parse::<jiff::civil::Date>().map_err(|err| {

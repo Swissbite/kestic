@@ -18,18 +18,16 @@ EditorPage {
     property string savedMaintenanceJson: "{}"
     property bool hydrating: false
 
-    // Prune entry
-    property string pruneKind: "weekly"
+    // Clean up and verify; loading the saved schedule fills them in.
+    property string pruneKind: "manual_only"
     property string pruneNth: "first"
     property string pruneWeekday: "sunday"
-    property int pruneHour: 12
+    property int pruneHour: 0
     property int pruneMinute: 0
-
-    // Check entry
-    property string checkKind: "monthly"
+    property string checkKind: "manual_only"
     property string checkNth: "first"
     property string checkWeekday: "sunday"
-    property int checkHour: 12
+    property int checkHour: 0
     property int checkMinute: 0
 
     property bool pendingPopAfterConfirm: false
@@ -61,65 +59,40 @@ EditorPage {
         { key: "sunday", label: Texts.label("sunday") }
     ]
 
-    function buildEntryObj(kind, nth, weekday, hour, minute) {
-        if (kind === "manual_only") return { kind: "manual_only" };
-        if (kind === "daily") return { kind: "daily", hour: hour, minute: minute };
-        if (kind === "monthly") return { kind: "monthly", nth: nth, weekday: weekday, hour: hour, minute: minute };
-        return { kind: "weekly", weekday: weekday, hour: hour, minute: minute };
-    }
-
-    function normalizeEntry(obj, fallbackKind) {
-        var k = (obj && obj.kind) ? obj.kind : fallbackKind;
-        return buildEntryObj(
-            k,
-            (obj && obj.nth) ? obj.nth : "first",
-            (obj && obj.weekday) ? obj.weekday : "sunday",
-            (obj && obj.hour !== undefined) ? obj.hour : 12,
-            (obj && obj.minute !== undefined) ? obj.minute : 0
-        );
-    }
-
-    function currentMaintObj() {
+    // The fields as core reads them.
+    function currentForm() {
         return {
-            prune: buildEntryObj(pruneKind, pruneNth, pruneWeekday, pruneHour, pruneMinute),
-            check: buildEntryObj(checkKind, checkNth, checkWeekday, checkHour, checkMinute)
+            prune: { kind: pruneKind, nth: pruneNth, weekday: pruneWeekday, hour: pruneHour, minute: pruneMinute },
+            check: { kind: checkKind, nth: checkNth, weekday: checkWeekday, hour: checkHour, minute: checkMinute }
         };
     }
+
+    // What core makes of the fields: the schedule and whether clean up or verify differ from
+    // the saved ones.
+    readonly property var formState: rootWindow.parseJsonOr(
+        appBackend.maintenanceFormState(JSON.stringify(currentForm()), savedMaintenanceJson), ({}))
 
     function currentMaintJson() {
-        return JSON.stringify(currentMaintObj());
+        return JSON.stringify(formState.maintenance || {});
     }
 
-    function normalizedSavedObj() {
-        var parsed = rootWindow.parseJsonOr(savedMaintenanceJson, {});
-        return {
-            prune: normalizeEntry(parsed.prune, "weekly"),
-            check: normalizeEntry(parsed.check, "monthly")
-        };
-    }
+    readonly property bool pruneDirty: initialData !== null && formState.prune_dirty === true
 
-    readonly property bool pruneDirty: initialData !== null
-        && JSON.stringify(currentMaintObj().prune) !== JSON.stringify(normalizedSavedObj().prune)
-
-    dirty: initialData !== null
-        && JSON.stringify(currentMaintObj()) !== JSON.stringify(normalizedSavedObj())
+    dirty: initialData !== null && formState.dirty === true
 
     function loadFromSaved(maintJson) {
         hydrating = true;
-        var parsed = rootWindow.parseJsonOr(maintJson, {});
-        var p = normalizeEntry(parsed.prune, "weekly");
-        pruneKind = p.kind;
-        pruneNth = p.nth || "first";
-        pruneWeekday = p.weekday || "sunday";
-        pruneHour = p.hour !== undefined ? p.hour : 12;
-        pruneMinute = p.minute !== undefined ? p.minute : 0;
-
-        var c = normalizeEntry(parsed.check, "monthly");
-        checkKind = c.kind;
-        checkNth = c.nth || "first";
-        checkWeekday = c.weekday || "sunday";
-        checkHour = c.hour !== undefined ? c.hour : 12;
-        checkMinute = c.minute !== undefined ? c.minute : 0;
+        var form = rootWindow.parseJsonOr(appBackend.maintenanceFormJson(maintJson), {});
+        pruneKind = form.prune.kind;
+        pruneNth = form.prune.nth;
+        pruneWeekday = form.prune.weekday;
+        pruneHour = form.prune.hour;
+        pruneMinute = form.prune.minute;
+        checkKind = form.check.kind;
+        checkNth = form.check.nth;
+        checkWeekday = form.check.weekday;
+        checkHour = form.check.hour;
+        checkMinute = form.check.minute;
         hydrating = false;
     }
 
@@ -147,31 +120,6 @@ EditorPage {
         });
     }
 
-    function formatPreviewSummary(rawJson) {
-        var sum = rootWindow.parseJsonOr(rawJson, null);
-        if (!sum) {
-            return i18n("The preview could not read the repository. It may be unreachable or locked.");
-        }
-        var parts = [];
-        if (sum.delete_packs !== null && sum.delete_packs !== undefined) {
-            parts.push(i18n("Data blocks to remove: %1", sum.delete_packs));
-        }
-        if (sum.keep_packs !== null && sum.keep_packs !== undefined) {
-            parts.push(i18n("Data blocks to keep: %1", sum.keep_packs));
-        }
-        // restic's own summary line is English text: show only the localized size.
-        var sizeMatch = sum.freed_summary
-            ? /(\d+(?:\.\d+)?\s?(?:B|KiB|MiB|GiB|TiB))/.exec(sum.freed_summary)
-            : null;
-        if (sizeMatch) {
-            parts.push(i18n("Space to free: %1", sizeMatch[1]));
-        }
-        if (parts.length === 0) {
-            parts.push(i18n("The preview reported no data to remove."));
-        }
-        return parts.join("\n");
-    }
-
     Connections {
         target: appBackend
         function onMaintenancePreviewReady(destId, summaryJson, errorMessage) {
@@ -179,7 +127,7 @@ EditorPage {
                 return;
             }
             page.previewSettled = true;
-            page.previewSummaryText = page.formatPreviewSummary(errorMessage !== "" ? "" : summaryJson);
+            page.previewSummaryText = appBackend.maintenancePreviewText(errorMessage !== "" ? "" : summaryJson);
         }
     }
 

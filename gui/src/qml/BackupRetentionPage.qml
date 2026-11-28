@@ -20,55 +20,44 @@ EditorPage {
     property bool hydrating: false
     property string validationError: ""
 
-    // Count-based rules
+    // The rules; loading the saved policy fills in the values core offers for rules that are off.
     property bool keepLastOn: false
-    property int keepLastNum: 10
+    property int keepLastNum: 0
     property bool keepLastAll: false
-
     property bool keepHourlyOn: false
-    property int keepHourlyNum: 24
+    property int keepHourlyNum: 0
     property bool keepHourlyAll: false
-
     property bool keepDailyOn: false
-    property int keepDailyNum: 7
+    property int keepDailyNum: 0
     property bool keepDailyAll: false
-
     property bool keepWeeklyOn: false
-    property int keepWeeklyNum: 4
+    property int keepWeeklyNum: 0
     property bool keepWeeklyAll: false
-
     property bool keepMonthlyOn: false
-    property int keepMonthlyNum: 12
+    property int keepMonthlyNum: 0
     property bool keepMonthlyAll: false
-
     property bool keepYearlyOn: false
-    property int keepYearlyNum: 5
+    property int keepYearlyNum: 0
     property bool keepYearlyAll: false
 
-    // Duration-based rules (keep-within*)
     property bool withinAllOn: false
-    property int withinAllNum: 30
+    property int withinAllNum: 0
     property string withinAllUnit: "d"
-
     property bool withinHourlyOn: false
-    property int withinHourlyNum: 48
-    property string withinHourlyUnit: "h"
-
+    property int withinHourlyNum: 0
+    property string withinHourlyUnit: "d"
     property bool withinDailyOn: false
-    property int withinDailyNum: 14
+    property int withinDailyNum: 0
     property string withinDailyUnit: "d"
-
     property bool withinWeeklyOn: false
-    property int withinWeeklyNum: 6
-    property string withinWeeklyUnit: "m"
-
+    property int withinWeeklyNum: 0
+    property string withinWeeklyUnit: "d"
     property bool withinMonthlyOn: false
-    property int withinMonthlyNum: 1
-    property string withinMonthlyUnit: "y"
-
+    property int withinMonthlyNum: 0
+    property string withinMonthlyUnit: "d"
     property bool withinYearlyOn: false
-    property int withinYearlyNum: 5
-    property string withinYearlyUnit: "y"
+    property int withinYearlyNum: 0
+    property string withinYearlyUnit: "d"
 
     property string pendingSaveRetentionJson: ""
     property int pendingRemoveCount: 0
@@ -82,133 +71,68 @@ EditorPage {
 
     readonly property var unitValues: ["h", "d", "m", "y"]
 
-    function parseDuration(raw, defaultNum, defaultUnit) {
-        if (!raw || typeof raw !== "string") {
-            return { on: false, num: defaultNum, unit: defaultUnit };
+    // The rules of the form as core names them, with the prefix of their page properties.
+    readonly property var countRules: ({
+        keep_last: "keepLast", keep_hourly: "keepHourly", keep_daily: "keepDaily",
+        keep_weekly: "keepWeekly", keep_monthly: "keepMonthly", keep_yearly: "keepYearly"
+    })
+    readonly property var withinRules: ({
+        keep_within: "withinAll", keep_within_hourly: "withinHourly",
+        keep_within_daily: "withinDaily", keep_within_weekly: "withinWeekly",
+        keep_within_monthly: "withinMonthly", keep_within_yearly: "withinYearly"
+    })
+
+    // The fields as core reads them.
+    function currentForm() {
+        var form = {};
+        for (var key in countRules) {
+            var c = countRules[key];
+            form[key] = { on: page[c + "On"], all: page[c + "All"], num: page[c + "Num"] };
         }
-        var m = /^(\d+)([hdmy])$/.exec(raw.trim());
-        if (!m) {
-            return { on: false, num: defaultNum, unit: defaultUnit };
+        for (var wkey in withinRules) {
+            var w = withinRules[wkey];
+            form[wkey] = { on: page[w + "On"], num: page[w + "Num"], unit: page[w + "Unit"] };
         }
-        return { on: true, num: Math.max(1, parseInt(m[1], 10)), unit: m[2] };
+        return form;
     }
 
-    function applyKeepCountField(val, defaultNum) {
-        if (val === "unlimited") {
-            return { on: true, all: true, num: defaultNum };
-        }
-        if (typeof val === "number" && val > 0) {
-            return { on: true, all: false, num: val };
-        }
-        return { on: false, all: false, num: defaultNum };
-    }
+    // What core makes of the fields: the policy, its preset, whether it differs from the saved
+    // one and whether a rule is on.
+    readonly property var formState: rootWindow.parseJsonOr(
+        appBackend.retentionFormState(JSON.stringify(currentForm()), savedPolicyJson), ({}))
 
     function loadFromPolicyJson(jsonText) {
         hydrating = true;
-        var obj = rootWindow.parseJsonOr(jsonText, {});
-        var kl = applyKeepCountField(obj.keep_last, 10);
-        keepLastOn = kl.on; keepLastAll = kl.all; keepLastNum = kl.num;
-
-        var kh = applyKeepCountField(obj.keep_hourly, 24);
-        keepHourlyOn = kh.on; keepHourlyAll = kh.all; keepHourlyNum = kh.num;
-
-        var kd = applyKeepCountField(obj.keep_daily, 7);
-        keepDailyOn = kd.on; keepDailyAll = kd.all; keepDailyNum = kd.num;
-
-        var kw = applyKeepCountField(obj.keep_weekly, 4);
-        keepWeeklyOn = kw.on; keepWeeklyAll = kw.all; keepWeeklyNum = kw.num;
-
-        var km = applyKeepCountField(obj.keep_monthly, 12);
-        keepMonthlyOn = km.on; keepMonthlyAll = km.all; keepMonthlyNum = km.num;
-
-        var ky = applyKeepCountField(obj.keep_yearly, 5);
-        keepYearlyOn = ky.on; keepYearlyAll = ky.all; keepYearlyNum = ky.num;
-
-        var wa = parseDuration(obj.keep_within, 30, "d");
-        withinAllOn = wa.on; withinAllNum = wa.num; withinAllUnit = wa.unit;
-
-        var wh = parseDuration(obj.keep_within_hourly, 48, "h");
-        withinHourlyOn = wh.on; withinHourlyNum = wh.num; withinHourlyUnit = wh.unit;
-
-        var wd = parseDuration(obj.keep_within_daily, 14, "d");
-        withinDailyOn = wd.on; withinDailyNum = wd.num; withinDailyUnit = wd.unit;
-
-        var ww = parseDuration(obj.keep_within_weekly, 6, "m");
-        withinWeeklyOn = ww.on; withinWeeklyNum = ww.num; withinWeeklyUnit = ww.unit;
-
-        var wm = parseDuration(obj.keep_within_monthly, 1, "y");
-        withinMonthlyOn = wm.on; withinMonthlyNum = wm.num; withinMonthlyUnit = wm.unit;
-
-        var wy = parseDuration(obj.keep_within_yearly, 5, "y");
-        withinYearlyOn = wy.on; withinYearlyNum = wy.num; withinYearlyUnit = wy.unit;
-
-        detectPresetFromFields();
+        var form = rootWindow.parseJsonOr(appBackend.retentionFormJson(jsonText), {});
+        for (var key in countRules) {
+            var c = countRules[key];
+            page[c + "On"] = form[key].on;
+            page[c + "All"] = form[key].all;
+            page[c + "Num"] = form[key].num;
+        }
+        for (var wkey in withinRules) {
+            var w = withinRules[wkey];
+            page[w + "On"] = form[wkey].on;
+            page[w + "Num"] = form[wkey].num;
+            page[w + "Unit"] = form[wkey].unit;
+        }
+        presetName = formState.preset || "custom";
         hydrating = false;
     }
 
-    function encodeKeepCount(on, all, num) {
-        if (!on) return undefined;
-        if (all) return "unlimited";
-        return Math.max(1, num);
-    }
-
-    function currentPolicyObj() {
-        var obj = {};
-        if (keepLastOn) obj.keep_last = encodeKeepCount(keepLastOn, keepLastAll, keepLastNum);
-        if (keepHourlyOn) obj.keep_hourly = encodeKeepCount(keepHourlyOn, keepHourlyAll, keepHourlyNum);
-        if (keepDailyOn) obj.keep_daily = encodeKeepCount(keepDailyOn, keepDailyAll, keepDailyNum);
-        if (keepWeeklyOn) obj.keep_weekly = encodeKeepCount(keepWeeklyOn, keepWeeklyAll, keepWeeklyNum);
-        if (keepMonthlyOn) obj.keep_monthly = encodeKeepCount(keepMonthlyOn, keepMonthlyAll, keepMonthlyNum);
-        if (keepYearlyOn) obj.keep_yearly = encodeKeepCount(keepYearlyOn, keepYearlyAll, keepYearlyNum);
-
-        if (withinAllOn) obj.keep_within = Math.max(1, withinAllNum) + withinAllUnit;
-        if (withinHourlyOn) obj.keep_within_hourly = Math.max(1, withinHourlyNum) + withinHourlyUnit;
-        if (withinDailyOn) obj.keep_within_daily = Math.max(1, withinDailyNum) + withinDailyUnit;
-        if (withinWeeklyOn) obj.keep_within_weekly = Math.max(1, withinWeeklyNum) + withinWeeklyUnit;
-        if (withinMonthlyOn) obj.keep_within_monthly = Math.max(1, withinMonthlyNum) + withinMonthlyUnit;
-        if (withinYearlyOn) obj.keep_within_yearly = Math.max(1, withinYearlyNum) + withinYearlyUnit;
-        return obj;
-    }
-
     function currentPolicyJson() {
-        return JSON.stringify(currentPolicyObj());
-    }
-
-    function normalizePolicyString(jsonText) {
-        var obj = rootWindow.parseJsonOr(jsonText, {});
-        var keys = [
-            "keep_last", "keep_hourly", "keep_daily", "keep_weekly", "keep_monthly", "keep_yearly",
-            "keep_within", "keep_within_hourly", "keep_within_daily", "keep_within_weekly",
-            "keep_within_monthly", "keep_within_yearly"
-        ];
-        var out = {};
-        keys.forEach(k => { if (obj[k] !== undefined && obj[k] !== null) out[k] = obj[k]; });
-        return JSON.stringify(out);
-    }
-
-    function detectPresetFromFields() {
-        var cur = normalizePolicyString(currentPolicyJson());
-        if (cur === normalizePolicyString(appBackend.retentionPresetJson("standard"))) {
-            presetName = "standard";
-        } else if (cur === normalizePolicyString(appBackend.retentionPresetJson("economical"))) {
-            presetName = "economical";
-        } else if (cur === normalizePolicyString(appBackend.retentionPresetJson("long"))) {
-            presetName = "long";
-        } else {
-            presetName = "custom";
-        }
+        return JSON.stringify(formState.policy || {});
     }
 
     function onFieldEdited() {
         if (!hydrating) {
-            detectPresetFromFields();
+            presetName = formState.preset || "custom";
         }
     }
 
-    readonly property bool hasAnyRule: keepLastOn || keepHourlyOn || keepDailyOn || keepWeeklyOn || keepMonthlyOn || keepYearlyOn
-        || withinAllOn || withinHourlyOn || withinDailyOn || withinWeeklyOn || withinMonthlyOn || withinYearlyOn
+    readonly property bool hasAnyRule: formState.has_rule === true
 
-    dirty: initialData !== null && normalizePolicyString(currentPolicyJson()) !== normalizePolicyString(savedPolicyJson)
+    dirty: initialData !== null && formState.dirty === true
 
     // Shows the backup as the daemon has it now, with its revision.
     function reloadFromDaemon() {

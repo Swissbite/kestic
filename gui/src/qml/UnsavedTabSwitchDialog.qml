@@ -23,9 +23,6 @@ UnsavedChangesDialog {
             }
         });
     }
-    onDiscardRequested: {
-        dialog.appBackend.has_unsaved_changes = false;
-        dialog.rootWindow.runPendingNavigation();
-    }
+    onDiscardRequested: dialog.rootWindow.runPendingNavigation()
     onCancelRequested: dialog.rootWindow.cancelPendingNavigation()
 }

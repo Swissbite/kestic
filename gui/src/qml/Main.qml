@@ -228,7 +228,6 @@ Kirigami.ApplicationWindow {
     }
 
     function performSwitchTab(idx) {
-        appBackend.has_unsaved_changes = false;
         while (wizardPageStack.depth > 0) {
             closeWizardLayer();
         }

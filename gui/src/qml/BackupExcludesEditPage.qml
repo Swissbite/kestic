@@ -25,7 +25,7 @@ EditorPage {
     property bool excludeCaches: false
     property bool excludeTrash: false
     property bool sizeLimitEnabled: false
-    property int sizeLimitNumber: 100
+    property int sizeLimitNumber: 0
     property string sizeLimitUnit: "M"
     property bool ignoreCase: false
     property string excludeIfPresentText: ""
@@ -38,81 +38,49 @@ EditorPage {
     readonly property var sizeUnitLabels: ["KB", "MB", "GB", "TB"]
     readonly property var sizeUnitSuffixes: ["K", "M", "G", "T"]
 
-    function parseSizeLimit(raw) {
-        if (!raw || typeof raw !== "string") {
-            return { enabled: false, num: 100, unit: "M" };
-        }
-        var m = /^\s*(\d+)\s*([KkMmGgTt])[Bb]?\s*$/.exec(raw);
-        if (!m) {
-            return { enabled: false, num: 100, unit: "M" };
-        }
-        var unit = m[2].toUpperCase();
-        return { enabled: true, num: Math.max(1, parseInt(m[1], 10)), unit: unit };
+    // The fields as core reads them.
+    function currentForm() {
+        return {
+            folders: folders,
+            lines_text: excludesText,
+            exclude_caches: excludeCaches,
+            exclude_trash: excludeTrash,
+            size_limit_enabled: sizeLimitEnabled,
+            size_limit_num: sizeLimitNumber,
+            size_limit_unit: sizeLimitUnit,
+            ignore_case: ignoreCase,
+            markers_text: excludeIfPresentText
+        };
     }
+
+    // What core makes of the fields: the rules, whether they differ from the saved ones, and
+    // how many expert rules the simple mode does not show.
+    readonly property var formState: rootWindow.parseJsonOr(
+        appBackend.excludeFormState(JSON.stringify(currentForm()), savedExcludesJson), ({}))
 
     function loadFromExcludesJson(jsonStr) {
         hydrating = true;
-        var obj = rootWindow.parseJsonOr(jsonStr, {});
-        folders = Array.isArray(obj.folders) ? obj.folders.slice() : [];
-        excludesText = Array.isArray(obj.lines) ? obj.lines.join("\n") : "";
-        excludeCaches = Boolean(obj.exclude_caches);
-        excludeTrash = Boolean(obj.exclude_trash);
-        var sl = parseSizeLimit(obj.exclude_larger_than);
-        sizeLimitEnabled = sl.enabled;
-        sizeLimitNumber = sl.num;
-        sizeLimitUnit = sl.unit;
-        ignoreCase = Boolean(obj.ignore_case);
-        excludeIfPresentText = Array.isArray(obj.exclude_if_present)
-            ? obj.exclude_if_present.join(", ")
-            : "";
+        var form = rootWindow.parseJsonOr(appBackend.excludeFormJson(jsonStr), {});
+        folders = form.folders;
+        excludesText = form.lines_text;
+        excludeCaches = form.exclude_caches;
+        excludeTrash = form.exclude_trash;
+        sizeLimitEnabled = form.size_limit_enabled;
+        sizeLimitNumber = form.size_limit_num;
+        sizeLimitUnit = form.size_limit_unit;
+        ignoreCase = form.ignore_case;
+        excludeIfPresentText = form.markers_text;
         hydrating = false;
         refreshLint();
     }
 
-    function splitNonEmptyLines(raw) {
-        return raw === "" ? [] : (raw || "").split(/\r?\n/);
-    }
-
-    function splitMarkers(raw) {
-        return (raw || "").split(",").map(s => s.trim()).filter(Boolean);
-    }
-
-    function currentExcludesObj() {
-        var obj = {
-            folders: folders.slice(),
-            lines: splitNonEmptyLines(excludesText),
-            exclude_caches: excludeCaches,
-            exclude_trash: excludeTrash,
-            ignore_case: ignoreCase,
-            exclude_if_present: splitMarkers(excludeIfPresentText)
-        };
-        if (sizeLimitEnabled) {
-            obj.exclude_larger_than = Math.max(1, sizeLimitNumber) + sizeLimitUnit;
-        }
-        return obj;
-    }
-
     function currentExcludesJson() {
-        return JSON.stringify(currentExcludesObj());
+        return JSON.stringify(formState.rules || {});
     }
 
-    function canonicalExcludes(jsonStr) {
-        var obj = rootWindow.parseJsonOr(jsonStr, {});
-        return JSON.stringify({
-            folders: Array.isArray(obj.folders) ? obj.folders : [],
-            lines: Array.isArray(obj.lines) ? obj.lines : [],
-            exclude_caches: Boolean(obj.exclude_caches),
-            exclude_trash: Boolean(obj.exclude_trash),
-            exclude_larger_than: obj.exclude_larger_than || null,
-            ignore_case: Boolean(obj.ignore_case),
-            exclude_if_present: Array.isArray(obj.exclude_if_present) ? obj.exclude_if_present : []
-        });
-    }
+    readonly property int expertRuleCount: formState.expert_rule_count || 0
 
-    readonly property int expertRuleCount: splitNonEmptyLines(excludesText)
-        .filter(l => { var t = l.trim(); return t !== "" && !t.startsWith("#"); }).length
-
-    dirty: initialData !== null && canonicalExcludes(currentExcludesJson()) !== canonicalExcludes(savedExcludesJson)
+    dirty: initialData !== null && formState.dirty === true
 
     // Shows the backup as the daemon has it now, with its revision.
     function reloadFromDaemon() {
@@ -165,14 +133,8 @@ EditorPage {
 
     function applyLintSuggestion(warningItem) {
         if (!warningItem) return;
-        var replaced = false;
-        excludesText = splitNonEmptyLines(excludesText).map(line => {
-            if (!replaced && line.trim() === warningItem.parent_rule) {
-                replaced = true;
-                return warningItem.suggested_fix;
-            }
-            return line;
-        }).join("\n");
+        excludesText = appBackend.excludeLintFix(
+            excludesText, warningItem.parent_rule, warningItem.suggested_fix);
         refreshLint();
     }
 

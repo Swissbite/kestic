@@ -9,8 +9,8 @@ use super::error::{
 };
 use super::host_keys::SftpSetupGuard;
 use super::state::DaemonCore;
-use crate::dbus_api::{BackendSecrets, ConnectionTestResultDto, DaemonStateDto};
-use crate::tray::KesticTrayState;
+use super::state_summary::StatePublication;
+use crate::dbus_api::{BackendSecrets, ConnectionTestResultDto};
 use kestic_core::backend_credentials::BackendCredentials;
 use kestic_core::clock::Clock;
 use kestic_core::config::ConfigError;
@@ -37,7 +37,6 @@ use kestic_i18n::codes::{ConnectionNoteCode, ConnectionTestCode};
 use std::ffi::OsStr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use zbus::Connection;
 
 impl DaemonCore {
     /// A destination a restore starts from, waits for or runs from stays as it is until the
@@ -512,7 +511,7 @@ pub(crate) fn add_destination_unlocked(
     mode: &str,
     repo_password: &str,
     backend_secrets_json: &str,
-) -> Result<(String, Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+) -> Result<(String, StatePublication), KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
     let mut run_lease = ResticBinaryGate::global().read();
@@ -586,8 +585,7 @@ pub(crate) fn add_destination_unlocked(
     }
     let new_id = dest.id.as_str().to_string();
     guard.ensure_baselines();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((new_id, guard.conn.clone(), state_dto, tray_state))
+    Ok((new_id, guard.state_publication()))
 }
 
 /// `RemoveDestination`: removes the destination, then the lines of its SFTP server from Kestic's
@@ -595,19 +593,17 @@ pub(crate) fn add_destination_unlocked(
 pub(crate) fn remove_destination_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_id: &str,
-) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+) -> Result<StatePublication, KesticServiceErr> {
     let removed = shared.lock_unpoisoned().remove_destination(dest_id)?;
     super::host_keys::forget_unused_host(shared, &removed);
-    let guard = shared.lock_unpoisoned();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((guard.conn.clone(), state_dto, tray_state))
+    Ok(shared.lock_unpoisoned().state_publication())
 }
 
 pub(crate) fn update_destination_password_unlocked(
     shared: &Arc<Mutex<DaemonCore>>,
     dest_id: &str,
     new_password: &str,
-) -> Result<(Option<Connection>, DaemonStateDto, KesticTrayState), KesticServiceErr> {
+) -> Result<StatePublication, KesticServiceErr> {
     // Held for the whole call, so the app-managed restic is not replaced between its restic
     // processes.
     let mut run_lease = ResticBinaryGate::global().read();
@@ -643,9 +639,7 @@ pub(crate) fn update_destination_password_unlocked(
         super::destination_update::remember_repository_id(shared, &dest, id);
     }
 
-    let guard = shared.lock_unpoisoned();
-    let (state_dto, tray_state) = guard.build_state_and_tray();
-    Ok((guard.conn.clone(), state_dto, tray_state))
+    Ok(shared.lock_unpoisoned().state_publication())
 }
 
 pub(crate) fn test_destination_connection_unlocked(

@@ -6,7 +6,9 @@
 use super::qobject;
 use super::rows::{id_at, row_of};
 use crate::run_texts::run_status;
-use crate::state_cache::{format_duration_ms, format_run_kind_name, shared_state};
+use crate::state_cache::shared_state;
+use crate::status_texts::format_run_kind_name;
+use crate::summary_texts::format_duration_ms;
 use crate::time_texts::{daemon_now, format_day_group, format_time_short};
 use cxx_qt::CxxQtType;
 use cxx_qt_lib::{QHash, QHashPair_i32_QByteArray, QModelIndex, QString, QVariant};
@@ -68,7 +70,7 @@ impl RunsModelRust {
                     .map(|b| b.backup.name.as_str())
             });
             let deleted_destination =
-                crate::state_cache::tr(&kestic_i18n::messages::deleted_destination_message());
+                crate::i18n::tr(&kestic_i18n::messages::deleted_destination_message());
             let dest_name = state
                 .destinations
                 .iter()
