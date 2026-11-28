@@ -623,6 +623,8 @@ int sftp_parent_checks(QQuickWindow* w, const QString& lang, const QString& out_
     if (const int rc = check_sftp_parent_form(w, "wizDest", "addDestinationWizard", next, dotted_path, parent_path, message, 1910)) {
         return rc;
     }
+    wait_ms(300);
+    show_on_page(w, "addDestinationWizard", item_named(w, "wizDestSftpPathError"));
     M3_CHECK(1920, save_screenshot(w, out_path), "screenshot failed");
     QMetaObject::invokeMethod(w, "closeWizardLayer");
     wait_ms(250);
