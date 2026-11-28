@@ -888,8 +888,10 @@ int scenario_edit_other_repository(const Ctx& c) {
         "AC-M5-05-7 (c): «Add as New Destination…» missing");
     M3_CHECK_EQ(5707, add_as_new->property("text").toString(),
         loc(c.lang, "Add as New Destination…", "Als neues Ziel hinzufügen…"), "action text");
-    // The action has its own row below the message, which keeps its whole width for the text.
-    M3_CHECK(5719, scene_y(add_as_new) >= scene_y(banner) + banner->height(), "the action is not below the message");
+    // The action has its own row below the message, which keeps its whole width for the text
+    // (once the «Testing the connection…» line has gone and the message has opened).
+    M3_CHECK(5719, wait_until([&] { return scene_y(add_as_new) >= scene_y(banner) + banner->height(); }, 2000),
+        "the action is not below the message");
     scroll_into_view_in(w, "destinationEditPage", banner);
     wait_ms(600);
     M3_CHECK(5708, save_screenshot(w, c.out_path), "screenshot failed");
