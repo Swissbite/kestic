@@ -137,7 +137,11 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
         enter_text_field(window, excl_area, QStringLiteral("\u00fc \U0001F600\tx"), "excludes text"),
         "text with umlaut, emoji and tab not entered unchanged");
     excl_area->setProperty("text", QStringLiteral("*.tmp\ndir\n!dir/inner"));
-    wait_ms(150);
+    // The warnings arrive from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("excludeLintWarningMessage"));
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* lint_msg = find_visual_item(window, QStringLiteral("excludeLintWarningMessage"));
     QObject* apply_fix = child_object(window, "applyLintSuggestionAction");
     SMOKE_CHECK3("M2", 213, lint_msg, lint_msg->isVisible(), apply_fix,
@@ -148,7 +152,8 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     wait_ms(150);
     SMOKE_CHECK("M2", 215, excl_area->property("text").toString().contains(QStringLiteral("dir/*")),
         "applying quick-fix did not rewrite dir to dir/*");
-    SMOKE_CHECK("M2", 216, !lint_msg->isVisible(), "lint warning remained visible after applying quick-fix");
+    SMOKE_CHECK("M2", 216, wait_until([&] { return !lint_msg->isVisible(); }, 10000),
+        "lint warning remained visible after applying quick-fix");
 
     // Test Path evaluator
     QQuickItem* test_field = child_item(window, "testExcludePathField");
@@ -159,6 +164,11 @@ void scene_excludes_simple_expert_lint(const Scene& s) {
     test_btn->forceActiveFocus(Qt::TabFocusReason);
     QCoreApplication::processEvents();
     press_and_wait(window, Qt::Key_Return, 120);
+    // The result arrives from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = child_item(window, "testPathResultBanner");
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* test_banner = child_item(window, "testPathResultBanner");
     SMOKE_CHECK_VISIBLE("M2", 219, test_banner, "testPathResultBanner not visible after Test Path");
 
@@ -530,7 +540,11 @@ void scene_drive_unmounted_nested_and_full_config(const Scene& s) {
     QQuickItem* nested_banner = find_visual_item(window, QStringLiteral("nestedSourceWarningBanner"));
     SMOKE_CHECK_VISIBLE("M2", 284, nested_banner, "nestedSourceWarningBanner not visible on BackupDetailPage");
     QMetaObject::invokeMethod(window, "openBackupSourcePage", Q_ARG(QVariant, nested_bid));
-    wait_ms(200);
+    // The nested-source check arrives from the daemon.
+    wait_until([&] {
+        QQuickItem* shown = find_visual_item(window, QStringLiteral("sourceNestedWarningBanner"));
+        return shown && shown->isVisible();
+    }, 10000);
     QQuickItem* src_nested_banner = find_visual_item(window, QStringLiteral("sourceNestedWarningBanner"));
     SMOKE_CHECK_VISIBLE("M2", 285, src_nested_banner, "sourceNestedWarningBanner not visible on BackupSourceEditPage");
 
