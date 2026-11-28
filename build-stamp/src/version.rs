@@ -17,7 +17,7 @@ use std::path::Path;
 pub const OVERRIDE_VAR: &str = "KESTIC_VERSION";
 
 /// Version of a build without a version tag.
-const DEV_VERSION: &str = "0.0.0~dev";
+pub const DEV_VERSION: &str = "0.0.0~dev";
 
 /// The version a build of `workspace_root` gets, `override_value` being the value of
 /// [`OVERRIDE_VAR`]. Fails only for an override that is no valid Debian upstream version.

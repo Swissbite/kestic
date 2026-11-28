@@ -5,9 +5,12 @@
 
 //! Unit and integration tests for M0-S05: `.deb` packaging, QML Depends, notifyrc, and autostart;
 //! plus the `Suggests` of M5-S04, of M5-S06 the `gpgv` dependency and the trust anchor that only
-//! test builds can replace, and of M6-S22 the `.deb` without an exact Qt version.
+//! test builds can replace, of M6-S22 the `.deb` without an exact Qt version, and of M6-S23 the
+//! AppStream metainfo (`m6_s23_appstream`).
 
 mod common;
+#[path = "m0_s05_deb_packaging/m6_s23_appstream.rs"]
+mod m6_s23_appstream;
 
 use kestic_test_support::tools::short_tempdir;
 use kestic_test_support::workspace::{

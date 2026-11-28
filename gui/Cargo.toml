@@ -51,6 +51,7 @@ suggests = "rclone, openssh-client"
 assets = [
     ["target/release/kestic", "usr/bin/kestic", "755"],
     ["../packaging/net.daester.Kestic.desktop", "usr/share/applications/net.daester.Kestic.desktop", "644"],
+    ["target/release/net.daester.Kestic.metainfo.xml", "usr/share/metainfo/net.daester.Kestic.metainfo.xml", "644"],
     ["../packaging/net.daester.Kestic.daemon.desktop", "etc/xdg/autostart/net.daester.Kestic.daemon.desktop", "644"],
     ["../packaging/kestic.notifyrc", "usr/share/knotifications6/kestic.notifyrc", "644"],
     ["../packaging/icons/hicolor/scalable/apps/kestic.svg", "usr/share/icons/hicolor/scalable/apps/kestic.svg", "644"],
