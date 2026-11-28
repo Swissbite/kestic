@@ -141,7 +141,7 @@ pub(super) fn test_ok() -> ConnectionTestResultDto {
 fn parse_and_validate_dest(dest_json: &str) -> Result<Destination, ConnectionTestResultDto> {
     let dest: Destination = serde_json::from_str(dest_json)
         .map_err(|e| test_failure(ConnectionTestCode::InvalidInput, e.to_string()))?;
-    dest.validate().map_err(|e| match e {
+    dest.validate_input().map_err(|e| match e {
         ModelError::NotALocalPath(NotALocalPath(address)) => {
             test_failure(ConnectionTestCode::NotALocalPath, address)
         }
@@ -540,7 +540,7 @@ pub(crate) fn add_destination_unlocked(
             dest.secrets =
                 kestic_core::model::DestinationSecretRefs::for_destination(&dest.id, &dest.kind);
         }
-        dest.validate()
+        dest.validate_input()
             .map_err(|e| KesticServiceErr::InvalidInput(e.to_string()))?;
         refuse_missing_program(&dest.kind, &guard)?;
         if let Some(existing) = guard.config.find_duplicate_destination(&dest.kind, None) {

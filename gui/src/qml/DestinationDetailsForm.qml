@@ -381,9 +381,9 @@ ColumnLayout {
             objectName: form.namePrefix + "LocationError"
             visible: !form.draft.kindIsS3 && !form.draft.kindIsGeneric && !form.draft.kindIsSftp
                 && !form.draft.locationValid
-            text: form.draft.kindIsRest
-                ? i18n("Enter a valid http:// or https:// address.")
-                : i18n("Path is required.")
+            text: !form.draft.kindIsRest ? i18n("Path is required.")
+                : form.draft.restUrlError !== "" ? form.draft.restUrlError
+                : i18n("Enter a valid http:// or https:// address.")
         }
 
         // SFTP: server, port, user and path; the login uses an SSH key or the ssh-agent.

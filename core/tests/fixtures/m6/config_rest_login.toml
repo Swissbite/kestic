@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 David Däster <david@daester.net>
+# SPDX-License-Identifier: CC0-1.0
+
+# A config saved while Kestic still accepted a login in a REST address. The test replaces
+# @LOGIN@ with a generated `user:password`.
+config_version = 4
+
+[[destinations]]
+id = "rstlogin"
+name = "NAS"
+
+[destinations.kind]
+kind = "rest"
+url = "http://@LOGIN@@127.0.0.1:9/kestic"
+
+[destinations.secrets]
+repo_password_ref = "kestic:dest:rstlogin:repo"
+
+[destinations.maintenance]

@@ -3,13 +3,14 @@
 
 //! Fields of the destination form: the destination they make and its connection test.
 
-use crate::i18n::{dbus_error_text, i18n, tr_text};
+use crate::i18n::{dbus_error_text, i18n, tr, tr_text};
 use crate::ui_texts::GuiText;
 use kestic_core::generic::{EnteredSecret, EnvVar, GenericInputError};
 use kestic_core::local_path::NotALocalPath;
 use kestic_core::model::{Destination, DestinationId, DestinationKind, ModelError};
 use kestic_daemon::dbus_api::{BackendSecrets, ConnectionTestResultDto, KesticDbusError};
 use kestic_i18n::codes::ConnectionTestCode;
+use kestic_i18n::messages::{Message, REST_ADDRESS_WITH_LOGIN};
 use std::path::PathBuf;
 
 #[derive(serde::Deserialize)]
@@ -99,6 +100,9 @@ fn input_error(err: ModelError) -> DestinationInputError {
             DestinationInputError::Coded(ConnectionTestCode::NotALocalPath, address)
         }
         ModelError::Generic(generic) => generic_error(generic),
+        ModelError::LoginInRestAddress => {
+            DestinationInputError::Invalid(tr(&Message::new(REST_ADDRESS_WITH_LOGIN)))
+        }
         other => DestinationInputError::Invalid(other.to_string()),
     }
 }
@@ -142,6 +146,15 @@ pub fn generic_url_error(url: &str) -> Option<DestinationInputError> {
     kestic_core::generic::validate_url(url)
         .err()
         .map(generic_error)
+}
+
+/// Why `core` refuses the address of the REST form as entered: a user name or password in it;
+/// `None` when it has none. The form keeps «Test Connection», and so adding or saving the
+/// destination, locked while there is one.
+pub fn rest_url_error(url: &str) -> Option<DestinationInputError> {
+    kestic_core::model::refuse_rest_login(url)
+        .err()
+        .map(input_error)
 }
 
 /// Why `core` refuses the variables of the generic form (`env_json`: the `env` list of
@@ -333,6 +346,7 @@ pub fn destination_from_fields(
     } else {
         Destination::new(trimmed_name, dest_kind).map_err(input_error)?
     };
+    dest.validate_input().map_err(input_error)?;
     Ok(dest)
 }
 

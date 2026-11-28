@@ -1269,6 +1269,14 @@ msgstr "Repository-Ordner wählen"
 msgid "Enter a valid http:// or https:// address."
 msgstr "Gültige http://- oder https://-Adresse eingeben."
 
+#: i18n/src/messages.rs:31
+msgid ""
+"The address must not contain a user name or password. Enter them in the "
+"‘Username’ and ‘Server password’ fields."
+msgstr ""
+"Benutzername und Passwort gehören nicht in die Adresse, sondern in die Felder "
+"«Benutzername» und «Server-Passwort»."
+
 #: gui/src/qml/AddDestinationWizard.qml:286
 #: gui/src/qml/DestinationEditPage.qml:259 gui/src/qml/NewBackupWizard.qml:581
 msgid "Path is required."
